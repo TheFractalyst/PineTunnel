@@ -1,0 +1,9 @@
+include README.md
+include pyproject.toml
+include requirements.txt
+include alembic.ini
+
+recursive-include apps/ea *.ex5 *.ex4 *.mq5 *.mq4 *.mqh *.pine VERSION.json
+recursive-include apps/server *.json
+recursive-include assets *.svg
+recursive-include migrations *.py *.mako

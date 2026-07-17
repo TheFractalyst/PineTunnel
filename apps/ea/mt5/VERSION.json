@@ -1,0 +1,43 @@
+{
+  "version": "1.1.5",
+  "release_date": "2026-06-20",
+  "build_timestamp": "",
+  "dll_version": "1.0.1",
+  "min_compatible_version": "1.0.0",
+  "release_type": "feature",
+  "critical": true,
+  "file_size_bytes": 388006,
+  "file_size_kb": 378.9,
+  "mt4": {
+    "version": "1.1.5",
+    "date": "2026-06-20",
+    "dll_version": "1.0.1"
+  },
+  "changelog": [
+    "v1.1.5",
+    "v1.1.1",
+    "v1.1.0",
+    "v1.0.9",
+    "v1.0.8",
+    "v1.0.7",
+    "v1.0.6",
+    "v1.0.5",
+    "v1.0.4",
+    "v1.0.3",
+    "v1.0.2",
+    "v1.0.1",
+    "v15.03",
+    "v15.02",
+    "v15.00",
+    "v7.00",
+    "v6.47"
+  ],
+  "compatibility": {
+    "mt5_build": "4050+",
+    "wine_version": "8.0.1+",
+    "pinetunnel": "95%",
+    "macos": "Catalina 10.15.7+"
+  },
+  "download_url": "/api/ea/download",
+  "documentation": []
+}

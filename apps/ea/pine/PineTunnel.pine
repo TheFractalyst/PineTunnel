@@ -1,0 +1,841 @@
+//@version=6
+//@description PineTunnel bridge library. Sends encrypted or plaintext trading signals to MetaTrader via alert(). RC4-drop256 encryption with integrity checksum. 40+ commands, all PineTunnel parameters supported.
+//@library
+library("PineTunnel", overlay = true)
+
+//=========================================================================
+//! MISC FUNCTIONS
+//{
+
+//@function Returns "all" for use as freq parameter
+export all() => "all"
+
+//@function Returns "once_per_bar" for use as freq parameter
+export once_per_bar() => "once_per_bar"
+
+//@function Returns "once_per_bar_close" for use as freq parameter
+export once_per_bar_close() => "once_per_bar_close"
+
+//@function Checks if value is na or 0
+//@param value Value to check
+//@returns True if na or 0
+export na0(float value) =>
+    bool _return = na(value) or value == 0
+
+//@function Truncates a number to string with X decimals
+//@param number Number to truncate
+//@param decimals Decimal places (default: market mintick decimals)
+//@returns Truncated string
+export truncate(float number, int decimals = -1) =>
+    float _decimals = decimals
+    if _decimals == -1
+        string price_str = str.tostring(close)
+        int dot_pos = str.pos(price_str, ".")
+        if dot_pos != -1
+            _decimals := str.length(price_str) - dot_pos - 1
+        else
+            _decimals := 2
+    string _formatter = "{0,number,#."
+    for i = 0 to int(_decimals) - 1 by 1
+        _formatter := _formatter + "#"
+    str.format(_formatter + "}", number)
+
+//@function Prints to console and optionally creates debug label
+//@param txt Text to display
+//@param displayLabel Show chart label (default: false)
+export debug(string txt, bool displayLabel = false) =>
+    log.warning("\n" + txt)
+    if displayLabel
+        label.new(bar_index, high, txt, color=color.white, style=label.style_label_down, textcolor=color.black, force_overlay=true)
+
+//}
+// END MISC FUNCTIONS
+//=========================================================================
+
+//=========================================================================
+//! CORE ORDER BUILDER
+//{
+
+//@function Builds and fires a PineTunnel alert. All other functions delegate to this.
+//@param licenseID Your PineTunnel license ID
+//@param command Trading command (buy, sell, close_long, etc.)
+//@param symbol Trading symbol (defaults to current chart)
+//@param parameters Optional parameter string
+//@param acc_filter Optional minimum account balance
+//@param comment Optional trade comment (max 20 chars)
+//@param secret Optional webhook secret key
+//@param freq Alert frequency: "all", "once_per_bar", "once_per_bar_close", or "none"
+//@param debugLabel Show debug label on chart
+//@returns The alert string that was sent
+export pt_order(string licenseID,
+                string command,
+                string symbol = syminfo.ticker,
+                string parameters = "",
+                float acc_filter = na,
+                string comment = "",
+                string secret = "",
+                string freq = "all",
+                bool debugLabel = false) =>
+    string _return = licenseID + "," + command + "," + symbol
+    if parameters != ""
+        _return := _return + (not str.startswith(parameters, ",") ? "," + parameters : parameters)
+    if not na(acc_filter)
+        _return := _return + ",acc_filter=" + str.tostring(acc_filter)
+    if comment != ""
+        _return := _return + (not str.startswith(comment, ",") ? ",comment=" + comment : comment)
+    if secret != ""
+        _return := _return + (not str.startswith(secret, ",") ? ",secret=" + secret : secret)
+    if str.endswith(_return, ",")
+        _return := str.substring(_return, 0, str.length(_return) - 1)
+    debug(_return, debugLabel)
+    if freq == "all"
+        alert(_return, alert.freq_all)
+    else if freq == "once_per_bar"
+        alert(_return, alert.freq_once_per_bar)
+    else if freq == "once_per_bar_close"
+        alert(_return, alert.freq_once_per_bar_close)
+    _return
+
+// }
+// END CORE ORDER BUILDER
+//=========================================================================
+
+//=========================================================================
+//! MARKET ORDERS
+//{
+
+//@function Market buy order
+export buy(string licenseID,
+           float lots = na,
+           float usd = na,
+           float risk = na,
+           float risk_bal_pct = na,
+           float risk_eq_pct = na,
+           float sl = na,
+           float tp = na,
+           string symbol = syminfo.ticker,
+           float acc_filter = na,
+           string comment = "",
+           string secret = "",
+           string freq = "all",
+           bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(usd) ? "" : ",usd=" + truncate(usd))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(risk_bal_pct) ? "" : ",risk_bal_pct=" + truncate(risk_bal_pct))
+    _params := _params + (na(risk_eq_pct) ? "" : ",risk_eq_pct=" + truncate(risk_eq_pct))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "buy", symbol, _params, acc_filter, comment, secret, freq, debugLabel)
+
+//@function Market sell order
+export sell(string licenseID,
+            float lots = na,
+            float usd = na,
+            float risk = na,
+            float risk_bal_pct = na,
+            float risk_eq_pct = na,
+            float sl = na,
+            float tp = na,
+            string symbol = syminfo.ticker,
+            float acc_filter = na,
+            string comment = "",
+            string secret = "",
+            string freq = "all",
+            bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(usd) ? "" : ",usd=" + truncate(usd))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(risk_bal_pct) ? "" : ",risk_bal_pct=" + truncate(risk_bal_pct))
+    _params := _params + (na(risk_eq_pct) ? "" : ",risk_eq_pct=" + truncate(risk_eq_pct))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sell", symbol, _params, acc_filter, comment, secret, freq, debugLabel)
+
+//@function Close all positions
+export close_all(string licenseID,
+                 string symbol = syminfo.ticker,
+                 string comment = "",
+                 string secret = "",
+                 string freq = "all",
+                 bool debugLabel = false) =>
+    pt_order(licenseID, "close_all", symbol, "", na, comment, secret, freq, debugLabel)
+
+//@function Close all long positions
+export close_long(string licenseID,
+                  string symbol = syminfo.ticker,
+                  string comment = "",
+                  string secret = "",
+                  string freq = "all",
+                  bool debugLabel = false) =>
+    pt_order(licenseID, "close_long", symbol, "", na, comment, secret, freq, debugLabel)
+
+//@function Close all short positions
+export close_short(string licenseID,
+                   string symbol = syminfo.ticker,
+                   string comment = "",
+                   string secret = "",
+                   string freq = "all",
+                   bool debugLabel = false) =>
+    pt_order(licenseID, "close_short", symbol, "", na, comment, secret, freq, debugLabel)
+
+//@function Close long positions by percentage
+export close_long_pct(string licenseID,
+                      float risk = na,
+                      string symbol = syminfo.ticker,
+                      string comment = "",
+                      string secret = "",
+                      string freq = "all",
+                      bool debugLabel = false) =>
+    string _params = na(risk) ? "" : ",risk=" + truncate(risk)
+    pt_order(licenseID, "close_long_pct", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close short positions by percentage
+export close_short_pct(string licenseID,
+                       float risk = na,
+                       string symbol = syminfo.ticker,
+                       string comment = "",
+                       string secret = "",
+                       string freq = "all",
+                       bool debugLabel = false) =>
+    string _params = na(risk) ? "" : ",risk=" + truncate(risk)
+    pt_order(licenseID, "close_short_pct", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close long positions by volume
+export close_long_vol(string licenseID,
+                      float risk = na,
+                      string symbol = syminfo.ticker,
+                      string comment = "",
+                      string secret = "",
+                      string freq = "all",
+                      bool debugLabel = false) =>
+    string _params = na(risk) ? "" : ",risk=" + truncate(risk)
+    pt_order(licenseID, "close_long_vol", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close short positions by volume
+export close_short_vol(string licenseID,
+                       float risk = na,
+                       string symbol = syminfo.ticker,
+                       string comment = "",
+                       string secret = "",
+                       string freq = "all",
+                       bool debugLabel = false) =>
+    string _params = na(risk) ? "" : ",risk=" + truncate(risk)
+    pt_order(licenseID, "close_short_vol", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close long and open buy (reverse)
+export close_long_buy(string licenseID,
+                      float lots = na,
+                      float risk = na,
+                      float sl = na,
+                      float tp = na,
+                      string symbol = syminfo.ticker,
+                      string comment = "",
+                      string secret = "",
+                      string freq = "all",
+                      bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "close_long_buy", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close long and open sell (reverse)
+export close_long_sell(string licenseID,
+                       float lots = na,
+                       float risk = na,
+                       float sl = na,
+                       float tp = na,
+                       string symbol = syminfo.ticker,
+                       string comment = "",
+                       string secret = "",
+                       string freq = "all",
+                       bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "close_long_sell", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close short and open buy (reverse)
+export close_short_buy(string licenseID,
+                       float lots = na,
+                       float risk = na,
+                       float sl = na,
+                       float tp = na,
+                       string symbol = syminfo.ticker,
+                       string comment = "",
+                       string secret = "",
+                       string freq = "all",
+                       bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "close_short_buy", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close short and open sell (reverse)
+export close_short_sell(string licenseID,
+                        float lots = na,
+                        float risk = na,
+                        float sl = na,
+                        float tp = na,
+                        string symbol = syminfo.ticker,
+                        string comment = "",
+                        string secret = "",
+                        string freq = "all",
+                        bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "close_short_sell", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close all and open buy
+export close_all_buy(string licenseID,
+                     float lots = na,
+                     float risk = na,
+                     float sl = na,
+                     float tp = na,
+                     string symbol = syminfo.ticker,
+                     string comment = "",
+                     string secret = "",
+                     string freq = "all",
+                     bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "close_all_buy", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Close all and open sell
+export close_all_sell(string licenseID,
+                      float lots = na,
+                      float risk = na,
+                      float sl = na,
+                      float tp = na,
+                      string symbol = syminfo.ticker,
+                      string comment = "",
+                      string secret = "",
+                      string freq = "all",
+                      bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "close_all_sell", symbol, _params, na, comment, secret, freq, debugLabel)
+
+// }
+// END MARKET ORDERS
+//=========================================================================
+
+//=========================================================================
+//! PENDING ORDERS
+//{
+
+//@function Buy stop pending order
+export buy_stop(string licenseID,
+                float pending = na,
+                float lots = na,
+                float risk = na,
+                float sl = na,
+                float tp = na,
+                string symbol = syminfo.ticker,
+                string comment = "",
+                string secret = "",
+                string freq = "all",
+                bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "buy_stop", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Buy limit pending order
+export buy_limit(string licenseID,
+                 float pending = na,
+                 float lots = na,
+                 float risk = na,
+                 float sl = na,
+                 float tp = na,
+                 string symbol = syminfo.ticker,
+                 string comment = "",
+                 string secret = "",
+                 string freq = "all",
+                 bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "buy_limit", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Sell stop pending order
+export sell_stop(string licenseID,
+                 float pending = na,
+                 float lots = na,
+                 float risk = na,
+                 float sl = na,
+                 float tp = na,
+                 string symbol = syminfo.ticker,
+                 string comment = "",
+                 string secret = "",
+                 string freq = "all",
+                 bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sell_stop", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Sell limit pending order
+export sell_limit(string licenseID,
+                  float pending = na,
+                  float lots = na,
+                  float risk = na,
+                  float sl = na,
+                  float tp = na,
+                  string symbol = syminfo.ticker,
+                  string comment = "",
+                  string secret = "",
+                  string freq = "all",
+                  bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sell_limit", symbol, _params, na, comment, secret, freq, debugLabel)
+
+// }
+// END PENDING ORDERS
+//=========================================================================
+
+//=========================================================================
+//! SL/TP MODIFICATION
+//{
+
+//@function Update SL/TP for long positions
+export sltp_long(string licenseID,
+                 float sl = na,
+                 float tp = na,
+                 string symbol = syminfo.ticker,
+                 string comment = "",
+                 string secret = "",
+                 string freq = "all",
+                 bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sltp_long", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Update SL/TP for short positions
+export sltp_short(string licenseID,
+                  float sl = na,
+                  float tp = na,
+                  string symbol = syminfo.ticker,
+                  string comment = "",
+                  string secret = "",
+                  string freq = "all",
+                  bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sltp_short", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Update SL/TP for buy stop orders
+export sltp_buy_stop(string licenseID,
+                     float sl = na,
+                     float tp = na,
+                     string symbol = syminfo.ticker,
+                     string comment = "",
+                     string secret = "",
+                     string freq = "all",
+                     bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sltp_buy_stop", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Update SL/TP for buy limit orders
+export sltp_buy_limit(string licenseID,
+                      float sl = na,
+                      float tp = na,
+                      string symbol = syminfo.ticker,
+                      string comment = "",
+                      string secret = "",
+                      string freq = "all",
+                      bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sltp_buy_limit", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Update SL/TP for sell stop orders
+export sltp_sell_stop(string licenseID,
+                      float sl = na,
+                      float tp = na,
+                      string symbol = syminfo.ticker,
+                      string comment = "",
+                      string secret = "",
+                      string freq = "all",
+                      bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sltp_sell_stop", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Update SL/TP for sell limit orders
+export sltp_sell_limit(string licenseID,
+                       float sl = na,
+                       float tp = na,
+                       string symbol = syminfo.ticker,
+                       string comment = "",
+                       string secret = "",
+                       string freq = "all",
+                       bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "sltp_sell_limit", symbol, _params, na, comment, secret, freq, debugLabel)
+
+// }
+// END SL/TP MODIFICATION
+//=========================================================================
+
+//=========================================================================
+//! CANCEL ORDERS
+//{
+
+//@function Cancel all long pending orders
+export cancel_long(string licenseID,
+                   string symbol = syminfo.ticker,
+                   string comment = "",
+                   string secret = "",
+                   string freq = "all",
+                   bool debugLabel = false) =>
+    pt_order(licenseID, "cancel_long", symbol, "", na, comment, secret, freq, debugLabel)
+
+//@function Cancel all short pending orders
+export cancel_short(string licenseID,
+                    string symbol = syminfo.ticker,
+                    string comment = "",
+                    string secret = "",
+                    string freq = "all",
+                    bool debugLabel = false) =>
+    pt_order(licenseID, "cancel_short", symbol, "", na, comment, secret, freq, debugLabel)
+
+//@function Cancel long orders and place buy stop
+export cancel_long_buy_stop(string licenseID,
+                            float pending = na,
+                            float lots = na,
+                            float risk = na,
+                            float sl = na,
+                            float tp = na,
+                            string symbol = syminfo.ticker,
+                            string comment = "",
+                            string secret = "",
+                            string freq = "all",
+                            bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "cancel_long_buy_stop", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Cancel long orders and place buy limit
+export cancel_long_buy_limit(string licenseID,
+                             float pending = na,
+                             float lots = na,
+                             float risk = na,
+                             float sl = na,
+                             float tp = na,
+                             string symbol = syminfo.ticker,
+                             string comment = "",
+                             string secret = "",
+                             string freq = "all",
+                             bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "cancel_long_buy_limit", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Cancel short orders and place sell stop
+export cancel_short_sell_stop(string licenseID,
+                              float pending = na,
+                              float lots = na,
+                              float risk = na,
+                              float sl = na,
+                              float tp = na,
+                              string symbol = syminfo.ticker,
+                              string comment = "",
+                              string secret = "",
+                              string freq = "all",
+                              bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "cancel_short_sell_stop", symbol, _params, na, comment, secret, freq, debugLabel)
+
+//@function Cancel short orders and place sell limit
+export cancel_short_sell_limit(string licenseID,
+                               float pending = na,
+                               float lots = na,
+                               float risk = na,
+                               float sl = na,
+                               float tp = na,
+                               string symbol = syminfo.ticker,
+                               string comment = "",
+                               string secret = "",
+                               string freq = "all",
+                               bool debugLabel = false) =>
+    string _params = ""
+    _params := _params + (na(pending) ? "" : ",pending=" + truncate(pending))
+    _params := _params + (na(lots) ? "" : ",lots=" + truncate(lots))
+    _params := _params + (na(risk) ? "" : ",risk=" + truncate(risk))
+    _params := _params + (na(sl) ? "" : ",sl=" + truncate(sl))
+    _params := _params + (na(tp) ? "" : ",tp=" + truncate(tp))
+    pt_order(licenseID, "cancel_short_sell_limit", symbol, _params, na, comment, secret, freq, debugLabel)
+
+// }
+// END CANCEL ORDERS
+//=========================================================================
+
+//=========================================================================
+//! EA MANAGEMENT
+//{
+
+//@function Turn EA on (resume signal processing)
+export ea_on(string licenseID,
+             string secret = "",
+             string freq = "all",
+             bool debugLabel = false) =>
+    pt_order(licenseID, "ea_on", "ea_on", "", na, "", secret, freq, debugLabel)
+
+//@function Turn EA off (halt signal processing)
+export ea_off(string licenseID,
+              string secret = "",
+              string freq = "all",
+              bool debugLabel = false) =>
+    pt_order(licenseID, "ea_off", "ea_off", "", na, "", secret, freq, debugLabel)
+
+//@function Close all positions and turn EA off
+export close_all_off(string licenseID,
+                     string secret = "",
+                     string freq = "all",
+                     bool debugLabel = false) =>
+    pt_order(licenseID, "close_all_off", "close_all_off", "", na, "", secret, freq, debugLabel)
+
+// }
+// END EA MANAGEMENT
+//=========================================================================
+
+//=========================================================================
+//! RC4 ENCRYPTION
+// -------------------------------------------------------------------
+// RC4-drop256 stream cipher with XOR-fold integrity checksum.
+// Format: RC4,<nonce_hex>:<ciphertext_hex>:<checksum_hex>
+// Server auto-detects and decrypts. Plaintext still works.
+// -------------------------------------------------------------------
+
+// Byte-level XOR (PineScript has no bitwise ops - uses arithmetic)
+_xor8(int a, int b) =>
+    int result = 0
+    int weight = 1
+    for bit_pos = 0 to 7
+        int ba = (a / weight) % 2
+        int bb = (b / weight) % 2
+        int bx = ba != bb ? 1 : 0
+        result := result + bx * weight
+        weight := weight * 2
+    result
+
+// RC4 Key Scheduling Algorithm
+_rc4Ksa(array<int> key_bytes) =>
+    array<int> s = array.new_int(256, 0)
+    for i = 0 to 255
+        array.set(s, i, i)
+    int j = 0
+    int key_len = array.size(key_bytes)
+    for i = 0 to 255
+        int ki = array.get(key_bytes, i % key_len)
+        j := (j + array.get(s, i) + ki) % 256
+        int tmp = array.get(s, i)
+        array.set(s, i, array.get(s, j))
+        array.set(s, j, tmp)
+    s
+
+// RC4 Pseudo-Random Generation Algorithm
+_rc4Prga(array<int> s, int n) =>
+    int i = 0
+    int j = 0
+    array<int> ks = array.new_int(n, 0)
+    for idx = 0 to n - 1
+        i := (i + 1) % 256
+        j := (j + array.get(s, i)) % 256
+        int tmp = array.get(s, i)
+        array.set(s, i, array.get(s, j))
+        array.set(s, j, tmp)
+        array.set(ks, idx, array.get(s, (array.get(s, i) + array.get(s, j)) % 256))
+    ks
+
+// ASCII lookup for string-to-bytes
+_asciiTable() =>
+    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
+_strToBytes(string src) =>
+    string ascii_chars = _asciiTable()
+    array<int> bytes = array.new_int(0, 0)
+    for ci = 0 to str.length(src) - 1
+        string char_val = str.substring(src, ci, ci + 1)
+        int pos_val = str.pos(ascii_chars, char_val)
+        int code_val = pos_val >= 0 ? pos_val + 32 : 32
+        array.push(bytes, code_val)
+    bytes
+
+_hexVal(string c) =>
+    string digits = "0123456789abcdef"
+    str.pos(digits, str.lower(c))
+
+_hexToBytes(string hex_str) =>
+    string h = str.lower(hex_str)
+    array<int> result = array.new_int(0, 0)
+    int idx = 0
+    while idx < str.length(h) - 1
+        int hi = _hexVal(str.substring(h, idx, idx + 1))
+        int lo = _hexVal(str.substring(h, idx + 1, idx + 2))
+        if hi >= 0 and lo >= 0
+            array.push(result, hi * 16 + lo)
+        idx := idx + 2
+    result
+
+_bytesToHex(array<int> bytes) =>
+    string hex = ""
+    string hex_chars = "0123456789abcdef"
+    for i = 0 to array.size(bytes) - 1
+        int b = array.get(bytes, i)
+        int hi_idx = b / 16
+        int lo_idx = b % 16
+        hex := hex + str.substring(hex_chars, hi_idx, hi_idx + 1) + str.substring(hex_chars, lo_idx, lo_idx + 1)
+    hex
+
+_xorFold(array<int> data, int n) =>
+    array<int> result = array.new_int(n, 0)
+    for i = 0 to array.size(data) - 1
+        int idx = i % n
+        array.set(result, idx, _xor8(array.get(result, idx), array.get(data, i)))
+    result
+
+// Generate 8-byte nonce from bar time + bar_index
+_genNonce() =>
+    int t = int(time)
+    array<int> nonce = array.new_int(8, 0)
+    nonce.set(0, (t / 72057594037927936) % 256)
+    nonce.set(1, (t / 281474976710656) % 256)
+    nonce.set(2, (t / 1099511627776) % 256)
+    nonce.set(3, (t / 4294967296) % 256)
+    nonce.set(4, (t / 16777216) % 256)
+    nonce.set(5, (t / 65536) % 256)
+    nonce.set(6, (t / 256) % 256)
+    nonce.set(7, t % 256)
+    nonce.set(7, _xor8(array.get(nonce, 7), bar_index % 256))
+    nonce
+
+// RC4 encrypt with drop-256
+_rc4Encrypt(array<int> key_bytes, array<int> nonce, array<int> plaintext) =>
+    array<int> combined = array.new_int(0, 0)
+    for i = 0 to array.size(key_bytes) - 1
+        array.push(combined, array.get(key_bytes, i))
+    for i = 0 to array.size(nonce) - 1
+        array.push(combined, array.get(nonce, i))
+    array<int> s = _rc4Ksa(combined)
+    _rc4Prga(s, 256)
+    array<int> ks = _rc4Prga(s, array.size(plaintext))
+    array<int> ct = array.new_int(array.size(plaintext), 0)
+    for i = 0 to array.size(plaintext) - 1
+        array.set(ct, i, _xor8(array.get(plaintext, i), array.get(ks, i)))
+    ct
+
+//@function Encrypt a plaintext signal string with RC4-drop256
+//@param plaintext The CSV signal string to encrypt
+//@param encKey 64-char hex encryption key (from pinetunnel setup)
+//@returns Encrypted string in format RC4,<nonce>:<ciphertext>:<checksum>, or plaintext if key is empty/invalid
+export encrypt(string plaintext, string encKey) =>
+    string _return = plaintext
+    if encKey != "" and str.length(encKey) == 64
+        array<int> keyBytes = _hexToBytes(encKey)
+        array<int> nonce = _genNonce()
+        array<int> ptBytes = _strToBytes(plaintext)
+        array<int> ctBytes = _rc4Encrypt(keyBytes, nonce, ptBytes)
+        array<int> checksum = _xorFold(ctBytes, 4)
+        _return := "RC4," + _bytesToHex(nonce) + ":" + _bytesToHex(ctBytes) + ":" + _bytesToHex(checksum)
+    _return
+
+//@function Send an encrypted PineTunnel alert. Encrypts with RC4 if encKey is set, otherwise sends plaintext.
+//@param licenseID Your PineTunnel license ID
+//@param command Trading command (buy, sell, close_long, etc.)
+//@param symbol Trading symbol
+//@param parameters Optional parameters string
+//@param acc_filter Optional minimum account balance
+//@param comment Optional trade comment (max 20 chars)
+//@param secret Optional webhook secret key
+//@param encKey 64-char hex encryption key (from pinetunnel setup, SIGNAL_ENCRYPTION_KEY in .env)
+//@param freq Alert frequency: "all", "once_per_bar", "once_per_bar_close"
+//@param debugLabel Show debug label on chart
+//@returns The alert string that was sent (encrypted or plaintext)
+export pt_order_encrypted(string licenseID,
+                          string command,
+                          string symbol = syminfo.ticker,
+                          string parameters = "",
+                          float acc_filter = na,
+                          string comment = "",
+                          string secret = "",
+                          string encKey = "",
+                          string freq = "all",
+                          bool debugLabel = false) =>
+    string plaintext = licenseID + "," + command + "," + symbol
+    if parameters != ""
+        plaintext := plaintext + (not str.startswith(parameters, ",") ? "," + parameters : parameters)
+    if not na(acc_filter)
+        plaintext := plaintext + ",acc_filter=" + str.tostring(acc_filter)
+    if comment != ""
+        plaintext := plaintext + (not str.startswith(comment, ",") ? ",comment=" + comment : comment)
+    if secret != ""
+        plaintext := plaintext + (not str.startswith(secret, ",") ? ",secret=" + secret : secret)
+    if str.endswith(plaintext, ",")
+        plaintext := str.substring(plaintext, 0, str.length(plaintext) - 1)
+    string alertMsg = encrypt(plaintext, encKey)
+    debug(alertMsg, debugLabel)
+    if freq == "all"
+        alert(alertMsg, alert.freq_all)
+    else if freq == "once_per_bar"
+        alert(alertMsg, alert.freq_once_per_bar)
+    else if freq == "once_per_bar_close"
+        alert(alertMsg, alert.freq_once_per_bar_close)
+    alertMsg
+
+// }
+// END RC4 ENCRYPTION
+//=========================================================================

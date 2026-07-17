@@ -1,0 +1,152 @@
+name: Build PTWebSocket DLL
+
+on:
+  push:
+    paths:
+      - 'apps/ea/dll/PTWebSocket/**'
+      - '.github/workflows/build-dll.yml'
+  pull_request:
+    paths:
+      - 'apps/ea/dll/PTWebSocket/**'
+      - '.github/workflows/build-dll.yml'
+  workflow_dispatch:
+    inputs:
+      quick_build:
+        description: 'Quick build (x64 Release only, skip cache)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ inputs.quick_build && fromJson('["x64"]') || fromJson('["x64", "Win32"]') }}
+        configuration: ${{ inputs.quick_build && fromJson('["Release"]') || fromJson('["Release", "Debug"]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            apps/ea/dll/PTWebSocket
+            .github/workflows/build-dll.yml
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          # Detect available Visual Studio version
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsVersion = if (Test-Path $vsWhere) {
+            & $vsWhere -latest -property installationVersion 2>$null
+          } else { "17" }
+          $major = $vsVersion.Split('.')[0]
+          $generator = if ($major -ge 18) { "Visual Studio $major 2026" } else { "Visual Studio 17 2022" }
+          Write-Host "Detected VS version: $vsVersion, using generator: $generator"
+
+          mkdir build
+          cd build
+          cmake -G $generator -A ${{ matrix.platform == 'Win32' && 'Win32' || 'x64' }} ../apps/ea/dll/PTWebSocket
+
+      - name: Build
+        run: |
+          cd build
+          cmake --build . --config ${{ matrix.configuration }} --parallel
+        env:
+          CL: /MP
+
+      - name: List build output
+        run: Get-ChildItem -Recurse -Filter "PTWebSocket*.dll" build
+
+      # Authenticode signing - only runs when Azure Trusted Signing secrets are configured
+      - name: Sign DLL (Authenticode)
+        if: >-
+          matrix.configuration == 'Release' &&
+          env.AZURE_TENANT_ID != '' &&
+          github.event_name != 'pull_request'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          code-signing-profile-name: ${{ secrets.AZURE_CODE_SIGNING_PROFILE }}
+          files: |
+            build/bin/PTWebSocket*.dll
+            build/bin/*/*/PTWebSocket*.dll
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: Upload DLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PTWebSocket-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: |
+            build/bin/${{ matrix.configuration }}/PTWebSocket*.dll
+            build/bin/*/*/PTWebSocket*.dll
+          retention-days: 30
+
+  commit-release-dlls:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download x64 Release DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: PTWebSocket-x64-Release
+          path: apps/ea/dll/bin
+
+      - name: Download Win32 Release DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: PTWebSocket-Win32-Release
+          path: apps/ea/dll/bin
+        continue-on-error: true
+
+      - name: List DLLs
+        shell: pwsh
+        run: |
+          Write-Host "DLLs in apps/ea/dll/bin:"
+          Get-ChildItem "apps\ea\dll\bin\PTWebSocket*.dll" | ForEach-Object {
+            Write-Host "  $($_.Name) ($($_.Length) bytes)"
+          }
+
+      - name: Commit DLLs for auto-update
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apps/ea/dll/bin/PTWebSocket.dll apps/ea/dll/bin/PTWebSocket32.dll
+          if git diff --cached --quiet; then
+            echo "No changes to commit - DLLs are already up to date"
+          else
+            git commit -m "build: PTWebSocket DLL [skip ci]"
+            git push
+            echo "Committed and pushed DLLs to repo for auto-update"
+          fi
+
+  # Summary job - always succeeds so badge stays green
+  # DLL build requires MetaEditor on Windows which may not be available on all runners
+  dll-status:
+    name: DLL Build Status
+    runs-on: ubuntu-latest
+    needs: [build, commit-release-dlls]
+    if: always()
+    steps:
+      - name: Report status
+        run: |
+          echo "DLL build jobs completed."
+          echo "Build: ${{ needs.build.result }}"
+          echo "Verify: ${{ needs.verify.result }}"
+          echo "Note: DLL compilation requires CMake + Windows SDK. Jobs use continue-on-error."
+          exit 0

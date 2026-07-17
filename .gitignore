@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+# Environment files
+*.env
+.env
+# Database
+*.db
+*.sqlite
+*.sqlite3
+# Logs
+*.log
+logs/
+# Secrets
+secrets.json
+*.pem
+*.key
+*.p12
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+# AI/Agent tooling
+.claude/
+.agents/
+.superpowers/
+.opencode/
+.playwright-mcp/
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+# Compiled EA (negation: keep tracked .ex5/.ex4)
+*.ex5
+*.ex4
+!apps/ea/mt5/PineTunnel_EA.ex5
+!apps/ea/mt4/PineTunnel_EA_MT4.ex4
+# Compiled DLL (not tracked - build via CI)
+*.dll
+# Screenshots
+*.png
+# Render
+.last_start
+dump.rdb
+pinetunnel-daemon.log
+cloudflared.pid
+.pinetunnel_initialized
+pinetunnel.pid
+data/*.db-shm
+data/*.db-wal
+cloudflared-tunnel.log
+egg-info/

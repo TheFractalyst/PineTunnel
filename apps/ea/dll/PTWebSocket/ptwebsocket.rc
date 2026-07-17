@@ -1,0 +1,51 @@
+//+------------------------------------------------------------------+
+//| ptwebsocket.rc — Version resource for PTWebSocket DLL              |
+//+------------------------------------------------------------------+
+#include "resource.h"
+
+// Standard version resource constants (from verrsrc.h) — RC compiler needs these defined
+#ifndef VS_FFI_FLAGMASK
+#define VS_FFI_FLAGMASK  0x3F
+#endif
+#ifndef VOS_NT_WINDOWS32
+#define VOS_NT_WINDOWS32 0x00040004
+#endif
+#ifndef VFT_DLL
+#define VFT_DLL          0x00000002
+#endif
+#ifndef VFT2_UNKNOWN
+#define VFT2_UNKNOWN     0x00000000
+#endif
+
+#ifndef RT_MANIFEST
+#define RT_MANIFEST 24
+#endif
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     VS_FILE_VERSION
+PRODUCTVERSION  VS_PRODUCT_VERSION
+FILEFLAGSMASK   VS_FFI_FLAGMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_DLL
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      VS_COMPANY_NAME
+            VALUE "FileDescription",   VS_FILE_DESCRIPTION
+            VALUE "FileVersion",       VS_FILE_VERSION_STR
+            VALUE "InternalName",      VS_INTERNAL_NAME
+            VALUE "LegalCopyright",    VS_LEGAL_COPYRIGHT
+            VALUE "OriginalFilename",  VS_ORIGINAL_FILENAME
+            VALUE "ProductName",       VS_PRODUCT_NAME
+            VALUE "ProductVersion",    VS_PRODUCT_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END
