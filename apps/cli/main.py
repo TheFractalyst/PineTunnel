@@ -2520,12 +2520,14 @@ Full documentation: https://github.com/TheFractalyst/PineTunnel#documentation
 
     # setup-cloudflare
     p_cf = subparsers.add_parser(
-        "setup-cloudflare", help="Set up Cloudflare DNS or quick tunnel for HTTPS"
+        "setup-cloudflare", help="Set up Cloudflare DNS, quick tunnel, or remotely-managed tunnel for HTTPS"
     )
     p_cf.add_argument("--domain", help="Your domain on Cloudflare (e.g., example.com)")
     p_cf.add_argument("--token", help="Cloudflare API token (Zone:DNS:Edit + Zone:Zone:Read)")
-    p_cf.add_argument("--subdomain", default="webhook", help="Subdomain (default: webhook)")
+    p_cf.add_argument("--subdomain", default="pinetunnel", help="Subdomain (default: pinetunnel)")
     p_cf.add_argument("--quick", action="store_true", help="Use quick tunnel (no domain needed)")
+    p_cf.add_argument("--tunnel-token", dest="tunnel_token", help="Remotely-managed tunnel token (from Cloudflare dashboard)")
+    p_cf.add_argument("--tunnel-url", dest="tunnel_url", help="Public URL of remotely-managed tunnel (e.g., https://pinetunnel.example.com)")
     p_cf.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
     p_cf.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
     p_cf.set_defaults(func=cmd_setup_cloudflare)
