@@ -1,8 +1,8 @@
 """Cloudflare DNS and Tunnel integration for PineTunnel.
 
-Two flows:
+Three flows:
   Flow A: User has a Cloudflare-managed domain + API token.
-          -> Creates webhook.domain.com A record pointing to VPS IP.
+          -> Creates pinetunnel.domain.com A record pointing to VPS IP.
           -> Proxied through Cloudflare (HTTPS, DDoS protection).
           -> Updates .env SERVER_BASE_URL.
 
@@ -12,6 +12,14 @@ Two flows:
           -> Gets https://random-words.trycloudflare.com
           -> Updates .env SERVER_BASE_URL.
           -> Instant HTTPS, no domain needed.
+
+  Flow C: User creates a remotely-managed tunnel on Cloudflare dashboard.
+          -> User configures public hostname on dashboard (e.g., pinetunnel.example.com).
+          -> User copies tunnel token from dashboard install command.
+          -> CLI runs: cloudflared service install <TOKEN>
+          -> Installs as OS service (systemd/launchd/sc.exe), starts on boot.
+          -> Updates .env SERVER_BASE_URL.
+          -> Cloudflare-recommended production method.
 
 API docs: https://developers.cloudflare.com/api/resources/dns/subresources/records/
 Tunnel docs: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
@@ -629,7 +637,7 @@ def setup_cloudflare_remotely_managed(
         if not install_cloudflared(yes=yes):
             return None
 
-    print(f"  Installing cloudflared as OS service...")
+    print("  Installing cloudflared as OS service...")
     svc_proc = subprocess.run(
         ["cloudflared", "service", "install", parsed_token],
         capture_output=True, text=True, timeout=60,
@@ -722,8 +730,7 @@ def setup_cloudflare_remotely_managed(
 def _list_all_zones_via_api(token: str) -> list[str]:
     """List all zones (domains) in the Cloudflare account using the API.
 
-    Uses the API token extracted from cert.pem or provided by user.
-    Returns list of domain names (active zones only).
+    Uses the provided API token. Returns list of domain names (active zones only).
     """
     domains = []
     try:

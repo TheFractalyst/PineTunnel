@@ -2651,6 +2651,7 @@ def _run_quick_setup() -> int:
             print("\n  Cancelled. Falling back to public IP.")
             url_choice = "A"
             tunnel_token = ""
+            tunnel_url = ""
         if url_choice == "C" and tunnel_token and tunnel_url:
             from apps.cli.cloudflare import setup_cloudflare_remotely_managed
             result = setup_cloudflare_remotely_managed(
