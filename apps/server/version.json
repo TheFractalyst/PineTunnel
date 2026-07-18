@@ -1,11 +1,13 @@
 {
-  "version": "7.3.0",
+  "version": "7.3.1",
   "release_date": "2026-07-18",
   "changes": [
     "Cloudflare remotely-managed tunnel flow (Cloudflare-recommended)",
     "Removed deprecated locally-managed OAuth tunnel flow",
     "Default subdomain changed from webhook to pinetunnel",
-    "New CLI flags: --tunnel-token, --tunnel-url"
+    "New CLI flags: --tunnel-token, --tunnel-url",
+    "Fix: quick tunnel process now detaches properly on Windows (survives SSH/session close)",
+    "Fix: use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues on Windows"
   ],
   "notes": "CLI-only change - no server or EA logic changes"
 }
