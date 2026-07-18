@@ -1,10 +1,11 @@
 {
-  "version": "7.2.2",
-  "release_date": "2026-06-17",
+  "version": "7.3.0",
+  "release_date": "2026-07-18",
   "changes": [
-    "Server bloat reduction (parser, webhook, websocket_handler)",
-    "Security hardening (health/ea-check admin guard, DB permissions)",
-    "SQLite schema migration fix for existing databases"
+    "Cloudflare remotely-managed tunnel flow (Cloudflare-recommended)",
+    "Removed deprecated locally-managed OAuth tunnel flow",
+    "Default subdomain changed from webhook to pinetunnel",
+    "New CLI flags: --tunnel-token, --tunnel-url"
   ],
-  "notes": "EA version bumped to 1.0.2 \u2014 no EA logic changes, server-side only"
+  "notes": "CLI-only change - no server or EA logic changes"
 }
