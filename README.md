@@ -139,7 +139,7 @@ pinetunnel version      Show version + platform info
 pinetunnel install-service     Install as OS service (auto-start on boot)
 pinetunnel uninstall-service   Remove OS service
 pinetunnel install-ea   Auto-detect MetaTrader and install EA + DLL
-pinetunnel setup-cloudflare   Set up Cloudflare DNS or tunnel for HTTPS
+pinetunnel setup-cloudflare   Set up Cloudflare DNS, quick tunnel, or remotely-managed tunnel for HTTPS
 pinetunnel stop-cloudflare     Stop Cloudflare tunnel
 pinetunnel setup-proxy   Set up nginx reverse proxy and Let's Encrypt SSL
 ```
