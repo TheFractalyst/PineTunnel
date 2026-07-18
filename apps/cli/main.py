@@ -1945,8 +1945,24 @@ def cmd_setup_proxy(args: argparse.Namespace) -> int:
 
 
 def cmd_setup_cloudflare(args: argparse.Namespace) -> int:
-    """Set up Cloudflare DNS or quick tunnel for HTTPS."""
-    from apps.cli.cloudflare import setup_cloudflare_dns, setup_cloudflare_tunnel
+    """Set up Cloudflare DNS, quick tunnel, or remotely-managed tunnel for HTTPS."""
+    from apps.cli.cloudflare import (
+        setup_cloudflare_dns,
+        setup_cloudflare_remotely_managed,
+        setup_cloudflare_tunnel,
+    )
+
+    tunnel_token = getattr(args, "tunnel_token", None)
+    tunnel_url = getattr(args, "tunnel_url", None)
+
+    if tunnel_token and tunnel_url:
+        url = setup_cloudflare_remotely_managed(
+            tunnel_token=tunnel_token,
+            tunnel_url=tunnel_url,
+            port=args.port,
+            yes=args.yes,
+        )
+        return 0 if url else 1
 
     if args.quick:
         url = setup_cloudflare_tunnel(port=args.port, yes=args.yes)
@@ -1955,28 +1971,45 @@ def cmd_setup_cloudflare(args: argparse.Namespace) -> int:
     domain = args.domain
     token = args.token
 
-    if not domain and not args.quick:
-        # Interactive: ask user which flow
+    if not domain and not tunnel_token:
         print()
         print("  Cloudflare Setup Options:")
-        print("    A) DNS setup (you have a domain on Cloudflare + API token)")
-        print("    B) Quick tunnel (no domain needed, instant HTTPS)")
+        print("    A) DNS setup (domain + API token, creates pinetunnel.<domain> A record)")
+        print("    B) Quick tunnel (no domain needed, instant HTTPS, temporary URL)")
+        print("    C) Remotely-managed tunnel (create on Cloudflare dashboard, paste token)")
         print()
         try:
-            choice = input("  Choose A or B [B]: ").strip().lower()
+            choice = input("  Choose A/B/C [C]: ").strip().lower()
         except (KeyboardInterrupt, EOFError):
-            choice = "b"
+            choice = "c"
+        if choice not in ("a", "b", "c"):
+            choice = "c"
+
         if choice == "a":
             try:
                 domain = input("  Domain (e.g., example.com): ").strip()
                 token = input("  API token: ").strip()
-                sub = input(f"  Subdomain [webhook]: ").strip() or "webhook"
+                sub = input(f"  Subdomain [pinetunnel]: ").strip() or "pinetunnel"
             except (KeyboardInterrupt, EOFError):
                 print("\n  Cancelled.")
                 return 130
             args.subdomain = sub
-        else:
+        elif choice == "b":
             url = setup_cloudflare_tunnel(port=args.port, yes=args.yes)
+            return 0 if url else 1
+        else:
+            try:
+                tunnel_token = input("  Paste tunnel token (from dashboard install command): ").strip()
+                tunnel_url = input("  Public URL (e.g., https://pinetunnel.example.com): ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\n  Cancelled.")
+                return 130
+            url = setup_cloudflare_remotely_managed(
+                tunnel_token=tunnel_token,
+                tunnel_url=tunnel_url,
+                port=args.port,
+                yes=args.yes,
+            )
             return 0 if url else 1
 
     if domain and not token:
@@ -1989,7 +2022,7 @@ def cmd_setup_cloudflare(args: argparse.Namespace) -> int:
     url = setup_cloudflare_dns(
         domain=domain,
         api_token=token,
-        subdomain=getattr(args, "subdomain", "webhook"),
+        subdomain=getattr(args, "subdomain", "pinetunnel"),
         port=args.port,
         yes=args.yes,
     )
