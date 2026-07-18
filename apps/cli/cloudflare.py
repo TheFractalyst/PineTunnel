@@ -443,7 +443,7 @@ def stop_quick_tunnel() -> bool:
 def setup_cloudflare_dns(
     domain: str,
     api_token: str,
-    subdomain: str = "webhook",
+    subdomain: str = "pinetunnel",
     port: int = 8000,
     yes: bool = False,
 ) -> str | None:
