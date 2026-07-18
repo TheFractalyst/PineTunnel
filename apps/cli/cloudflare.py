@@ -593,6 +593,132 @@ def setup_cloudflare_tunnel(
     return tunnel_url
 
 
+def setup_cloudflare_remotely_managed(
+    tunnel_token: str,
+    tunnel_url: str,
+    port: int = 8000,
+    yes: bool = False,
+) -> str | None:
+    """Set up a Cloudflare remotely-managed tunnel (Cloudflare-recommended flow).
+
+    The user creates the tunnel on the Cloudflare dashboard
+    (Networking > Tunnels > Create a tunnel), configures the public
+    hostname there (e.g., pinetunnel.example.com -> http://localhost:8000),
+    then pastes the tunnel token and public URL into this function.
+
+    cloudflared is installed as an OS service (systemd/launchd/sc.exe)
+    that starts on boot. Falls back to a background daemon if service
+    install fails (e.g., no sudo).
+
+    Returns the public HTTPS URL or None on failure.
+    """
+    parsed_token = _parse_tunnel_token(tunnel_token)
+    if not parsed_token:
+        print("  [FAIL] Tunnel token looks invalid (expected 20+ char string).")
+        print("         Copy it from the Cloudflare dashboard install command.")
+        return None
+
+    parsed_url = _parse_tunnel_url(tunnel_url)
+    if not parsed_url:
+        print("  [FAIL] Tunnel URL looks invalid.")
+        print("         Example: https://pinetunnel.example.com")
+        return None
+
+    if not is_cloudflared_installed():
+        print("  cloudflared not found. Installing...")
+        if not install_cloudflared(yes=yes):
+            return None
+
+    print(f"  Installing cloudflared as OS service...")
+    svc_proc = subprocess.run(
+        ["cloudflared", "service", "install", parsed_token],
+        capture_output=True, text=True, timeout=60,
+    )
+
+    daemon_fallback = False
+    if svc_proc.returncode != 0:
+        print(f"  [WARN] Service install failed: {(svc_proc.stderr or '')[:200]}")
+        print("  Falling back to background daemon (will NOT survive reboot).")
+        daemon_fallback = True
+    else:
+        print("  [OK]   cloudflared service installed (starts on boot)")
+
+    if daemon_fallback:
+        log_path = Path.cwd() / "cloudflared-tunnel.log"
+        tunnel_proc = subprocess.Popen(
+            ["cloudflared", "tunnel", "run", "--token", parsed_token],
+            stdout=open(log_path, "a"),
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=(platform.system() != "Windows"),
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) if platform.system() == "Windows" else 0,
+        )
+        pid_file = Path.cwd() / "cloudflared.pid"
+        pid_file.write_text(str(tunnel_proc.pid))
+        time.sleep(3)
+        if tunnel_proc.poll() is not None:
+            print("  [FAIL] cloudflared exited immediately.")
+            try:
+                log_content = log_path.read_text()[-500:]
+                print(f"  Last log lines: {log_content}")
+            except OSError:
+                pass
+            return None
+        print(f"  [OK]   cloudflared running (PID {tunnel_proc.pid})")
+
+    print(f"  Verifying tunnel at {parsed_url}...")
+    healthy = False
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            health_req = Request(f"{parsed_url}/health", method="GET")
+            with urlopen(health_req, timeout=5) as resp:
+                if resp.status == 200:
+                    healthy = True
+                    break
+        except Exception:
+            pass
+        time.sleep(2)
+
+    if healthy:
+        print("  [OK]   Tunnel healthy")
+    else:
+        print("  [WARN] Health check timed out (tunnel may still be initializing).")
+        print(f"         Check status at: https://dash.cloudflare.com -> Networking -> Tunnels")
+
+    webhook_url = parsed_url
+    print(f"  Updating .env SERVER_BASE_URL to {webhook_url}...")
+    if update_env_server_url(webhook_url):
+        print("  [OK]   .env updated")
+    else:
+        print("  [WARN] Could not update .env. Set manually:")
+        print(f"         SERVER_BASE_URL={webhook_url}")
+
+    print()
+    print("  ========================================")
+    print("  Cloudflare Remotely-Managed Tunnel Active!")
+    print("  ========================================")
+    print()
+    print(f"  Tunnel URL:   {webhook_url}")
+    if daemon_fallback:
+        print(f"  Mode:         Background daemon (PID file: cloudflared.pid)")
+        print(f"  Limitation:   Does NOT survive reboot. Re-run setup or install service manually.")
+    else:
+        print(f"  Mode:         OS service (starts on boot, survives reboots)")
+    print(f"  Features:     HTTPS, DDoS protection, WebSocket, no port opening needed")
+    print()
+    print(f"  TradingView webhook URL: {webhook_url}/")
+    print(f"  API docs:                {webhook_url}/docs")
+    print()
+    if not daemon_fallback:
+        print(f"  Stop:         cloudflared service uninstall (or OS service manager)")
+    else:
+        print(f"  Stop:         pinetunnel stop-cloudflare")
+    print()
+
+    return webhook_url
+
+
 def setup_cloudflare_oauth(port: int = 8000, yes: bool = False) -> str | None:
     """Set up Cloudflare named tunnel via browser OAuth login.
 
