@@ -2612,25 +2612,58 @@ def _run_quick_setup() -> int:
     print()
     print("  TradingView needs a URL to send alerts to.")
     print()
-    print("  A) Public IP  (HTTP, no domain needed, zero cost)")
-    print("  B) Cloudflare (HTTPS, persistent domain, DDoS protection)")
+    print("  A) Public IP         (HTTP, no domain needed, zero cost)")
+    print("  B) Quick Tunnel      (HTTPS, no Cloudflare account, temporary URL)")
+    print("  C) Cloudflare Tunnel (HTTPS, persistent, requires Cloudflare account)")
     print()
     try:
-        url_choice = input("  Choose [A/B] (default: A): ").strip().upper()
+        url_choice = input("  Choose [A/B/C] (default: A): ").strip().upper()
     except (KeyboardInterrupt, EOFError):
         url_choice = "A"
-    if url_choice not in ("A", "B"):
+    if url_choice not in ("A", "B", "C"):
         url_choice = "A"
 
     if url_choice == "B":
         print()
-        print("  Launching Cloudflare browser login...")
-        print("  (A browser will open - or copy the URL to your computer)")
+        print("  Starting Cloudflare quick tunnel...")
         print()
-        from apps.cli.cloudflare import setup_cloudflare_oauth
-        result = setup_cloudflare_oauth(port=8000, yes=False)
+        from apps.cli.cloudflare import setup_cloudflare_tunnel
+        result = setup_cloudflare_tunnel(port=8000, yes=False)
         if not result:
-            print("  [WARN] Cloudflare setup failed. Falling back to public IP.")
+            print("  [WARN] Quick tunnel failed. Falling back to public IP.")
+            url_choice = "A"
+
+    if url_choice == "C":
+        print()
+        print("  Create a tunnel on the Cloudflare dashboard:")
+        print("    1. Go to https://dash.cloudflare.com -> Networking -> Tunnels")
+        print("    2. Click 'Create a tunnel', name it (e.g., pinetunnel)")
+        print("    3. On the Routes tab, add a Published application:")
+        print("       - Subdomain: pinetunnel (or any name you want)")
+        print("       - Domain: select your domain from the dropdown")
+        print("       - Service URL: http://localhost:8000")
+        print("    4. Copy the tunnel token from the install command shown")
+        print()
+        try:
+            tunnel_token = input("  Paste tunnel token: ").strip()
+            tunnel_url = input("  Public URL (e.g., https://pinetunnel.example.com): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n  Cancelled. Falling back to public IP.")
+            url_choice = "A"
+            tunnel_token = ""
+        if url_choice == "C" and tunnel_token and tunnel_url:
+            from apps.cli.cloudflare import setup_cloudflare_remotely_managed
+            result = setup_cloudflare_remotely_managed(
+                tunnel_token=tunnel_token,
+                tunnel_url=tunnel_url,
+                port=8000,
+                yes=False,
+            )
+            if not result:
+                print("  [WARN] Cloudflare tunnel setup failed. Falling back to public IP.")
+                url_choice = "A"
+        elif url_choice == "C":
+            print("  [WARN] Missing token or URL. Falling back to public IP.")
             url_choice = "A"
 
     if url_choice == "A":
