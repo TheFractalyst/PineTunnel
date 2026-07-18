@@ -373,70 +373,64 @@ def _install_cloudflared_binary() -> bool:
 def start_quick_tunnel(port: int = 8000, yes: bool = False) -> str | None:
     """Start a Cloudflare quick tunnel. Returns the trycloudflare.com URL.
 
-    This runs cloudflared in the background and captures the URL from stderr.
-    The tunnel stays alive as long as the cloudflared process runs.
+    This runs cloudflared as a detached background process and captures the
+    URL from its log output. The tunnel survives session close.
     """
     if not is_cloudflared_installed():
         print("  cloudflared not found. Installing...")
         if not install_cloudflared(yes=yes):
             return None
 
-    print(f"  Starting Cloudflare quick tunnel for 127.0.0.1:{port}...")
-    proc = subprocess.Popen(
-        ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    log_path = Path.cwd() / "cloudflared-tunnel.log"
+    if log_path.exists():
+        log_path.unlink()
 
-    # Read stderr until we find the trycloudflare.com URL
+    print(f"  Starting Cloudflare quick tunnel for 127.0.0.1:{port}...")
+    if platform.system() == "Windows":
+        proc = subprocess.Popen(
+            ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
+            stdout=open(log_path, "w"),
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
+    else:
+        proc = subprocess.Popen(
+            ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
+            stdout=open(log_path, "w"),
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    time.sleep(3)
+    if proc.poll() is not None:
+        print("  [FAIL] cloudflared exited immediately.")
+        try:
+            print(f"  Log: {log_path.read_text()[-500:]}")
+        except Exception:
+            pass
+        return None
+
     tunnel_url = None
-    deadline = time.time() + 30  # 30s timeout
+    deadline = time.time() + 30
     while time.time() < deadline:
-        line = proc.stderr.readline()
-        if not line:
-            if proc.poll() is not None:
+        try:
+            content = log_path.read_text()
+            match = TRYCLOUDFLARE_RE.search(content)
+            if match:
+                tunnel_url = match.group(0)
                 break
-            time.sleep(0.1)
-            continue
-        match = TRYCLOUDFLARE_RE.search(line)
-        if match:
-            tunnel_url = match.group(0)
-            break
+        except Exception:
+            pass
+        time.sleep(1)
 
     if tunnel_url:
-        # Kill the pipe-connected process - we need to restart detached
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
-
-        # Restart cloudflared as a detached process that survives session close
-        log_path = Path.cwd() / "cloudflared-tunnel.log"
-        log_file = open(log_path, "a")
-        if platform.system() == "Windows":
-            det_proc = subprocess.Popen(
-                ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
-                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-            )
-        else:
-            det_proc = subprocess.Popen(
-                ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-
         pid_file = Path.cwd() / "cloudflared.pid"
-        pid_file.write_text(str(det_proc.pid))
+        pid_file.write_text(str(proc.pid))
         print(f"  [OK]   Quick tunnel started: {tunnel_url}")
-        print(f"  PID:   {pid_file} (PID {det_proc.pid})")
+        print(f"  PID:   {pid_file} (PID {proc.pid})")
         print(f"  Note:  This URL is temporary. It changes on every restart.")
         print(f"  Stop:  pinetunnel stop-cloudflare")
         return tunnel_url
