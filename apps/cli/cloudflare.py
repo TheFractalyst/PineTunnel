@@ -233,6 +233,37 @@ def update_env_server_url(new_url: str) -> bool:
     return updated
 
 
+def _parse_tunnel_token(raw: str) -> str | None:
+    """Accept a raw tunnel token or a full 'cloudflared service install <TOKEN>'
+    / 'cloudflared tunnel run --token <TOKEN>' command from the dashboard.
+    Returns the token string, or None if not found."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw.startswith("cloudflared"):
+        parts = raw.split()
+        for p in parts[2:]:
+            if not p.startswith("-") and len(p) > 20:
+                return p
+        return None
+    return raw if len(raw) > 20 else None
+
+
+def _parse_tunnel_url(raw: str) -> str | None:
+    """Accept 'https://host' or 'host'. Return 'https://host' normalized,
+    or None if the hostname looks invalid."""
+    from urllib.parse import urlparse
+    raw = raw.strip().rstrip("/")
+    if not raw:
+        return None
+    if not raw.startswith("http"):
+        raw = "https://" + raw
+    parsed = urlparse(raw)
+    if not parsed.hostname or "." not in parsed.hostname:
+        return None
+    return raw
+
+
 # ---------------------------------------------------------------------------
 # cloudflared detection and install
 # ---------------------------------------------------------------------------
