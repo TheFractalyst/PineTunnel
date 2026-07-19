@@ -35,8 +35,8 @@
   --t-fast: 150ms var(--ease-fast);
   --t-default: 200ms var(--ease-default);
   --t-slow: 300ms var(--ease-slow);
-  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
