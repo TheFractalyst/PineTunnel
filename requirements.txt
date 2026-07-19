@@ -10,8 +10,6 @@
 fastapi==0.119.1
 uvicorn[standard]==0.32.1
 pydantic==2.9.2
-python-multipart>=0.0.27
-itsdangerous>=2.1.0
 
 # Database
 sqlalchemy==2.0.35

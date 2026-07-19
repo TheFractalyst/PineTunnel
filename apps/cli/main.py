@@ -102,15 +102,23 @@ def _ensure_cloudflared() -> bool:
 
 def _run_migrations() -> int:
     root = _project_root()
+    import importlib.util
+    alembic_ini = root / "alembic.ini"
+    if not alembic_ini.exists():
+        spec = importlib.util.find_spec("migrations")
+        if spec and spec.origin:
+            alembic_ini = Path(spec.origin).parent / "alembic.ini"
     result = subprocess.run(
         [sys.executable, "-c",
          "import os,sys; sys.path=[p for p in sys.path if p not in ('','.',os.getcwd())]; "
          "from alembic.config import Config; from alembic import command; "
-         "cfg=Config('alembic.ini'); "
+         f"cfg=Config('{alembic_ini}'); "
          "cfg.set_main_option('sqlalchemy.url', os.environ.get('DATABASE_URL','sqlite:///pinetunnel.db')); "
          "command.upgrade(cfg, 'head')"],
         cwd=str(root), capture_output=True, text=True, timeout=30,
     )
+    if result.returncode != 0:
+        print(f"[pinetunnel] Migration warning: {result.stderr[:200]}")
     return result.returncode
 
 
@@ -192,11 +200,25 @@ def _step2_cloudflare(env_path: Path) -> bool:
             print()
             return True
 
-    has_cf = _ensure_cloudflared()
-    if not has_cf:
-        print("  Skipping domain setup. You can configure it later with 'pinetunnel setup'.")
+    print("  Options:")
+    print("    1. I have a Cloudflare domain (browser login)")
+    print("    2. I have a tunnel token from Cloudflare dashboard")
+    print("    3. Skip (configure later with 'pinetunnel setup')")
+    print()
+    choice = input("  Choose (1-3): ").strip()
+
+    if choice == "3" or not choice:
+        print("  Skipping domain setup.")
         print()
         return False
+
+    if choice == "2":
+        return _step2_cloudflare_token(env_path)
+
+    has_cf = _ensure_cloudflared()
+    if not has_cf:
+        print("  cloudflared not available. Use option 2 (tunnel token) instead.")
+        return _step2_cloudflare_token(env_path)
 
     if CF_CERT_FILE.exists():
         print("  Already logged in to Cloudflare.")
@@ -211,17 +233,16 @@ def _step2_cloudflare(env_path: Path) -> bool:
         input("  Press Enter after you complete the login in your browser...")
         proc.wait()
         if not CF_CERT_FILE.exists():
-            print("  ! Login not completed. Skipping domain setup.")
-            print()
-            return False
+            print("  ! Login not completed.")
+            print("  You can use option 2 (tunnel token) instead.")
+            return _step2_cloudflare_token(env_path)
 
     print()
     print("  Fetching available domains...")
     zones = _list_cf_zones()
     if not zones:
         print("  ! No domains found in your Cloudflare account.")
-        print()
-        return False
+        return _step2_cloudflare_token(env_path)
 
     print()
     for i, z in enumerate(zones, 1):
@@ -229,9 +250,9 @@ def _step2_cloudflare(env_path: Path) -> bool:
     print()
 
     while True:
-        choice = input(f"Select domain (1-{len(zones)}): ").strip()
+        sel = input(f"Select domain (1-{len(zones)}): ").strip()
         try:
-            idx = int(choice) - 1
+            idx = int(sel) - 1
             if 0 <= idx < len(zones):
                 zone_name = zones[idx]
                 break
@@ -259,9 +280,35 @@ def _step2_cloudflare(env_path: Path) -> bool:
         print()
         return True
     else:
-        print("  ! Failed to create tunnel. Check cloudflared logs.")
+        print("  ! Failed to create tunnel.")
+        return _step2_cloudflare_token(env_path)
+
+
+def _step2_cloudflare_token(env_path: Path) -> bool:
+    print()
+    print("  Paste your Cloudflare tunnel token.")
+    print("  Get it from: dash.cloudflare.com > Zero Trust > Tunnels > Create")
+    print()
+    token = input("  Tunnel token: ").strip()
+    if not token:
+        print("  ! No token provided. Skipping.")
         print()
         return False
+
+    url = input("  Full URL (e.g. https://signals.example.com): ").strip()
+    if not url.startswith("https://"):
+        print("  ! URL must start with https://")
+        url = ""
+
+    write_env_updates(env_path, {
+        "CLOUDFLARE_TUNNEL_TOKEN": token,
+        "SERVER_BASE_URL": url,
+    })
+    print(f"  -> Saved to .env")
+    if url:
+        print(f"  -> Webhook URL: {url.rstrip('/')}/webhook")
+    print()
+    return True
 
 
 def _list_cf_zones() -> list:

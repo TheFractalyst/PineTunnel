@@ -25,10 +25,8 @@ classifiers = [
 ]
 dependencies = [
     "fastapi==0.119.1",
-    "itsdangerous>=2.1.0",
     "uvicorn[standard]==0.32.1",
     "pydantic==2.9.2",
-    "python-multipart>=0.0.27",
     "sqlalchemy==2.0.35",
     "alembic==1.13.2",
     "greenlet>=3.1.0",
@@ -60,13 +58,16 @@ where = ["."]
 include = ["apps*", "assets*", "migrations*"]
 namespaces = false
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.package-data]
 "apps.ea.mt4" = ["*.ex4", "*.mq4", "include/*.mqh"]
 "apps.ea.mt5" = ["*.ex5", "*.mq5", "VERSION.json", "include/*.mqh"]
 "apps.ea.pine" = ["*.pine"]
 "apps.server" = ["version.json"]
 "assets" = ["*.svg"]
-"migrations" = ["*.mako"]
+"migrations" = ["*.py", "*.mako", "*.ini"]
 
 [tool.black]
 line-length = 100
