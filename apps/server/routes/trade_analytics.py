@@ -614,7 +614,7 @@ async def get_admin_dashboard(license_key: str | None = Query(None), user: dict 
         if db_manager:
             try:
                 today_expr = db_manager.sql_today()
-                lic_clause = " AND client_id = :lk" if license_key else ""
+                lic_clause = " AND license_key = :lk" if license_key else ""
                 lic_params = {"lk": license_key} if license_key else None
                 rows = db_manager.execute_query(
                     f"SELECT "
@@ -643,7 +643,7 @@ async def get_admin_dashboard(license_key: str | None = Query(None), user: dict 
 
                 recent_rows = db_manager.execute_query(
                     f"SELECT timestamp, symbol, action, volume, price, status, "
-                    f"client_id AS license_key, message "
+                    f"license_key, comment AS message "
                     f"FROM trades WHERE 1=1{lic_clause} "
                     f"ORDER BY timestamp DESC LIMIT 20",
                     lic_params,
