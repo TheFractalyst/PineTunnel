@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
@@ -19,6 +20,11 @@ class LoginRequest(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     updates: dict[str, str]
+
+
+class ValidateTelegramRequest(BaseModel):
+    token: str
+    user_id: str
 
 
 def create_dashboard_router(
@@ -61,5 +67,30 @@ def create_dashboard_router(
     async def update_config(req: ConfigUpdateRequest, _=Depends(require_auth)):
         write_env_updates(env_path, req.updates)
         return {"status": "ok", "updated_keys": list(req.updates.keys())}
+
+    @router.post("/validate-telegram")
+    async def validate_telegram(req: ValidateTelegramRequest):
+        token = req.token.strip()
+        if not token:
+            return {"valid": False, "error": "Token is required"}
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
+                data = resp.json()
+        except httpx.TimeoutException:
+            return {"valid": False, "error": "Telegram API timed out"}
+        except Exception:
+            return {"valid": False, "error": "Failed to reach Telegram API"}
+        if not data.get("ok"):
+            desc = data.get("description", "Invalid token")
+            return {"valid": False, "error": desc}
+        result = data.get("result", {})
+        bot_username = result.get("username", "")
+        bot_name = result.get("first_name", bot_username)
+        return {
+            "valid": True,
+            "bot_username": f"@{bot_username}" if bot_username else "",
+            "bot_name": bot_name,
+        }
 
     return router
