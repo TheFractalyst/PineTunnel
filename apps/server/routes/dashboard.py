@@ -833,8 +833,10 @@ def create_dashboard_router(
             rate_limiter.unblock_identifier(ip)
             unblocked_any = True
         if failed_attempt_tracker is not None:
+            was_blocked = ip in getattr(failed_attempt_tracker, "blocked_ips", set()) or ip in getattr(failed_attempt_tracker, "attempts", {})
             await failed_attempt_tracker.reset_async(ip)
-            unblocked_any = True
+            if was_blocked:
+                unblocked_any = True
         if not unblocked_any:
             return {"success": False, "message": f"IP {ip} is not blocked"}
         logger.info("Dashboard: unblocked IP %s", ip)
