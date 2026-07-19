@@ -226,6 +226,9 @@ async def get_active_connections(_username: str = Depends(_require_auth)):
 
     result = conn_manager.build_connections_response()
     result["websocket"] = ws_manager.build_connections_response()
+    active_http_keys = set(conn_manager.get_active_http_clients()) if conn_manager else set()
+    ws_license_keys = set(ws_manager.get_connected_license_keys()) if ws_manager else set()
+    result["total_unique_licenses"] = len(active_http_keys | ws_license_keys)
     result["timestamp"] = datetime.now().isoformat()
     return result
 
@@ -357,8 +360,8 @@ async def get_system_stats(_username: str = Depends(_require_auth)):
 
         raise HTTPException(status_code=503, detail="psutil not available")
 
-    # Disk usage
-    disk = psutil.disk_usage("/")
+    disk_path = os.getenv("DATA_DIR", "/data" if os.path.exists("/data") else "/")
+    disk = psutil.disk_usage(disk_path)
 
     # Network stats (if available)
     try:
@@ -416,7 +419,11 @@ async def get_system_stats(_username: str = Depends(_require_auth)):
             "total_gb": round(disk.total / 1024 / 1024 / 1024, 2),
             "used_gb": round(disk.used / 1024 / 1024 / 1024, 2),
             "free_gb": round(disk.free / 1024 / 1024 / 1024, 2),
+            "free_mb": round(disk.free / 1024 / 1024, 0),
+            "total_mb": round(disk.total / 1024 / 1024, 0),
             "percent": disk.percent,
+            "used_percent": round((disk.used / disk.total) * 100, 1) if disk.total else 0,
+            "path": disk_path,
         },
         "network": network_stats,
         "trades": trades_data,

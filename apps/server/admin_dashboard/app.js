@@ -90,6 +90,14 @@ function formatCurrency(n) {
 function formatPct(n) {
   if (n == null || isNaN(n)) return "--";
   const v = Number(n);
+  if (v === 999999 || v > 10000) return "--";
+  if (v <= 1 && v >= -1) return (v * 100).toFixed(1) + "%";
+  return Math.round(v) + "%";
+}
+
+function formatMarginLevel(n) {
+  if (n == null || isNaN(n) || n === 999999 || n > 10000) return "--";
+  const v = Number(n);
   if (v <= 1 && v >= -1) return (v * 100).toFixed(1) + "%";
   return Math.round(v) + "%";
 }
@@ -2436,7 +2444,7 @@ async function pollEaMap() {
     const acc = ea.account || {};
     const balance = acc.balance != null ? formatCurrency(acc.balance) : "--";
     const equity = acc.equity != null ? formatCurrency(acc.equity) : "--";
-    const marginLevel = acc.margin_level != null ? formatPct(acc.margin_level) : "--";
+    const marginLevel = formatMarginLevel(acc.margin_level);
     const broker = acc.company || acc.server || "--";
     const positions = ea.open_position_count || 0;
     const lat = ea.latency != null ? formatLatency(ea.latency) : "--";
@@ -3575,14 +3583,14 @@ function updateRiskUI(data) {
   setTile("risk-pct", rm.risk_per_trade_pct != null ? formatPct(rm.risk_per_trade_pct) : "--", "info");
   setTile("risk-balance", acc.balance != null ? formatCurrency(acc.balance) : "--", "ok");
   setTile("risk-equity", acc.equity != null ? formatCurrency(acc.equity) : "--", "ok");
-  setTile("risk-margin", acc.margin_level != null ? formatPct(acc.margin_level) : "--", loadColor(acc.margin_level));
+  setTile("risk-margin", formatMarginLevel(acc.margin_level), (acc.margin_level == null || acc.margin_level === 999999 || acc.margin_level > 10000) ? "info" : loadColor(acc.margin_level));
   const alertsEl = document.getElementById("risk-alerts");
   if (alertsEl) {
     const alerts = [];
     if (rm.daily_pnl != null && rm.daily_loss_limit != null && rm.daily_pnl < 0 && Math.abs(rm.daily_pnl) > rm.daily_loss_limit * 0.8) {
       alerts.push({ cls: "warn", msg: "Approaching daily loss limit" });
     }
-    if (acc.margin_level != null && acc.margin_level < 120) {
+    if (acc.margin_level != null && acc.margin_level !== 999999 && acc.margin_level <= 10000 && acc.margin_level < 120) {
       alerts.push({ cls: "bad", msg: "Margin call warning - margin level below 120%" });
     }
     if (!data.can_trade) {
