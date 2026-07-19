@@ -458,6 +458,21 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 }
 .webhook-display .btn { flex-shrink: 0; }
 
+.card.stale { opacity: 0.75; }
+.stale-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: var(--amber-bg);
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 4px;
+}
+
 .hidden { display: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
