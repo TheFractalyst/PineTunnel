@@ -69,3 +69,7 @@ data/*.db-wal
 cloudflared-tunnel.log
 egg-info/
 auth_config.json
+seed_demo.py
+licenses.json
+pinetunnel.db
+*.db
