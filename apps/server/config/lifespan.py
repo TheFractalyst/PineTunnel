@@ -762,7 +762,7 @@ async def lifespan(app: FastAPI):
     if _open_browser:
         port = os.getenv("PORT", "8000")
         try:
-            webbrowser.open(f"http://127.0.0.1:{port}/admin/", new=2, autoraise=True)
+            webbrowser.open(f"http://127.0.0.1:{port}/", new=2, autoraise=True)
         except Exception:
             logger.debug("Could not open browser", exc_info=True)
         _first_run_marker.parent.mkdir(parents=True, exist_ok=True)
