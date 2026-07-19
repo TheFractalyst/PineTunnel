@@ -1111,7 +1111,7 @@ function render() {
       <nav class="sidebar" aria-label="Main navigation">
         <div class="brand">${LOGO_SVG}</div>
         <div class="nav-scroll">${sidebarItems}</div>
-        <div class="footer"><svg class="status-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg><span>System Online - v1.0</span></div>
+        <div class="footer"><span>System Online - v1.0</span></div>
       </nav>
       <div class="main-area">
         <header class="header" role="banner">
