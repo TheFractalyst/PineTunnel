@@ -2,11 +2,17 @@ const API = "/api/dashboard";
 const POLL_INTERVAL = 10000;
 const FETCH_TIMEOUT = 10000;
 const RETRY_DELAY = 2000;
+const SKELETON_MIN_MS = 200;
 let pollTimers = [];
 let currentRoute = "overview";
+let pendingRouteAfterLogin = "overview";
 let lastSetupStatus = null;
 let loginVisible = false;
 let connectionLostVisible = false;
+let connBackoff = 5000;
+let connRetryTimer = null;
+let toastStack = [];
+const TOAST_MAX = 3;
 
 const CSRF_HEADER = "X-Admin-CSRF";
 
@@ -31,6 +37,79 @@ function jsonHeaders(withCsrf = false) {
   if (withCsrf) h[CSRF_HEADER] = "1";
   return h;
 }
+
+function friendlyMsg(e) {
+  if (!e) return "Something went wrong. Please try again.";
+  if (e.friendly) return e.friendly;
+  const status = e.status;
+  const raw = e.message || String(e);
+  if (status === 401) return "Your session expired. Please log in again.";
+  if (status === 403) return "You do not have permission to do this.";
+  if (status === 404) return "The resource was not found on the server.";
+  if (status === 429) return "Too many requests. Wait a moment and retry.";
+  if (status >= 500) return `Server error (${status}). The server may be overloaded - try again in a moment.`;
+  if (status === 0) {
+    if (/timeout/i.test(raw)) return "The server took too long to respond. Check if it is running.";
+    return "Connection failed. The server is unreachable.";
+  }
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+    return "Connection failed. The server is unreachable.";
+  }
+  return raw;
+}
+
+function errorBlock(opts) {
+  const title = opts.title || "Could not load data";
+  const detail = opts.detail ? `<div class="sub">${escapeHtml(opts.detail)}</div>` : "";
+  const hint = opts.hint ? `<div class="sub">${escapeHtml(opts.hint)}</div>` : "";
+  const retryAction = opts.retryAction || "retry-generic";
+  const retryLabel = opts.retryLabel || "Retry";
+  return `<div class="empty error-state">
+    <div class="icon">${ICONS.alert}</div>
+    <div class="msg">${escapeHtml(title)}</div>
+    ${detail}${hint}
+    <button class="btn outline sm mt" data-action="${escapeHtml(retryAction)}">${ICONS.refresh}${escapeHtml(retryLabel)}</button>
+  </div>`;
+}
+
+function partialErrorBadge(label) {
+  return `<div class="partial-badge">${ICONS.alert}<span>${escapeHtml(label)}</span></div>`;
+}
+
+const PALETTE = {
+  green: "#4cb782",
+  red: "#eb5757",
+  amber: "#f2994a",
+  blue: "#5e6ad2",
+  text: "#e4e4e7",
+  muted: "#9a9aa3",
+  muted2: "#82828b",
+};
+
+function emptyState(icon, msg, actionLabel, actionName) {
+  const btn = actionLabel ? `<button class="btn outline sm mt" data-action="${escapeHtml(actionName || "empty-action")}">${escapeHtml(actionLabel)}</button>` : "";
+  return `<div class="empty empty-illustrated">
+    <div class="icon">${icon}</div>
+    <div class="msg">${escapeHtml(msg)}</div>
+    ${btn}
+  </div>`;
+}
+
+function withMinDisplayTime(promise) {
+  const start = Date.now();
+  return promise.then(result => {
+    const elapsed = Date.now() - start;
+    if (elapsed < SKELETON_MIN_MS) {
+      return new Promise(resolve => setTimeout(() => resolve(result), SKELETON_MIN_MS - elapsed));
+    }
+    return result;
+  });
+}
+
+function bindRetry(scope, action, fn) {
+  const el = scope.querySelector(`[data-action="${action}"]`);
+  if (el) el.addEventListener("click", e => { e.preventDefault(); fn(); });
+}
 let routeTimer = null;
 let domCache = { content: null, actions: null, sidebar: null };
 let overviewRendered = false;
@@ -44,9 +123,9 @@ const ICONS = {
   overview: '<svg' + SVG_ATTRS + '><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>',
   signals: '<svg' + SVG_ATTRS + '><path d="M2 12h4l3-9 6 18 3-9h4"/></svg>',
   feed: '<svg' + SVG_ATTRS + '><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="14" y2="18"/></svg>',
-  map: '<svg' + SVG_ATTRS + '><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>',
+  map: '<svg' + SVG_ATTRS + '><path d="M9 2v6"/><path d="M15 2v6"/><path d="M5 8h14l-1.5 9a2 2 0 0 1-2 1.7H8.5a2 2 0 0 1-2-1.7z"/><path d="M12 19v3"/></svg>',
   analytics: '<svg' + SVG_ATTRS + '><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>',
-  pipeline: '<svg' + SVG_ATTRS + '><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><line x1="7" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="17" y2="12"/></svg>',
+  pipeline: '<svg' + SVG_ATTRS + '><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
   settings: '<svg' + SVG_ATTRS + '><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
   setup: '<svg' + SVG_ATTRS + '><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>',
   check: '<svg' + SVG_ATTRS + '><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>',
@@ -59,17 +138,17 @@ const ICONS = {
   play: '<svg' + SVG_ATTRS + '><polygon points="5 3 19 12 5 21 5 3"/></svg>',
   refresh: '<svg' + SVG_ATTRS + '><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
   chevron: '<svg' + SVG_ATTRS + '><polyline points="6 9 12 15 18 9"/></svg>',
-  health: '<svg' + SVG_ATTRS + '><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
+  health: '<svg' + SVG_ATTRS + '><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>',
   webhook: '<svg' + SVG_ATTRS + '><path d="M18 16.16v-1.6a2 2 0 0 0-1.1-1.8L13 11V7a1.5 1.5 0 0 0-3 0v9l-2.5-1.5a1.5 1.5 0 0 0-1.6 2.5L9 19"/></svg>',
   risk: '<svg' + SVG_ATTRS + '><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-  errors: '<svg' + SVG_ATTRS + '><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+  errors: '<svg' + SVG_ATTRS + '><path d="M8 2l1.88 1.88M14.12 3.88L16 2M9 7.13v-1a3 3 0 0 1 .59-1.82A4 4 0 0 1 12 4a4 4 0 0 1 2.41.31A3 3 0 0 1 15 6.13v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg>',
   database: '<svg' + SVG_ATTRS + '><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
-  metrics: '<svg' + SVG_ATTRS + '><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
-  diag: '<svg' + SVG_ATTRS + '><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
-  bot: '<svg' + SVG_ATTRS + '><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>',
-  license: '<svg' + SVG_ATTRS + '><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+  metrics: '<svg' + SVG_ATTRS + '><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
+  diag: '<svg' + SVG_ATTRS + '><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.3.3 0 0 0 .2.3"/><path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg>',
+  bot: '<svg' + SVG_ATTRS + '><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+  license: '<svg' + SVG_ATTRS + '><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 2.5l3 3L16 8l1.5 1.5L14 13"/></svg>',
   security: '<svg' + SVG_ATTRS + '><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
-  audit: '<svg' + SVG_ATTRS + '><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/><line x1="16" y1="9" x2="20" y2="9"/></svg>',
+  audit: '<svg' + SVG_ATTRS + '><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   trash: '<svg' + SVG_ATTRS + '><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   ban: '<svg' + SVG_ATTRS + '><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>',
   power: '<svg' + SVG_ATTRS + '><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>',
@@ -91,9 +170,10 @@ async function http(path, opts = {}) {
       });
       if (r.status === 401) {
         if (path.startsWith("/api/dashboard/")) {
-          showLogin();
+          pendingRouteAfterLogin = currentRoute;
+          showLogin(true);
         }
-        const e = new Error("Unauthorized");
+        const e = new Error("Your session expired. Please log in again.");
         e.status = 401;
         e.transient = false;
         throw e;
@@ -107,15 +187,17 @@ async function http(path, opts = {}) {
       return r;
     } catch (e) {
       if (e.name === "AbortError") {
-        e.message = "Request timed out";
+        e.message = "Request timed out. Check if the server is running.";
         e.transient = true;
         e.status = 0;
       } else if (e instanceof TypeError) {
+        e.message = "Connection failed. The server is unreachable.";
         e.transient = true;
         e.status = 0;
       } else if (e.transient === undefined) {
         e.transient = false;
       }
+      e.friendly = friendlyMsg(e);
       throw e;
     } finally {
       clearTimeout(timer);
@@ -140,25 +222,30 @@ async function useFetch(path, opts = {}) {
     hideConnectionLost();
     return { data, error: null, loading: false, stale: false };
   } catch (e) {
+    const msg = friendlyMsg(e);
     if (cache[path]) {
-      return { data: cache[path].data, error: e.message, loading: false, stale: true };
+      return { data: cache[path].data, error: msg, loading: false, stale: true };
     }
-    if (e.status !== 401) showConnectionLost(e.message);
-    return { data: null, error: e.message, loading: false, stale: false };
+    if (e.status !== 401) showConnectionLost(msg);
+    return { data: null, error: msg, loading: false, stale: false };
   }
 }
 
-function showLogin() {
+function showLogin(sessionExpired) {
   if (loginVisible) return;
   loginVisible = true;
   clearPolls();
   const app = document.getElementById("app");
   if (!app) return;
+  const notice = sessionExpired
+    ? `<div class="inline-error session-notice">${ICONS.alert}<span>Your session expired. Please log in again.</span></div>`
+    : "";
   app.innerHTML = `
     <div class="welcome">
       <div class="logo">P</div>
       <h1>PineTunnel Login</h1>
       <p>Send /login to your Telegram bot to get a one-time code</p>
+      ${notice}
       <div class="login-form">
         <input class="input" id="login-code" placeholder="Login code" autocomplete="off">
         <input class="input" id="login-uid" type="number" placeholder="Telegram user ID">
@@ -187,39 +274,65 @@ async function doLogin() {
     if (r.ok) {
       loginVisible = false;
       toast("Logged in", "ok");
+      const dest = pendingRouteAfterLogin || currentRoute || "overview";
       render();
-      route(currentRoute);
+      route(dest);
     }
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "Login";
-    err.innerHTML = `<div class="inline-error">${escapeHtml(e.message)}</div>`;
+    err.innerHTML = `<div class="inline-error">${escapeHtml(friendlyMsg(e))}</div>`;
   }
 }
 
 function showConnectionLost(msg) {
-  if (connectionLostVisible) return;
-  connectionLostVisible = true;
-  let overlay = document.getElementById("conn-lost");
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = "conn-lost";
-    overlay.className = "conn-overlay";
-    document.body.appendChild(overlay);
+  if (loginVisible) return;
+  if (!connectionLostVisible) {
+    connectionLostVisible = true;
+    let banner = document.getElementById("conn-lost");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "conn-lost";
+      banner.className = "conn-banner";
+      document.body.appendChild(banner);
+    }
+    banner.innerHTML = `<div class="conn-banner-inner">
+      <span class="conn-spinner" aria-hidden="true"></span>
+      <span class="conn-banner-msg">Connection lost. Reconnecting...</span>
+      <span class="conn-banner-sub">${escapeHtml(msg || "The server is unreachable.")}</span>
+      <button class="btn outline sm" data-action="retry-conn" type="button">Retry now</button>
+    </div>`;
+    const btn = banner.querySelector("[data-action='retry-conn']");
+    if (btn) btn.addEventListener("click", e => { e.preventDefault(); retryLastRoute(); });
+  } else {
+    const banner = document.getElementById("conn-lost");
+    if (banner) {
+      const sub = banner.querySelector(".conn-banner-sub");
+      if (sub && msg) sub.textContent = msg;
+    }
   }
-  overlay.innerHTML = `<div class="conn-card"><div class="conn-icon">${ICONS.alert}</div><div class="conn-msg">Connection lost</div><div class="conn-sub">${escapeHtml(msg || "The server is unreachable. Retrying automatically.")}</div><button class="btn outline sm" data-action="retry-conn">Retry</button></div>`;
-  const btn = overlay.querySelector("[data-action='retry-conn']");
-  if (btn) btn.addEventListener("click", e => { e.preventDefault(); retryLastRoute(); });
+  scheduleConnRetry();
+}
+
+function scheduleConnRetry() {
+  if (connRetryTimer) return;
+  connRetryTimer = setTimeout(() => {
+    connRetryTimer = null;
+    retryLastRoute();
+  }, connBackoff);
+  connBackoff = Math.min(30000, Math.round(connBackoff * 1.6));
 }
 
 function hideConnectionLost() {
-  if (!connectionLostVisible) return;
   connectionLostVisible = false;
-  const overlay = document.getElementById("conn-lost");
-  if (overlay) overlay.remove();
+  connBackoff = 5000;
+  if (connRetryTimer) { clearTimeout(connRetryTimer); connRetryTimer = null; }
+  const banner = document.getElementById("conn-lost");
+  if (banner) banner.remove();
 }
 
 function retryLastRoute() {
+  if (connRetryTimer) { clearTimeout(connRetryTimer); connRetryTimer = null; }
   hideConnectionLost();
   route(currentRoute);
 }
@@ -257,17 +370,17 @@ function loadColor(pct) {
 }
 
 function loadColorHex(pct, diskMode = false) {
-  if (pct == null || isNaN(pct)) return "#82828b";
+  if (pct == null || isNaN(pct)) return PALETTE.muted2;
   if (diskMode) {
-    return pct < 70 ? "#22c55e" : pct <= 90 ? "#f59e0b" : "#ef4444";
+    return pct < 70 ? PALETTE.green : pct <= 90 ? PALETTE.amber : PALETTE.red;
   }
-  return pct < 50 ? "#22c55e" : pct <= 80 ? "#f59e0b" : "#ef4444";
+  return pct < 50 ? PALETTE.green : pct <= 80 ? PALETTE.amber : PALETTE.red;
 }
 
 function svgGauge(value, label, opts = {}) {
-  const size = opts.size || 120;
-  const stroke = opts.stroke || 8;
-  const r = (size - stroke) / 2;
+  const size = Math.max(2, opts.size || 120);
+  const stroke = Math.max(1, opts.stroke || 8);
+  const r = Math.max(1, (size - stroke) / 2);
   const cx = size / 2;
   const cy = size / 2;
   const circumference = 2 * Math.PI * r;
@@ -283,7 +396,7 @@ function svgGauge(value, label, opts = {}) {
         stroke-dasharray="${dash} ${circumference}" stroke-linecap="round"
         transform="rotate(-90 ${cx} ${cy})" class="gauge-arc" style="transition: stroke-dasharray 0.6s ease, stroke 0.3s ease"/>
       <text x="${cx}" y="${cy - 2}" text-anchor="middle" class="gauge-value" fill="${color}">${display}</text>
-      <text x="${cx}" y="${cy + 16}" text-anchor="middle" class="gauge-label" fill="#9a9aa3">${label}</text>
+      <text x="${cx}" y="${cy + 16}" text-anchor="middle" class="gauge-label" fill="${PALETTE.muted}">${label}</text>
     </svg>
   </div>`;
 }
@@ -395,13 +508,44 @@ function clearPolls() {
 }
 
 function toast(msg, type = "ok") {
+  const container = ensureToastContainer();
+  const isErr = type === "bad" || type === "error";
   const t = document.createElement("div");
-  t.className = `toast ${type}`;
-  t.textContent = msg;
-  t.setAttribute("role", "status");
-  t.setAttribute("aria-live", "polite");
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  t.className = `toast ${isErr ? "bad" : "ok"}`;
+  t.setAttribute("role", isErr ? "alert" : "status");
+  t.setAttribute("aria-live", isErr ? "assertive" : "polite");
+  t.innerHTML = `<span class="toast-msg">${escapeHtml(msg)}</span><button class="toast-close" aria-label="Dismiss">${ICONS.x}</button>`;
+  t.addEventListener("click", () => dismissToast(t));
+  container.appendChild(t);
+  toastStack.push(t);
+  while (toastStack.length > TOAST_MAX) {
+    const old = toastStack.shift();
+    if (old && old.parentNode) old.remove();
+  }
+  const ttl = isErr ? 5000 : 3000;
+  const timer = setTimeout(() => dismissToast(t), ttl);
+  t._timer = timer;
+}
+
+function ensureToastContainer() {
+  let c = document.getElementById("toast-container");
+  if (!c) {
+    c = document.createElement("div");
+    c.id = "toast-container";
+    c.className = "toast-container";
+    c.setAttribute("aria-live", "polite");
+    document.body.appendChild(c);
+  }
+  return c;
+}
+
+function dismissToast(t) {
+  if (!t || !t.parentNode) return;
+  if (t._timer) { clearTimeout(t._timer); t._timer = null; }
+  t.classList.add("toast-out");
+  setTimeout(() => { if (t.parentNode) t.remove(); }, 200);
+  const i = toastStack.indexOf(t);
+  if (i >= 0) toastStack.splice(i, 1);
 }
 
 function copy(text) {
@@ -768,11 +912,6 @@ async function renderOverview(content, actions) {
   startOverviewPoll();
   startHealthPolling();
   if (healthState.data || healthState.error) updateHealthCard();
-}
-
-function bindRetry(scope, action, fn) {
-  const el = scope.querySelector(`[data-action="${action}"]`);
-  if (el) el.addEventListener("click", e => { e.preventDefault(); fn(); });
 }
 
 function bindOverviewActions(scope) {

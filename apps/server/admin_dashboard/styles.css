@@ -819,7 +819,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   white-space: nowrap;
 }
 .feed-table tbody tr { transition: background var(--t-fast); }
-.feed-table tbody tr:hover { background: var(--card-2); }
+.feed-table tbody tr:hover { background: rgba(255,255,255,0.02); }
 .feed-table tbody tr:last-child td { border-bottom: none; }
 .feed-empty {
   text-align: center;
