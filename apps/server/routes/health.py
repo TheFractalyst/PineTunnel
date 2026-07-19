@@ -396,7 +396,9 @@ async def get_system_stats(_username: str = Depends(_require_auth)):
             f"COUNT(*) AS total_trades, "
             f"COUNT(CASE WHEN DATE(timestamp) = {today_expr} THEN 1 END) AS today_trades, "
             f"COUNT(CASE WHEN DATE(timestamp) >= {week_ago_expr} THEN 1 END) AS total_recent_trades, "
-            f"COUNT(CASE WHEN status = 'success' AND DATE(timestamp) >= {week_ago_expr} THEN 1 END) AS successful_trades "
+            f"COUNT(CASE WHEN status = 'success' AND DATE(timestamp) >= {week_ago_expr} THEN 1 END) AS successful_trades, "
+            f"COALESCE(AVG(CASE WHEN profit > 0 AND DATE(timestamp) >= {week_ago_expr} THEN profit END), 0) AS avg_win, "
+            f"COALESCE(AVG(CASE WHEN profit < 0 AND DATE(timestamp) >= {week_ago_expr} THEN profit END), 0) AS avg_loss "
             f"FROM trades"
         )
         row = rows[0] if rows else {}
@@ -404,17 +406,23 @@ async def get_system_stats(_username: str = Depends(_require_auth)):
         total_trades = row.get("total_trades", 0)
         successful_trades = row.get("successful_trades", 0)
         total_recent_trades = row.get("total_recent_trades", 0)
+        avg_win = row.get("avg_win", 0) or 0
+        avg_loss = row.get("avg_loss", 0) or 0
 
         success_rate = (
             round((successful_trades / total_recent_trades * 100), 1)
             if total_recent_trades > 0
             else 0
         )
+        win_rate_decimal = successful_trades / total_recent_trades if total_recent_trades > 0 else 0
+        loss_rate_decimal = max(1.0 - win_rate_decimal, 0.0)
+        expectancy = round(win_rate_decimal * avg_win + loss_rate_decimal * avg_loss, 2)
 
         trades_data = {
             "today": today_trades,
             "total": total_trades,
             "success_rate_7d": round(success_rate, 1),
+            "expectancy": expectancy,
         }
     except Exception as e:
         logger.error("Failed to get trade stats: %s", e)

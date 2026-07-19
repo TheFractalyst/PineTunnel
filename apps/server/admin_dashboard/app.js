@@ -3789,7 +3789,7 @@ function updateRiskUI(data) {
   const card = document.getElementById("risk-status-card");
   if (card) {
     const ok = data.can_trade;
-    card.className = `stat hero ${ok ? "ok" : "bad"}`;
+    card.className = `risk-status-card ${ok ? "ok" : "bad"}`;
     const v = card.querySelector(".value");
     if (v) v.textContent = ok ? "Safe to Trade" : "Trading Paused";
     const l = card.querySelector(".label");
@@ -3839,7 +3839,7 @@ function renderRiskMonitor(content) {
     <div class="card">
       <h2 class="card-title">Risk Status</h2>
       <div class="card-desc">Whether it is safe to trade right now - updates every 10s</div>
-      <div class="stat hero" id="risk-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
+      <div class="risk-status-card" id="risk-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
     </div>
     <div class="card">
       <h2 class="card-title">Risk Metrics</h2>

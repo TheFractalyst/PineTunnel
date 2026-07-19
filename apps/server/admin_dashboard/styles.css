@@ -342,6 +342,42 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .stat.warn .value { color: var(--amber); }
 .stat.info .value { color: var(--blue); }
 .stat .value.empty.empty { color: var(--muted-2); }
+.risk-status-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--sp-6);
+  min-height: 120px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  margin-bottom: var(--sp-4);
+}
+.risk-status-card.ok { border-color: var(--green); background: rgba(0,200,83,0.06); }
+.risk-status-card.bad { border-color: var(--red); background: rgba(255,0,81,0.06); }
+.risk-status-card .value {
+  font-size: var(--text-xl);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: var(--lh-tight);
+  margin-bottom: var(--sp-2);
+}
+.risk-status-card.ok .value { color: var(--green); }
+.risk-status-card.bad .value { color: var(--red); }
+.risk-status-card .label {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: var(--fw-regular);
+}
 .status-banner {
   display: flex;
   align-items: center;
