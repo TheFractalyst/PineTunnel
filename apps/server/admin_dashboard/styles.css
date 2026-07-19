@@ -2593,12 +2593,14 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   }
   .license-stack .data-table td.td-actions .btn { margin-left: 4px; margin-bottom: 4px; }
 
-  .license-stack .empty-cell {
+  .license-stack .empty-cell,
+  .license-stack td.empty {
     display: block !important;
     text-align: center !important;
     padding: 32px 16px !important;
   }
-  .license-stack .empty-cell::before { display: none; }
+  .license-stack .empty-cell::before,
+  .license-stack td.empty::before { display: none; }
 
   .timeline { padding-left: 16px; }
   .timeline::before { left: 4px; }

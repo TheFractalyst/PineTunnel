@@ -68,3 +68,4 @@ data/*.db-shm
 data/*.db-wal
 cloudflared-tunnel.log
 egg-info/
+auth_config.json

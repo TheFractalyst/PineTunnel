@@ -691,7 +691,7 @@ async function doLogin() {
     }
   } catch (e) {
     setBtnError(btn, "Login");
-    err.innerHTML = `<div class="inline-error">${escapeHtml(friendlyMsg(e))}</div>`;
+    err.innerHTML = `<div class="inline-error" role="alert">${escapeHtml(friendlyMsg(e))}</div>`;
   }
 }
 
@@ -1989,11 +1989,11 @@ async function sendStep3TestWebhook() {
       if (vfBtn) vfBtn.addEventListener("click", e => { e.preventDefault(); route("signals"); });
     } else {
       toast("Test failed", "bad");
-      result.innerHTML = `<div class="inline-error">${ICONS.x}${escapeHtml(data.message || "Test failed")}</div>`;
+      result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}${escapeHtml(data.message || "Test failed")}</div>`;
     }
   } catch (e) {
     toast("Request failed", "bad");
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(friendlyMsg(e))}</div>`;
+    result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Request failed: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
   btn.disabled = false;
   btn.innerHTML = btn.dataset.origHtml || btn.innerHTML;
@@ -2046,7 +2046,7 @@ async function saveTelegram() {
     const validateData = await validateRes.json();
     if (!validateData.valid) {
       setBtnError(btn, "Invalid token");
-      result.innerHTML = `<div class="inline-error">${ICONS.x}${escapeHtml(validateData.error || "Invalid token")}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
+      result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}${escapeHtml(validateData.error || "Invalid token")}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
       const retry = result.querySelector("[data-action='retry-save']");
       if (retry) retry.addEventListener("click", ev => { ev.preventDefault(); saveTelegram(); });
       return;
@@ -2072,7 +2072,7 @@ async function saveTelegram() {
     setTimeout(() => advanceStep(2), 2000);
   } catch (e) {
     setBtnError(btn, "Failed");
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(friendlyMsg(e))}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
+    result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Failed: ${escapeHtml(friendlyMsg(e))}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
     const retry = result.querySelector("[data-action='retry-save']");
     if (retry) retry.addEventListener("click", ev => { ev.preventDefault(); saveTelegram(); });
   }
@@ -2168,11 +2168,11 @@ async function sendTestWebhook() {
       if (vfBtn) vfBtn.addEventListener("click", e => { e.preventDefault(); route("signals"); });
     } else {
       toast("Test failed", "bad");
-      result.innerHTML = `<div class="inline-error">${ICONS.x}${escapeHtml(data.message || "Test failed")}</div>`;
+      result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}${escapeHtml(data.message || "Test failed")}</div>`;
     }
   } catch (e) {
     toast("Request failed", "bad");
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(friendlyMsg(e))}</div>`;
+    result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Request failed: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
   btn.disabled = false;
   btn.innerHTML = btn.dataset.origHtml || btn.innerHTML;
@@ -2226,11 +2226,11 @@ async function pollEaVerify() {
       }
     } else {
       const remaining = Math.max(0, Math.round((EA_VERIFY_DURATION - (Date.now() - eaVerifyStart)) / 1000));
-      statusEl.innerHTML = `<div class="inline-error">${ICONS.alert}<span>No EA connected - waiting (${remaining}s left)</span></div>
+      statusEl.innerHTML = `<div class="inline-error" role="alert">${ICONS.alert}<span>No EA connected - waiting (${remaining}s left)</span></div>
         <div class="hint mt">1. Download the EA from the Setup panel<br>2. Attach it to a chart in MetaTrader<br>3. Enter your license key and server URL in the EA inputs<br>4. Enable DLL imports in MetaTrader settings</div>`;
     }
   } catch (e) {
-    statusEl.innerHTML = `<div class="inline-error">${ICONS.x}Failed to check connections: ${escapeHtml(friendlyMsg(e))}</div>`;
+    statusEl.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Failed to check connections: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
 }
 
@@ -2365,7 +2365,7 @@ async function rotateSecret(key, btn) {
     setTimeout(() => route("settings"), 1500);
   } catch (e) {
     setBtnError(btn, "Failed");
-    if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Failed to rotate ${escapeHtml(key)}: ${escapeHtml(friendlyMsg(e))}</div>`;
+    if (result) result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Failed to rotate ${escapeHtml(key)}: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
 }
 
@@ -2377,8 +2377,8 @@ async function saveConfigChange() {
   if (!keyEl || !valEl) return;
   const key = keyEl.value.trim();
   const val = valEl.value.trim();
-  if (!key) { if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Variable name is required</div>`; return; }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Invalid variable name - use letters, digits, underscores</div>`; return; }
+  if (!key) { if (result) result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Variable name is required</div>`; return; }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { if (result) result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Invalid variable name - use letters, digits, underscores</div>`; return; }
   setBtnLoading(btn, "Saving...");
   try {
     const r = await http(`${API}/config`, {
@@ -2397,7 +2397,7 @@ async function saveConfigChange() {
     setTimeout(() => route("settings"), 1500);
   } catch (e) {
     setBtnError(btn, "Failed");
-    if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Failed to save: ${escapeHtml(friendlyMsg(e))}</div>`;
+    if (result) result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Failed to save: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
 }
 
@@ -4339,7 +4339,7 @@ async function doDbCleanup(days) {
     invalidateCache("/api/database/stats");
     pollDatabaseManager();
   } catch (e) {
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Cleanup failed: ${escapeHtml(friendlyMsg(e))}</div>`;
+    result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Cleanup failed: ${escapeHtml(friendlyMsg(e))}</div>`;
     setBtnError(btn, "Failed");
   }
 }
@@ -4681,10 +4681,10 @@ async function sendBotTestMessage() {
       result.innerHTML = `<div class="inline-ok">${ICONS.check}${escapeHtml(data.message || "Test message sent")}</div>`;
       toast("Test message sent", "ok");
     } else {
-      result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(data && data.error ? data.error : "Unknown error")}</div>`;
+      result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Failed: ${escapeHtml(data && data.error ? data.error : "Unknown error")}</div>`;
     }
   } catch (e) {
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(friendlyMsg(e))}</div>`;
+    result.innerHTML = `<div class="inline-error" role="alert">${ICONS.x}Failed: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
   btn.disabled = false;
   btn.innerHTML = original;

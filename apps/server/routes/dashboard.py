@@ -14,6 +14,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from apps.lib.env_manager import generate_secret, read_env, redact_value, write_env_updates
@@ -312,6 +313,12 @@ def create_dashboard_router(
     @router.get("/config/schema")
     async def get_config_schema(_=Depends(require_auth)):
         return _CONFIG_SCHEMA
+
+    @router.get("/config/export", response_class=PlainTextResponse)
+    async def export_config(_=Depends(require_auth)):
+        if env_path.exists():
+            return PlainTextResponse(env_path.read_text(), media_type="text/plain")
+        return PlainTextResponse("", media_type="text/plain")
 
     @router.post("/config/rotate")
     async def rotate_config(req: RotateRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
