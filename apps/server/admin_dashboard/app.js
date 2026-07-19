@@ -21,6 +21,10 @@ let connRetryTimer = null;
 let toastStack = [];
 const TOAST_MAX = 3;
 
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 const panelStates = {};
 function getPanelState(id) {
   if (!panelStates[id]) {
@@ -1026,9 +1030,10 @@ function render() {
         <span>More</span>
       </button>
     </nav>
-    <div class="mobile-sheet hidden" id="mobile-sheet" role="dialog" aria-modal="true" aria-label="All panels">
+    <div class="mobile-sheet" id="mobile-sheet" role="dialog" aria-modal="true" aria-label="All panels">
       <div class="mobile-sheet-backdrop" data-action="close-sheet"></div>
       <div class="mobile-sheet-card">
+        <div class="sheet-grab-handle" aria-hidden="true"></div>
         <div class="mobile-sheet-head">
           <h2 class="mobile-sheet-title">All Panels</h2>
           <button class="btn ghost sm" data-action="close-sheet" type="button" aria-label="Close">${ICONS.x}</button>
@@ -1133,37 +1138,55 @@ function route(id) {
     document.getElementById("page-title").textContent = titles[id] || id;
     const content = document.getElementById("content");
     const actions = document.getElementById("header-actions");
-    actions.innerHTML = "";
-    if (id !== "overview") overviewRendered = false;
-    if (id === "overview") {
-      if (overviewRendered && overviewSig === lastSetupStatus) {
-        startOverviewPoll();
-        startHealthPolling();
-        if (healthState.data || healthState.error) updateHealthCard();
-      } else {
-        renderOverview(content, actions);
+    const renderPanel = () => {
+      actions.innerHTML = "";
+      if (id !== "overview") overviewRendered = false;
+      if (id === "overview") {
+        if (overviewRendered && overviewSig === lastSetupStatus) {
+          startOverviewPoll();
+          startHealthPolling();
+          if (healthState.data || healthState.error) updateHealthCard();
+        } else {
+          renderOverview(content, actions);
+        }
+      } else if (id === "setup") renderSetup(content);
+      else if (id === "settings") renderSettings(content);
+      else if (id === "signals") renderSignalFeed(content, actions);
+      else if (id === "ea-map") renderEaMap(content, actions);
+      else if (id === "analytics") renderTradeAnalytics(content, actions);
+      else if (id === "pipeline") renderPipelineMonitor(content, actions);
+      else if (id === "sys-health") renderSystemHealth(content);
+      else if (id === "sys-webhooks") renderWebhookLogs(content);
+      else if (id === "sys-risk") renderRiskMonitor(content);
+      else if (id === "sys-errors") renderErrorLogs(content);
+      else if (id === "sys-database") renderDatabaseManager(content);
+      else if (id === "sys-metrics") renderMetrics(content);
+      else if (id === "sys-diag") renderDiagnostics(content);
+      else if (id === "sys-bot") renderBotStatus(content);
+      else if (id === "licenses") renderLicenses(content, actions);
+      else if (id === "security") renderSecurity(content, actions);
+      else if (id === "audit") renderAuditTimeline(content, actions);
+      if (content && !prefersReducedMotion()) {
+        content.classList.remove("panel-fade-in");
+        void content.offsetWidth;
+        content.classList.add("panel-fade-in");
       }
-    } else if (id === "setup") renderSetup(content);
-    else if (id === "settings") renderSettings(content);
-    else if (id === "signals") renderSignalFeed(content, actions);
-    else if (id === "ea-map") renderEaMap(content, actions);
-    else if (id === "analytics") renderTradeAnalytics(content, actions);
-    else if (id === "pipeline") renderPipelineMonitor(content, actions);
-    else if (id === "sys-health") renderSystemHealth(content);
-    else if (id === "sys-webhooks") renderWebhookLogs(content);
-    else if (id === "sys-risk") renderRiskMonitor(content);
-    else if (id === "sys-errors") renderErrorLogs(content);
-    else if (id === "sys-database") renderDatabaseManager(content);
-    else if (id === "sys-metrics") renderMetrics(content);
-    else if (id === "sys-diag") renderDiagnostics(content);
-    else if (id === "sys-bot") renderBotStatus(content);
-    else if (id === "licenses") renderLicenses(content, actions);
-    else if (id === "security") renderSecurity(content, actions);
-    else if (id === "audit") renderAuditTimeline(content, actions);
-    const pageTitle = document.getElementById("page-title");
-    if (pageTitle) {
-      pageTitle.setAttribute("tabindex", "-1");
-      pageTitle.focus({ preventScroll: true });
+      const pageTitle = document.getElementById("page-title");
+      if (pageTitle) {
+        pageTitle.setAttribute("tabindex", "-1");
+        pageTitle.focus({ preventScroll: true });
+      }
+    };
+    if (content && !prefersReducedMotion() && content.innerHTML.trim()) {
+      content.classList.remove("panel-fade-in");
+      content.classList.add("panel-fade-out");
+      setTimeout(() => {
+        content.classList.remove("panel-fade-out");
+        renderPanel();
+      }, 100);
+    } else {
+      content.classList.remove("panel-fade-out", "panel-fade-in");
+      renderPanel();
     }
   }, 100);
 }
@@ -1973,7 +1996,7 @@ async function pollSignalFeed() {
 }
 
 function feedRowHtml(r) {
-  const ts = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "--";
+    const ts = r.timestamp ? formatTime(r.timestamp) : "--";
   const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "--");
   const action = r.action || "--";
   const sym = r.symbol || "--";
@@ -2234,9 +2257,7 @@ function renderTradeAnalytics(content, actions) {
     </div>
   `;
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 15s</span>`;
-  pollTradeAnalytics();
-  const t = setInterval(pollTradeAnalytics, 15000);
-  addPoll(t);
+  startPoll(pollTradeAnalytics, 15000);
 }
 
 async function pollTradeAnalytics() {
@@ -2280,7 +2301,7 @@ async function pollTradeAnalytics() {
     const content = document.getElementById("content");
     if (content) {
       const staleHtml = (statsRes.stale || dashRes.stale) ? staleBanner() : "";
-      content.innerHTML = `${staleHtml}${emptyState("No trade data yet", "Executed signals from connected EAs will populate analytics here", "analytics")}`;
+      content.innerHTML = `${staleHtml}${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}`;
     }
     return;
   }
@@ -2392,7 +2413,7 @@ function drawDonutChart(stats, dash) {
       .sort((a, b) => b.vol - a.vol).slice(0, 5);
   }
   if (entries.length === 0) {
-    wrap.innerHTML = emptyState("No symbol data", "Trade volume by symbol will appear here once trades are executed", "analytics");
+    wrap.innerHTML = emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.");
     return;
   }
   const total = entries.reduce((s, e) => s + e.vol, 0);
@@ -2440,7 +2461,7 @@ function renderPipelineMonitor(content, actions) {
       <div class="pipeline-viz" id="pipeline-viz">
         ${stages.map((s, i) => {
           const arrow = i < stages.length - 1 ? '<div class="pipe-arrow"><div class="flow-dot"></div></div>' : "";
-          return `<div class="pipe-stage" id="pipe-stage-${i}"><div class="pipe-name">${s}</div><div class="pipe-count" id="pipe-count-${i}">--</div></div>${arrow}`;
+          return `<div class="pipe-stage" id="pipe-stage-${i}"><div class="pipe-name">${s}</div><div class="pipe-count" id="pipe-count-${i}" aria-live="polite">--</div></div>${arrow}`;
         }).join("")}
       </div>
     </div>
@@ -2469,9 +2490,7 @@ function renderPipelineMonitor(content, actions) {
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
   pipelineState.signalHistory = [];
   pipelineState.lastDelivered = 0;
-  pollPipeline();
-  const t = setInterval(pollPipeline, 5000);
-  addPoll(t);
+  startPoll(pollPipeline, 5000);
 }
 
 let pipelineState = {
@@ -2850,6 +2869,7 @@ function updateSystemHealthUI() {
 
 function renderSystemHealth(content) {
   content.innerHTML = `
+    <div id="sh-stale-banner"></div>
     <div class="grid grid-2">
       <div class="card">
         <h2 class="card-title">CPU Usage</h2>
@@ -2891,9 +2911,7 @@ function renderSystemHealth(content) {
       <div class="stat" id="sh-proc-mem"><div class="value skeleton line" aria-live="polite"></div><div class="label">Process Memory</div></div>
     </div>
   `;
-  pollSystemHealth();
-  const t = setInterval(pollSystemHealth, 5000);
-  addPoll(t);
+  startPoll(pollSystemHealth, 5000);
 }
 
 let webhookLogState = { rows: [], page: 0, stats: null, loaded: false, sort: { key: "timestamp", dir: "desc" }, filter: { range: "today", status: "", symbol: "", license: "" } };
@@ -2939,9 +2957,30 @@ function skeletonRowsHTML(colspan, n) {
 async function pollWebhookLogs() {
   if (currentRoute !== "sys-webhooks" || !visibilityPolling) return;
   const [recentRes, statsRes] = await Promise.all([
-    useFetch("/api/webhooks/recent?limit=50"),
-    useFetch("/api/webhooks/stats?days=7").catch(() => ({ data: null })),
+    useFetch("/api/webhooks/recent?limit=50").catch(() => ({ data: null, error: "logs", stale: false })),
+    useFetch("/api/webhooks/stats?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
   ]);
+  const staleEl = document.getElementById("wl-stale-banner");
+  if (staleEl) {
+    const partials = [];
+    if (recentRes.error && !recentRes.data) partials.push("logs");
+    if (statsRes.error && !statsRes.data) partials.push("stats");
+    if ((recentRes.stale || statsRes.stale) && (recentRes.data || statsRes.data)) {
+      staleEl.innerHTML = staleBanner();
+    } else if (partials.length > 0 && (recentRes.data || statsRes.data)) {
+      staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
+  if (recentRes.error && !recentRes.data && !webhookLogState.loaded) {
+    const content = domCache.content || document.getElementById("content");
+    if (content) {
+      content.innerHTML = errorPanel("webhook logs", recentRes.error, "retry-sys-webhooks");
+      bindRetryToScope("retry-sys-webhooks", () => route("sys-webhooks"));
+    }
+    return;
+  }
   if (recentRes.data && recentRes.data.webhooks) {
     webhookLogState.rows = recentRes.data.webhooks;
     webhookLogState.loaded = true;
@@ -2966,6 +3005,7 @@ function renderWebhookLogs(content) {
   webhookLogState.loaded = false;
   webhookLogState.page = 0;
   content.innerHTML = `
+    <div id="wl-stale-banner"></div>
     <div class="grid grid-4">
       <div class="stat" id="wl-stat-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total (7d)</div></div>
       <div class="stat" id="wl-stat-success"><div class="value skeleton line" aria-live="polite"></div><div class="label">Successful</div></div>
@@ -3049,9 +3089,7 @@ function renderWebhookLogs(content) {
   if (loadMore) loadMore.addEventListener("click", e => { e.preventDefault(); webhookLogState.page++; renderWebhookTable(); });
   bindSortHeaders(content.querySelector("#wl-table"), webhookLogState.sort, renderWebhookTable);
   applySort(content.querySelector("#wl-table"), webhookLogState.sort);
-  pollWebhookLogs();
-  const t = setInterval(pollWebhookLogs, 10000);
-  addPoll(t);
+  startPoll(pollWebhookLogs, 10000);
 }
 
 function filteredWebhookRows() {
@@ -3080,14 +3118,14 @@ function renderWebhookTable() {
   const end = Math.min(start + perPage, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty small"><div class="msg">No webhook logs</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty small">${webhookLogState.rows.length === 0 ? emptyState("No webhook logs yet", "Incoming TradingView webhook requests will appear here", "webhook") : '<div class="msg">No matches</div>'}</td></tr>`;
   } else {
     tbody.innerHTML = shown.map(r => {
       const cls = statusColor(r.response_code);
       const preview = r.payload ? String(r.payload).slice(0, 60) : "";
       const payloadStr = r.payload ? escapeHtml(JSON.stringify(r.payload)) : "";
-      return `<tr class="row-expandable" data-payload="${payloadStr}" tabindex="0" role="button" aria-expanded="false" aria-label="Webhook log at ${escapeHtml(String(r.timestamp || "").slice(0, 19))}, status ${r.response_code || "--"}">
-        <td class="mono" scope="row">${escapeHtml(String(r.timestamp || "").slice(0, 19))}</td>
+      return `<tr class="row-expandable" data-payload="${payloadStr}" tabindex="0" role="button" aria-expanded="false" aria-label="Webhook log at ${escapeHtml(formatTime(r.timestamp))}, status ${r.response_code || "--"}">
+        <td class="mono" scope="row">${escapeHtml(formatTime(r.timestamp))}</td>
         <td class="mono">${escapeHtml(r.ip_address || "--")}</td>
         <td>${escapeHtml(r.action || "--")}</td>
         <td class="mono">${escapeHtml(r.symbol || "--")}</td>
@@ -3135,10 +3173,24 @@ function renderWebhookTable() {
 
 async function pollRiskMonitor() {
   if (currentRoute !== "sys-risk" || !visibilityPolling) return;
-  const { data, error } = await useFetch("/api/risk-status");
+  const { data, error, stale } = await useFetch("/api/risk-status");
+  const staleEl = document.getElementById("risk-stale-banner");
+  if (staleEl) {
+    if (stale && data) {
+      staleEl.innerHTML = staleBanner();
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
   if (error || !data) {
     const card = document.getElementById("risk-status-card");
-    if (card) card.innerHTML = `<div class="empty small"><div class="msg">Risk data unavailable</div><div class="sub">${escapeHtml(error || "")}</div></div>`;
+    if (card && !cache["/api/risk-status"]) {
+      card.innerHTML = errorPanel("risk monitor", error, "retry-sys-risk");
+      bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
+    } else if (card) {
+      card.innerHTML = `<div class="empty small"><div class="msg">Risk data unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-risk">${ICONS.refresh}Retry</button></div>`;
+      bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
+    }
     return;
   }
   updateRiskUI(data);
@@ -3181,6 +3233,7 @@ function updateRiskUI(data) {
 
 function renderRiskMonitor(content) {
   content.innerHTML = `
+    <div id="risk-stale-banner"></div>
     <div class="card">
       <h2 class="card-title">Trading Status</h2>
       <div class="card-desc">Current risk gate - polling every 10s</div>
@@ -3208,9 +3261,7 @@ function renderRiskMonitor(content) {
       <div id="risk-alerts"></div>
     </div>
   `;
-  pollRiskMonitor();
-  const t = setInterval(pollRiskMonitor, 10000);
-  addPoll(t);
+  startPoll(pollRiskMonitor, 10000);
 }
 
 let errorLogState = { entries: [], paused: false, filter: "ALL", search: "" };
@@ -3253,7 +3304,7 @@ function renderErrorLogList() {
     const cls = e.level === "ERROR" ? "bad" : e.level === "WARN" ? "warn" : "info";
     const full = escapeHtml(e.full || e.message);
     return `<div class="log-entry ${cls}" data-idx="${i}" data-full="${full}">
-      <span class="log-ts mono">${escapeHtml(String(e.timestamp || "").slice(0, 19))}</span>
+      <span class="log-ts mono">${escapeHtml(formatTime(e.timestamp))}</span>
       <span class="log-level badge ${cls}">${e.level}</span>
       <span class="log-msg trunc">${escapeHtml(e.message)}</span>
     </div>`;
@@ -3318,9 +3369,7 @@ function renderErrorLogs(content) {
       if (pauseBtn && pauseBtn.textContent.includes("Pause")) errorLogState.paused = false;
     });
   }
-  pollErrorLogs();
-  const t = setInterval(pollErrorLogs, 10000);
-  addPoll(t);
+  startPoll(pollErrorLogs, 10000);
 }
 
 async function pollDatabaseManager() {
@@ -3385,9 +3434,7 @@ function renderDatabaseManager(content) {
   if (btn) btn.addEventListener("click", e => { e.preventDefault(); runDbCleanup(); });
   const daysInput = content.querySelector("#db-days");
   if (daysInput) attachValidator(daysInput, "days");
-  pollDatabaseManager();
-  const t = setInterval(pollDatabaseManager, 30000);
-  addPoll(t);
+  startPoll(pollDatabaseManager, 30000);
 }
 
 async function runDbCleanup() {
@@ -3535,7 +3582,7 @@ function updateDiagnosticsUI(data) {
           <span class="probe-name">${escapeHtml(p.name)}</span>
           <span class="badge ${badgeCls}"><span class="dot"></span>${escapeHtml(p.status)}</span>
         </div>
-        <div class="probe-latency mono">${p.latency_ms != null ? p.latency_ms.toFixed(2) + " ms" : "-- ms"}</div>
+        <div class="probe-latency mono">${p.latency_ms != null ? escapeHtml(String(p.latency_ms.toFixed(2))) + " ms" : "-- ms"}</div>
         <div class="probe-detail trunc">${escapeHtml(p.detail || "")}</div>
       </div>`;
     }).join("");
