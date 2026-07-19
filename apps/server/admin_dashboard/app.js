@@ -2023,18 +2023,41 @@ function renderSystemHealth(content) {
   pollTimers.push(t);
 }
 
-let webhookLogState = { rows: [], page: 0, filter: { range: "today", status: "", symbol: "", license: "" } };
+let webhookLogState = { rows: [], page: 0, stats: null, filter: { range: "today", status: "", symbol: "", license: "" } };
 
 async function pollWebhookLogs() {
   if (currentRoute !== "sys-webhooks" || !visibilityPolling) return;
-  const { data } = await useFetch("/api/webhooks/recent?limit=50");
-  if (!data || !data.webhooks) return;
-  webhookLogState.rows = data.webhooks;
+  const [recentRes, statsRes] = await Promise.all([
+    useFetch("/api/webhooks/recent?limit=50"),
+    useFetch("/api/webhooks/stats?days=7").catch(() => ({ data: null })),
+  ]);
+  if (recentRes.data && recentRes.data.webhooks) {
+    webhookLogState.rows = recentRes.data.webhooks;
+  }
+  if (statsRes.data) {
+    webhookLogState.stats = statsRes.data;
+    updateWebhookStats();
+  }
   renderWebhookTable();
+}
+
+function updateWebhookStats() {
+  const s = webhookLogState.stats;
+  if (!s) return;
+  setTile("wl-stat-total", String(s.total || 0), "info");
+  setTile("wl-stat-success", String(s.successful || 0), "ok");
+  setTile("wl-stat-failed", String(s.failed || 0), s.failed > 0 ? "bad" : "info");
+  setTile("wl-stat-rate", s.success_rate != null ? `${s.success_rate.toFixed(1)}%` : "--", s.success_rate >= 80 ? "ok" : s.success_rate >= 50 ? "warn" : "bad");
 }
 
 function renderWebhookLogs(content) {
   content.innerHTML = `
+    <div class="grid grid-4">
+      <div class="stat" id="wl-stat-total"><div class="value skeleton line"></div><div class="label">Total (7d)</div></div>
+      <div class="stat" id="wl-stat-success"><div class="value skeleton line"></div><div class="label">Successful</div></div>
+      <div class="stat" id="wl-stat-failed"><div class="value skeleton line"></div><div class="label">Failed</div></div>
+      <div class="stat" id="wl-stat-rate"><div class="value skeleton line"></div><div class="label">Success Rate</div></div>
+    </div>
     <div class="card">
       <div class="card-title">Webhook Logs</div>
       <div class="card-desc">Recent webhook requests - polling every 10s</div>
@@ -2249,7 +2272,7 @@ function renderErrorLogList() {
     wrap.innerHTML = `<div class="empty small"><div class="msg">No log entries</div></div>`;
     return;
   }
-  wrap.innerHTML = entries.slice().reverse().map((e, i) => {
+  wrap.innerHTML = entries.map((e, i) => {
     const cls = e.level === "ERROR" ? "bad" : e.level === "WARN" ? "warn" : "info";
     const full = escapeHtml(e.full || e.message);
     return `<div class="log-entry ${cls}" data-idx="${i}" data-full="${full}">
@@ -2387,8 +2410,14 @@ function renderDatabaseManager(content) {
 async function runDbCleanup() {
   const days = parseInt(document.getElementById("db-days").value, 10);
   const result = document.getElementById("db-cleanup-result");
-  const btn = document.getElementById("db-cleanup");
   if (!days || days < 1) { result.innerHTML = `<div class="inline-error">Enter a valid number of days</div>`; return; }
+  openConfirmModal("Database Cleanup", `Delete all records older than ${days} days? This cannot be undone.`, () => doDbCleanup(days), "Confirm");
+}
+
+async function doDbCleanup(days) {
+  const result = document.getElementById("db-cleanup-result");
+  const btn = document.getElementById("db-cleanup");
+  if (!btn) return;
   btn.disabled = true;
   const original = btn.innerHTML;
   btn.innerHTML = `<span class="spin"></span>Deleting...`;
@@ -2848,7 +2877,7 @@ function openLicenseModal() {
   });
 }
 
-function openConfirmModal(title, msg, onConfirm) {
+function openConfirmModal(title, msg, onConfirm, confirmLabel = "Delete") {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `<div class="modal-card">
@@ -2856,7 +2885,7 @@ function openConfirmModal(title, msg, onConfirm) {
     <div class="modal-desc">${msg}</div>
     <div class="modal-footer">
       <button class="btn outline" data-action="confirm-cancel">Cancel</button>
-      <button class="btn red" data-action="confirm-ok">${ICONS.trash}Delete</button>
+      <button class="btn red" data-action="confirm-ok">${ICONS.trash}${escapeHtml(confirmLabel)}</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
