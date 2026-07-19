@@ -641,19 +641,19 @@ function partialWarning(label) {
 }
 
 function skeletonRow(cols) {
-  return `<tr>${Array(cols).fill('<td><div class="skeleton line"></div></td>').join("")}</tr>`;
+  return `<tr aria-hidden="true">${Array(cols).fill('<td><div class="skeleton line"></div></td>').join("")}</tr>`;
 }
 
 function skeletonTable(cols, rows) {
-  return `<div class="table-wrap"><table class="data-table"><tbody>${Array(rows).fill(skeletonRow(cols)).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="data-table" aria-busy="true"><tbody>${Array(rows).fill(skeletonRow(cols)).join("")}</tbody></table></div>`;
 }
 
 function skeletonEaCards(n) {
-  return Array(n).fill('<div class="ea-card"><div class="ea-card-head"><div class="skeleton line short"></div></div><div class="ea-card-body"><div class="skeleton line"></div><div class="skeleton line"></div><div class="skeleton line short"></div></div></div>').join("");
+  return Array(n).fill('<div class="ea-card" aria-hidden="true"><div class="ea-card-head"><div class="skeleton line short"></div></div><div class="ea-card-body"><div class="skeleton line"></div><div class="skeleton line"></div><div class="skeleton line short"></div></div></div>').join("");
 }
 
 function skeletonTimeline(n) {
-  return Array(n).fill('<div class="tl-entry"><div class="tl-head"><div class="skeleton line short"></div></div><div class="tl-meta"><div class="skeleton line"></div></div></div>').join("");
+  return Array(n).fill('<div class="tl-entry" aria-hidden="true"><div class="tl-head"><div class="skeleton line short"></div></div><div class="tl-meta"><div class="skeleton line"></div></div></div>').join("");
 }
 
 function bindRetryToScope(action, fn) {
@@ -718,7 +718,7 @@ function svgGauge(value, label, opts = {}) {
       <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${PALETTE.gridTrack}" stroke-width="${stroke}"/>
       <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
         stroke-dasharray="${dash} ${circumference}" stroke-linecap="round"
-        transform="rotate(-90 ${cx} ${cy})" class="gauge-arc" style="transition: stroke-dasharray 0.6s ease, stroke 0.3s ease"/>
+        transform="rotate(-90 ${cx} ${cy})" class="gauge-arc"/>
       <text x="${cx}" y="${cy - 2}" text-anchor="middle" class="gauge-value" fill="${color}">${display}</text>
       <text x="${cx}" y="${cy + 16}" text-anchor="middle" class="gauge-label" fill="${PALETTE.muted}">${label}</text>
     </svg>
@@ -1581,32 +1581,34 @@ function toggleTestForm(force) {
   } else {
     form.classList.toggle("hidden");
   }
+  if (!form.classList.contains("hidden")) {
+    const sym = form.querySelector("#ov-test-symbol");
+    const lots = form.querySelector("#ov-test-lots");
+    if (sym && !sym.dataset.validator) { sym.dataset.validator = "1"; attachValidator(sym, "symbol"); }
+    if (lots && !lots.dataset.validator) { lots.dataset.validator = "1"; attachValidator(lots, "lots"); }
+    submitOnEnter(form, sendTestWebhook);
+    autofocusFirst(form);
+  }
 }
 
 async function sendTestWebhook() {
   const btn = document.getElementById("ov-test-send");
   const result = document.getElementById("ov-test-result");
   if (!btn || !result) return;
-  const symbol = (document.getElementById("ov-test-symbol").value.trim() || "EURUSD").toUpperCase();
+  const symEl = document.getElementById("ov-test-symbol");
+  const lotsEl = document.getElementById("ov-test-lots");
+  const okSym = validateInput(symEl, "symbol");
+  const okLots = validateInput(lotsEl, "lots");
+  if (!okSym || !okLots) return;
+  const symbol = symEl.value.trim().toUpperCase();
   const action = document.getElementById("ov-test-action").value;
-  const lotsRaw = document.getElementById("ov-test-lots").value.trim() || "0.10";
-  const lots = parseFloat(lotsRaw);
+  const lots = parseFloat(lotsEl.value.trim());
   const slVal = document.getElementById("ov-test-sl").value.trim();
   const tpVal = document.getElementById("ov-test-tp").value.trim();
-  if (!symbol) {
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Symbol is required</div>`;
-    return;
-  }
-  if (!isFinite(lots) || lots <= 0) {
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Lots must be a positive number</div>`;
-    return;
-  }
   const body = { symbol, action, lots: String(lots) };
   if (slVal) body.sl = slVal;
   if (tpVal) body.tp = tpVal;
-  btn.disabled = true;
-  const original = btn.innerHTML;
-  btn.innerHTML = `<span class="spin"></span>Sending...`;
+  setBtnLoading(btn, "Sending...");
   result.innerHTML = "";
   const t0 = Date.now();
   try {
@@ -1639,7 +1641,7 @@ async function sendTestWebhook() {
     result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(e.message || friendlyMsg(e))}</div>`;
   }
   btn.disabled = false;
-  btn.innerHTML = original;
+  btn.innerHTML = btn.dataset.origHtml || btn.innerHTML;
 }
 
 let eaVerifyTimer = null;
@@ -2121,11 +2123,11 @@ function renderTradeAnalytics(content, actions) {
     <div class="card">
       <h2 class="card-title">Trade Analytics</h2>
       <div class="card-desc">Performance overview - polling every 15s</div>
-      <div class="grid grid-4" id="analytics-stats">
-        <div class="stat" id="stat-total"><div class="value skeleton line"></div><div class="label">Total Trades</div></div>
-        <div class="stat" id="stat-winrate"><div class="value skeleton line"></div><div class="label">Win Rate</div></div>
-        <div class="stat" id="stat-latency"><div class="value skeleton line"></div><div class="label">Avg Latency</div></div>
-        <div class="stat" id="stat-pf"><div class="value skeleton line"></div><div class="label">Profit Factor</div></div>
+      <div class="grid grid-4" id="analytics-stats" role="group" aria-label="Trade analytics stats">
+        <div class="stat" id="stat-total" role="group" aria-label="Total Trades"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Total Trades</div></div>
+        <div class="stat" id="stat-winrate" role="group" aria-label="Win Rate"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Win Rate</div></div>
+        <div class="stat" id="stat-latency" role="group" aria-label="Avg Latency"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Avg Latency</div></div>
+        <div class="stat" id="stat-pf" role="group" aria-label="Profit Factor"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Profit Factor</div></div>
       </div>
     </div>
     <div class="card">
@@ -2711,10 +2713,10 @@ function updateSystemHealthUI() {
     if (h.redis_info && Object.keys(h.redis_info).length) {
       const ri = h.redis_info;
       redisEl.innerHTML = `
-        <div class="row"><span class="k">Used memory</span><span class="v">${ri.used_memory_mb} MB</span></div>
-        <div class="row"><span class="k">Connected clients</span><span class="v">${ri.connected_clients}</span></div>
-        <div class="row"><span class="k">Keyspace hits</span><span class="v">${(ri.keyspace_hits || 0).toLocaleString()}</span></div>
-        <div class="row"><span class="k">Keyspace misses</span><span class="v">${(ri.keyspace_misses || 0).toLocaleString()}</span></div>`;
+        <div class="row"><span class="k">Used memory</span><span class="v">${escapeHtml(String(ri.used_memory_mb))} MB</span></div>
+        <div class="row"><span class="k">Connected clients</span><span class="v">${escapeHtml(String(ri.connected_clients))}</span></div>
+        <div class="row"><span class="k">Keyspace hits</span><span class="v">${escapeHtml(String((ri.keyspace_hits || 0).toLocaleString()))}</span></div>
+        <div class="row"><span class="k">Keyspace misses</span><span class="v">${escapeHtml(String((ri.keyspace_misses || 0).toLocaleString()))}</span></div>`;
     } else {
       redisEl.innerHTML = `<div class="empty small"><div class="msg">Redis not configured</div></div>`;
     }
@@ -3546,6 +3548,7 @@ async function sendBotTestMessage() {
 let licenseState = { rows: [], search: "", loaded: false, sort: { key: "email", dir: "asc" }, page: 0, perPage: 25 };
 
 async function renderLicenses(content, actions) {
+  const tk = renderToken;
   content.innerHTML = skeletonCard(1);
   actions.innerHTML = `<button class="btn primary sm" id="add-license-btn" data-action="add-license">${ICONS.plus}Add License</button>`;
   const addBtn = actions.querySelector("[data-action='add-license']");
@@ -3553,6 +3556,7 @@ async function renderLicenses(content, actions) {
   licenseState.loaded = false;
   licenseState.page = 0;
   const { data, error, stale } = await useFetch(`${API}/users`);
+  if (staleRender(tk)) return;
   if (error && !data) {
     content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load licenses</div><div class="sub">${escapeHtml(error)}</div><button class="btn outline sm mt" data-action="retry-licenses">Retry</button></div>`;
     bindRetry(content, "retry-licenses", () => route("licenses"));
