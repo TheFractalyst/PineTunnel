@@ -21,10 +21,10 @@
   --red-bg: rgba(255,0,81,0.10);
   --amber: #ff9800;
   --amber-bg: rgba(255,152,0,0.10);
-  --blue: #00b9ff;
-  --blue-bg: rgba(0,185,255,0.10);
-  --blue-btn: #00b9ff;
-  --blue-dark: #0099d6;
+  --blue: #0ea5e9;
+  --blue-bg: rgba(14,165,233,0.10);
+  --blue-btn: #0ea5e9;
+  --blue-dark: #0284c7;
   --green-btn: #00c853;
   --red-btn: #ff0051;
   --shadow-card: rgb(35,37,42) 0px 0px 0px 1px inset;
@@ -588,6 +588,16 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .btn.outline:hover { background: var(--card-2); border-color: var(--border-hover); }
 .btn.ghost { background: transparent; color: var(--muted); }
 .btn.ghost:hover { background: var(--card-2); color: var(--text); }
+.btn.link {
+  background: transparent;
+  color: var(--blue);
+  padding: 0;
+  min-height: auto;
+  border-radius: 0;
+  font-weight: var(--fw-medium);
+}
+.btn.link svg { width: 14px; height: 14px; }
+.btn.link:hover { opacity: 0.8; color: var(--blue-dark); }
 .btn.sm { padding: 8px 12px; min-height: 32px; font-size: var(--text-sm); }
 .btn.lg { padding: 8px 24px; min-height: 44px; font-size: var(--text-lg); }
 .btn.full { width: 100%; }

@@ -1353,7 +1353,7 @@ async function renderOverview(content, actions) {
   const heroIcon = heroOk ? ICONS.check : ICONS.alert;
   const heroTitle = heroOk ? "All systems running" : (issues.length + " issue" + (issues.length > 1 ? "s" : "") + " need" + (issues.length > 1 ? "" : "s") + " attention");
   const heroDesc = heroOk ? "Your bridge is ready to receive TradingView signals" : "Complete setup to start receiving signals";
-  const heroAction = heroOk ? "" : `<button class="btn primary" data-action="goto-setup">Go to Setup</button>`;
+  const heroAction = heroOk ? "" : `<button class="btn link" data-action="goto-setup">Go to Setup ${ICONS.arrow}</button>`;
 
   const webhookBlock = allDone ? `
     <div class="card webhook-card">
