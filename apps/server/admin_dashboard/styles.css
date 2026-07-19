@@ -176,6 +176,9 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 .grid-3 { grid-template-columns: repeat(3, 1fr); }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 1024px) {
+  .grid-4 { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 768px) {
   .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
 }
@@ -571,7 +574,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   .btn.full-sm { width: 100%; }
 }
 
-@media (max-width: 375px) {
+@media (max-width: 320px) {
   .content { padding: 12px; padding-bottom: 72px; }
   .card { padding: 14px; }
   .prog-dot { width: 24px; height: 24px; font-size: 11px; }
@@ -592,7 +595,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   margin-bottom: 16px;
   background: var(--amber-bg);
   color: var(--amber);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  border: 1px solid rgba(242,153,74,0.3);
   border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
@@ -752,7 +755,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 .gauge-wrap { display: inline-block; }
 .gauge { width: 120px; height: 120px; display: block; }
 .gauge-value { font-size: 18px; font-weight: 700; font-family: var(--mono); }
-.gauge-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+.gauge-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; font-family: var(--mono); }
 .gauge-arc { transition: stroke-dasharray 0.6s ease, stroke 0.3s ease; }
 .stat-pair {
   display: grid;
@@ -876,7 +879,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 .ea-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 .ea-card {
   background: var(--card-2);
@@ -1275,6 +1278,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   padding: 20px;
 }
 .modal-card {
+  position: relative;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1290,7 +1294,6 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   from { opacity: 0; transform: translateY(12px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.modal-card.lg { max-width: 640px; }
 .modal-title {
   font-size: 16px;
   font-weight: 700;
@@ -1322,10 +1325,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 }
 .modal-close:hover { background: var(--card-2); color: var(--text); }
 .modal-close svg { width: 18px; height: 18px; }
-.modal-card { position: relative; }
 
-.field-row { display: flex; gap: 12px; flex-wrap: wrap; }
-.field-row .field { flex: 1; min-width: 0; }
 .gen-row {
   display: flex;
   gap: 8px;
@@ -1340,6 +1340,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   gap: 12px;
   margin-bottom: 16px;
 }
+@media (max-width: 1024px) { .stat-grid-4 { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 768px) { .stat-grid-4 { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 480px) { .stat-grid-4 { grid-template-columns: 1fr; } }
 
