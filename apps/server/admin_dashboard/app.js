@@ -285,7 +285,8 @@ function friendlyMsg(e) {
   if (/failed to fetch|networkerror|load failed/i.test(raw)) {
     return "Connection failed. The server is unreachable.";
   }
-  return raw;
+  console.error("[dashboard] Unhandled error:", e);
+  return "Something went wrong. Please try again.";
 }
 
 function errorBlock(opts) {
