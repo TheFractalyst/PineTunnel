@@ -342,7 +342,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .stat.warn .value { color: var(--amber); }
 .stat.info .value { color: var(--blue); }
 .stat .value.empty.empty { color: var(--muted-2); }
-.stat.hero { padding: var(--sp-6); text-align: center; }
+.stat.hero { padding: var(--sp-6); text-align: center; margin-bottom: var(--sp-6); }
 .stat.hero .value { font-size: 28px; }
 @media (max-width: 1024px) {
   .stat { padding: 16px; }
