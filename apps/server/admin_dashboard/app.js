@@ -413,17 +413,17 @@ function render() {
   const app = document.getElementById("app");
   const monitorNav = [
     { id: "overview", label: "Overview", icon: ICONS.overview },
-    { id: "signals", label: "Signal Feed", icon: ICONS.feed },
+    { id: "signals", label: "Live Signals", icon: ICONS.signals },
     { id: "ea-map", label: "EA Connections", icon: ICONS.map },
     { id: "analytics", label: "Trade Analytics", icon: ICONS.analytics },
-    { id: "pipeline", label: "Pipeline Monitor", icon: ICONS.pipeline },
+    { id: "pipeline", label: "Pipeline", icon: ICONS.pipeline },
   ];
   const manageNav = [
-    { id: "setup", label: "Setup", icon: ICONS.setup },
-    { id: "settings", label: "Settings", icon: ICONS.settings },
-    { id: "licenses", label: "Licenses", icon: ICONS.license },
-    { id: "security", label: "Security", icon: ICONS.security },
+    { id: "setup", label: "Setup Wizard", icon: ICONS.setup },
+    { id: "licenses", label: "License Manager", icon: ICONS.license },
+    { id: "security", label: "Security Center", icon: ICONS.security },
     { id: "audit", label: "Audit Log", icon: ICONS.audit },
+    { id: "settings", label: "Settings", icon: ICONS.settings },
   ];
   const systemNav = [
     { id: "sys-health", label: "System Health", icon: ICONS.health },
@@ -433,23 +433,44 @@ function render() {
     { id: "sys-database", label: "Database", icon: ICONS.database },
     { id: "sys-metrics", label: "Metrics", icon: ICONS.metrics },
     { id: "sys-diag", label: "Diagnostics", icon: ICONS.diag },
-    { id: "sys-bot", label: "Telegram Bot", icon: ICONS.bot },
+    { id: "sys-bot", label: "Bot Status", icon: ICONS.bot },
   ];
-  const navHtml = (items) => items.map(n => `<a class="nav-item" href="#${n.id}" data-route="${n.id}" role="button">${n.icon}<span>${n.label}</span></a>`).join("");
+  const navHtml = (items) => items.map(n => `<a class="nav-item" href="#${n.id}" data-route="${n.id}" role="button" tabindex="0">${n.icon}<span>${n.label}</span></a>`).join("");
   const allNav = monitorNav.concat(manageNav, systemNav);
-  const mobileHtml = allNav.map(n => `<a class="tab" href="#${n.id}" data-route="${n.id}" role="button">${n.icon}<span>${n.label}</span></a>`).join("");
+  const groups = [
+    { id: "monitor", label: "Monitor", items: monitorNav },
+    { id: "manage", label: "Manage", items: manageNav },
+    { id: "system", label: "System", items: systemNav },
+  ];
+  const groupState = (gid) => {
+    try { return sessionStorage.getItem("nav-group-" + gid) !== "collapsed"; }
+    catch { return true; }
+  };
+  const groupHtml = groups.map(g => {
+    const expanded = groupState(g.id);
+    return `<div class="nav-group${expanded ? "" : " collapsed"}" data-group="${g.id}">
+      <button class="nav-group-header" data-toggle="${g.id}" aria-expanded="${expanded}" aria-controls="nav-items-${g.id}" type="button">
+        <span class="nav-group-label">${g.label}</span>
+        <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="nav-group-items" id="nav-items-${g.id}">${navHtml(g.items)}</div>
+    </div>`;
+  }).join("");
+  const mobilePrimary = ["overview", "signals", "ea-map", "setup", "settings"];
+  const mobilePrimaryItems = mobilePrimary.map(id => {
+    const n = allNav.find(x => x.id === id);
+    return n ? `<a class="tab" href="#${n.id}" data-route="${n.id}" role="button" tabindex="0">${n.icon}<span>${n.label.split(" ")[0]}</span></a>` : "";
+  }).join("");
+  const mobileSheetItems = groups.map(g => {
+    const items = g.items.map(n => `<a class="mobile-sheet-item" href="#${n.id}" data-route="${n.id}" role="button" tabindex="0">${n.icon}<span>${n.label}</span></a>`).join("");
+    return `<div class="mobile-sheet-group"><div class="mobile-sheet-label">${g.label}</div>${items}</div>`;
+  }).join("");
   app.innerHTML = `
     <a class="skip-link" href="#content">Skip to main content</a>
     <div class="layout">
       <nav class="sidebar" aria-label="Main navigation">
         <div class="brand">${LOGO_SVG}</div>
-        <div class="nav-group-label">Monitor</div>
-        ${navHtml(monitorNav)}
-        <div class="nav-group-label">Manage</div>
-        ${navHtml(manageNav)}
-        <div class="nav-group-label">System</div>
-        ${navHtml(systemNav)}
-        <div class="spacer"></div>
+        <div class="nav-scroll">${groupHtml}</div>
         <div class="footer"><span class="pulse-dot" aria-hidden="true"></span><span>System Online - v1.0</span></div>
       </nav>
       <div class="main-area">
@@ -461,21 +482,55 @@ function render() {
       </div>
     </div>
     <nav class="mobile-nav" aria-label="Mobile navigation">
-      ${mobileHtml}
+      ${mobilePrimaryItems}
+      <button class="tab mobile-more" data-action="mobile-more" type="button" aria-haspopup="dialog" tabindex="0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        <span>More</span>
+      </button>
     </nav>
+    <div class="mobile-sheet hidden" id="mobile-sheet" role="dialog" aria-modal="true" aria-label="All panels">
+      <div class="mobile-sheet-backdrop" data-action="close-sheet"></div>
+      <div class="mobile-sheet-card">
+        <div class="mobile-sheet-head">
+          <span class="mobile-sheet-title">All Panels</span>
+          <button class="btn ghost sm" data-action="close-sheet" type="button" aria-label="Close">${ICONS.x}</button>
+        </div>
+        <div class="mobile-sheet-body">${mobileSheetItems}</div>
+      </div>
+    </div>
   `;
   document.querySelectorAll("[data-route]").forEach(el => {
-    el.addEventListener("click", e => {
-      e.preventDefault();
-      route(el.dataset.route);
-    });
+    el.addEventListener("click", e => { e.preventDefault(); route(el.dataset.route); closeMobileSheet(); });
     el.addEventListener("keydown", e => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        route(el.dataset.route);
-      }
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); route(el.dataset.route); closeMobileSheet(); }
     });
   });
+  document.querySelectorAll("[data-toggle]").forEach(el => {
+    el.addEventListener("click", e => {
+      e.preventDefault();
+      const gid = el.dataset.toggle;
+      const group = document.querySelector(`.nav-group[data-group="${gid}"]`);
+      if (!group) return;
+      const collapsed = group.classList.toggle("collapsed");
+      el.setAttribute("aria-expanded", String(!collapsed));
+      try { sessionStorage.setItem("nav-group-" + gid, collapsed ? "collapsed" : "expanded"); } catch {}
+    });
+  });
+  const moreBtn = document.querySelector("[data-action='mobile-more']");
+  if (moreBtn) moreBtn.addEventListener("click", e => { e.preventDefault(); openMobileSheet(); });
+  document.querySelectorAll("[data-action='close-sheet']").forEach(el => {
+    el.addEventListener("click", e => { e.preventDefault(); closeMobileSheet(); });
+  });
+}
+
+function openMobileSheet() {
+  const sheet = document.getElementById("mobile-sheet");
+  if (sheet) sheet.classList.remove("hidden");
+}
+
+function closeMobileSheet() {
+  const sheet = document.getElementById("mobile-sheet");
+  if (sheet) sheet.classList.add("hidden");
 }
 
 document.addEventListener("visibilitychange", () => {
@@ -1047,6 +1102,14 @@ let signalFeedState = {
 };
 
 function renderSignalFeed(content, actions) {
+  signalFeedState = {
+    rows: [],
+    paused: false,
+    filterLicense: "",
+    filterSymbol: "",
+    filterStatus: "",
+    seenIds: new Set(),
+  };
   content.innerHTML = `
     <div class="card">
       <div class="card-title">Live Signal Feed</div>
@@ -2838,7 +2901,7 @@ function renderSecurityContent(content) {
   const tvIps = hdr.tradingview_ips || [];
 
   const blockedRows = blocked.length === 0
-    ? `<tr><td colspan="4" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
+    ? `<tr><td colspan="5" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
     : blocked.map(b => `<tr>
         <td class="td-key">${escapeHtml(b.ip)}</td>
         <td>${escapeHtml(relativeTime(null))}</td>
