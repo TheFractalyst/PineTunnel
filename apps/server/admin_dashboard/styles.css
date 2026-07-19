@@ -220,6 +220,45 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 .header .title { font-size: var(--text-lg); font-weight: var(--fw-semibold); }
 .header .actions { display: flex; align-items: center; gap: var(--sp-2); }
+
+.tab-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  background: var(--card-dark);
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.tab-bar::-webkit-scrollbar { display: none; }
+.tab-bar-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: var(--text-base);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+  min-height: 40px;
+}
+.tab-bar-item:hover { color: var(--text); background: var(--hover-faint); }
+.tab-bar-item.active { color: var(--blue); border-bottom-color: var(--blue); }
+.tab-bar-item:focus-visible { outline-offset: -2px; }
+@media (max-width: 768px) {
+  .tab-bar { padding: 0 10px; }
+  .tab-bar-item { padding: 10px 12px; font-size: var(--text-sm); min-height: 44px; }
+}
 .badge {
   display: inline-flex;
   align-items: center;
@@ -943,8 +982,8 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
     z-index: 100;
   }
   .mobile-nav .tab {
-    flex: 1 1 calc(100% / 6);
-    width: calc(100% / 6);
+    flex: 1 1 25%;
+    width: 25%;
     display: flex;
     flex-direction: column;
     align-items: center;

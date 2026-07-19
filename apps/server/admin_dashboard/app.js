@@ -11,8 +11,11 @@ let pollTimers = [];
 let requestGen = 0;
 let renderToken = 0;
 const inflight = new Map();
-let currentRoute = "overview";
-let pendingRouteAfterLogin = "overview";
+let currentRoute = "dashboard/overview";
+let currentRouteId = "overview";
+let currentSectionId = "dashboard";
+let currentTabId = "overview";
+let pendingRouteAfterLogin = "dashboard/overview";
 let lastSetupStatus = null;
 let loginVisible = false;
 let connectionLostVisible = false;
@@ -44,7 +47,7 @@ function cleanupPanel(id) {
   if (s && s.pollTimer) { clearInterval(s.pollTimer); s.pollTimer = null; }
 }
 function addPoll(timer) {
-  const s = getPanelState(currentRoute);
+  const s = getPanelState(currentRouteId);
   if (s.pollTimer) clearInterval(s.pollTimer);
   s.pollTimer = timer;
   pollTimers.push(timer);
@@ -685,7 +688,7 @@ async function doLogin() {
     if (r.ok) {
       loginVisible = false;
       toast("Logged in", "ok");
-      const dest = pendingRouteAfterLogin || currentRoute || "overview";
+      const dest = pendingRouteAfterLogin || currentRoute || "dashboard/overview";
       render();
       route(dest);
     }
@@ -1042,69 +1045,103 @@ function copy(text) {
   navigator.clipboard.writeText(text).then(() => toast("Copied to clipboard"));
 }
 
+const SECTIONS = [
+  {
+    id: "dashboard", label: "Dashboard", icon: ICONS.overview,
+    tabs: [
+      { id: "overview", label: "Overview", title: "Overview", routeId: "overview" },
+      { id: "health", label: "Health", title: "System Health", routeId: "sys-health" },
+      { id: "metrics", label: "Metrics", title: "Performance Metrics", routeId: "sys-metrics" },
+      { id: "diag", label: "Diagnostics", title: "Diagnostics", routeId: "sys-diag" },
+    ],
+  },
+  {
+    id: "signals", label: "Signals", icon: ICONS.signals,
+    tabs: [
+      { id: "feed", label: "Live Feed", title: "Live Signal Feed", routeId: "signals" },
+      { id: "webhooks", label: "Webhooks", title: "Webhook Logs", routeId: "sys-webhooks" },
+      { id: "pipeline", label: "Pipeline", title: "Signal Pipeline Monitor", routeId: "pipeline" },
+      { id: "analytics", label: "Analytics", title: "Trade Analytics", routeId: "analytics" },
+      { id: "risk", label: "Risk", title: "Risk Monitor", routeId: "sys-risk" },
+    ],
+  },
+  {
+    id: "manage", label: "Manage", icon: ICONS.settings,
+    tabs: [
+      { id: "licenses", label: "Licenses", title: "License Manager", routeId: "licenses" },
+      { id: "security", label: "Security", title: "Security Center", routeId: "security" },
+      { id: "audit", label: "Audit Log", title: "Audit Log Timeline", routeId: "audit" },
+      { id: "bot", label: "Bot Status", title: "Telegram Bot Status", routeId: "sys-bot" },
+    ],
+  },
+  {
+    id: "setup", label: "Setup", icon: ICONS.setup,
+    tabs: [
+      { id: "wizard", label: "Wizard", title: "Setup Wizard", routeId: "setup" },
+      { id: "settings", label: "Settings", title: "Settings", routeId: "settings" },
+      { id: "database", label: "Database", title: "Database Manager", routeId: "sys-database" },
+    ],
+  },
+];
+
+function findSection(secId) {
+  for (const s of SECTIONS) if (s.id === secId) return s;
+  return null;
+}
+function findTab(secId, tabId) {
+  const s = findSection(secId);
+  if (!s) return null;
+  for (const t of s.tabs) if (t.id === tabId) return t;
+  return null;
+}
+function findTabByRouteId(routeId) {
+  for (const s of SECTIONS) for (const t of s.tabs) if (t.routeId === routeId) return { section: s, tab: t };
+  return null;
+}
+
+function persistActiveTab(secId, tabId) {
+  try { sessionStorage.setItem("nav-tab-" + secId, tabId); } catch {}
+}
+function getPersistedTab(secId) {
+  try { return sessionStorage.getItem("nav-tab-" + secId); } catch { return null; }
+}
+
+function parseHash(hash) {
+  if (!hash) return { sectionId: "dashboard", tabId: "overview" };
+  const parts = hash.split("/");
+  if (parts.length === 1) {
+    const old = findTabByRouteId(parts[0]);
+    if (old) return { sectionId: old.section.id, tabId: old.tab.id };
+    const sec = findSection(parts[0]);
+    if (sec) {
+      const persisted = getPersistedTab(sec.id) || sec.tabs[0].id;
+      return { sectionId: sec.id, tabId: persisted };
+    }
+    return { sectionId: "dashboard", tabId: "overview" };
+  }
+  const sectionId = parts[0];
+  const tabId = parts.slice(1).join("/");
+  const sec = findSection(sectionId);
+  if (!sec) return { sectionId: "dashboard", tabId: "overview" };
+  const tab = findTab(sectionId, tabId);
+  if (!tab) {
+    const persisted = getPersistedTab(sectionId) || sec.tabs[0].id;
+    return { sectionId, tabId: persisted };
+  }
+  return { sectionId, tabId };
+}
+
 function render() {
   clearPolls();
   const app = document.getElementById("app");
-  const monitorNav = [
-    { id: "overview", label: "Overview", icon: ICONS.overview },
-    { id: "signals", label: "Live Signals", icon: ICONS.signals },
-    { id: "ea-map", label: "EA Connections", icon: ICONS.map },
-    { id: "analytics", label: "Trade Analytics", icon: ICONS.analytics },
-    { id: "pipeline", label: "Pipeline", icon: ICONS.pipeline },
-  ];
-  const manageNav = [
-    { id: "setup", label: "Setup Wizard", icon: ICONS.setup },
-    { id: "licenses", label: "License Manager", icon: ICONS.license },
-    { id: "security", label: "Security Center", icon: ICONS.security },
-    { id: "audit", label: "Audit Log", icon: ICONS.audit },
-    { id: "settings", label: "Settings", icon: ICONS.settings },
-  ];
-  const systemNav = [
-    { id: "sys-health", label: "System Health", icon: ICONS.health },
-    { id: "sys-webhooks", label: "Webhook Logs", icon: ICONS.webhook },
-    { id: "sys-risk", label: "Risk Monitor", icon: ICONS.risk },
-    { id: "sys-errors", label: "Error Logs", icon: ICONS.errors },
-    { id: "sys-database", label: "Database", icon: ICONS.database },
-    { id: "sys-metrics", label: "Metrics", icon: ICONS.metrics },
-    { id: "sys-diag", label: "Diagnostics", icon: ICONS.diag },
-    { id: "sys-bot", label: "Bot Status", icon: ICONS.bot },
-  ];
-  const navHtml = (items) => items.map(n => `<a class="nav-item" href="#${n.id}" data-route="${n.id}" role="button" tabindex="0">${n.icon}<span>${n.label}</span></a>`).join("");
-  const allNav = monitorNav.concat(manageNav, systemNav);
-  const groups = [
-    { id: "monitor", label: "Monitor", items: monitorNav },
-    { id: "manage", label: "Manage", items: manageNav },
-    { id: "system", label: "System", items: systemNav },
-  ];
-  const groupState = (gid) => {
-    try { return sessionStorage.getItem("nav-group-" + gid) !== "collapsed"; }
-    catch { return true; }
-  };
-  const groupHtml = groups.map(g => {
-    const expanded = groupState(g.id);
-    return `<div class="nav-group${expanded ? "" : " collapsed"}" data-group="${g.id}">
-      <button class="nav-group-header" data-toggle="${g.id}" aria-expanded="${expanded}" aria-controls="nav-items-${g.id}" type="button">
-        <span class="nav-group-label">${g.label}</span>
-        <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <div class="nav-group-items" id="nav-items-${g.id}">${navHtml(g.items)}</div>
-    </div>`;
-  }).join("");
-  const mobilePrimary = ["overview", "signals", "ea-map", "setup", "settings"];
-  const mobilePrimaryItems = mobilePrimary.map(id => {
-    const n = allNav.find(x => x.id === id);
-    return n ? `<a class="tab" href="#${n.id}" data-route="${n.id}" role="button" tabindex="0">${n.icon}<span>${n.label.split(" ")[0]}</span></a>` : "";
-  }).join("");
-  const mobileSheetItems = groups.map(g => {
-    const items = g.items.map(n => `<a class="mobile-sheet-item" href="#${n.id}" data-route="${n.id}" role="button" tabindex="0">${n.icon}<span>${n.label}</span></a>`).join("");
-    return `<div class="mobile-sheet-group"><div class="mobile-sheet-label">${g.label}</div>${items}</div>`;
-  }).join("");
+  const sidebarItems = SECTIONS.map(s => `<a class="nav-item" href="#${s.id}" data-section="${s.id}" role="button" tabindex="0">${s.icon}<span>${s.label}</span></a>`).join("");
+  const mobileItems = SECTIONS.map(s => `<a class="tab" href="#${s.id}" data-section="${s.id}" role="button" tabindex="0">${s.icon}<span>${s.label}</span></a>`).join("");
   app.innerHTML = `
     <a class="skip-link" href="#content">Skip to main content</a>
     <div class="layout">
       <nav class="sidebar" aria-label="Main navigation">
         <div class="brand">${LOGO_SVG}</div>
-        <div class="nav-scroll">${groupHtml}</div>
+        <div class="nav-scroll">${sidebarItems}</div>
         <div class="footer"><svg class="pulse-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg><span>System Online - v1.0</span></div>
       </nav>
       <div class="main-area">
@@ -1112,28 +1149,14 @@ function render() {
           <h1 class="title" id="page-title">Overview</h1>
           <div class="actions" id="header-actions"></div>
         </header>
+        <nav class="tab-bar" id="tab-bar" aria-label="Section tabs"></nav>
         <div id="panel-announcer" class="sr-only" aria-live="polite" role="status"></div>
         <main class="content" id="content" tabindex="-1"></main>
       </div>
     </div>
     <nav class="mobile-nav" aria-label="Mobile navigation">
-      ${mobilePrimaryItems}
-      <button class="tab mobile-more" data-action="mobile-more" type="button" aria-haspopup="dialog" tabindex="0">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-        <span>More</span>
-      </button>
+      ${mobileItems}
     </nav>
-    <div class="mobile-sheet hidden" id="mobile-sheet" role="dialog" aria-modal="true" aria-label="All panels">
-      <div class="mobile-sheet-backdrop" data-action="close-sheet"></div>
-      <div class="mobile-sheet-card">
-        <div class="sheet-grab-handle" aria-hidden="true"></div>
-        <div class="mobile-sheet-head">
-          <h2 class="mobile-sheet-title">All Panels</h2>
-          <button class="btn ghost sm" data-action="close-sheet" type="button" aria-label="Close">${ICONS.x}</button>
-        </div>
-        <div class="mobile-sheet-body">${mobileSheetItems}</div>
-      </div>
-    </div>
   `;
   domCache.content = document.getElementById("content");
   domCache.actions = document.getElementById("header-actions");
@@ -1149,8 +1172,14 @@ function render() {
       }
     });
   }
-  document.querySelectorAll("[data-route]").forEach(el => {
-    const go = () => { route(el.dataset.route); closeMobileSheet(); };
+  document.querySelectorAll("[data-section]").forEach(el => {
+    const go = () => {
+      const secId = el.dataset.section;
+      const persisted = getPersistedTab(secId);
+      const sec = findSection(secId);
+      const tabId = persisted && findTab(secId, persisted) ? persisted : (sec ? sec.tabs[0].id : null);
+      if (tabId) route(secId + "/" + tabId);
+    };
     el.addEventListener("click", e => { e.preventDefault(); go(); });
     el.addEventListener("keydown", e => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
@@ -1158,67 +1187,10 @@ function render() {
   });
   window.addEventListener("hashchange", () => {
     const hash = window.location.hash.slice(1);
-    if (hash && hash !== currentRoute) route(hash);
+    const parsed = parseHash(hash);
+    const fullId = parsed.sectionId + "/" + parsed.tabId;
+    if (fullId !== currentRoute) route(fullId);
   });
-  document.querySelectorAll("[data-toggle]").forEach(el => {
-    el.addEventListener("click", e => {
-      e.preventDefault();
-      const gid = el.dataset.toggle;
-      const group = document.querySelector(`.nav-group[data-group="${gid}"]`);
-      if (!group) return;
-      const collapsed = group.classList.toggle("collapsed");
-      el.setAttribute("aria-expanded", String(!collapsed));
-      try { sessionStorage.setItem("nav-group-" + gid, collapsed ? "collapsed" : "expanded"); } catch {}
-    });
-  });
-  const moreBtn = document.querySelector("[data-action='mobile-more']");
-  if (moreBtn) moreBtn.addEventListener("click", e => { e.preventDefault(); openMobileSheet(); });
-  document.querySelectorAll("[data-action='close-sheet']").forEach(el => {
-    el.addEventListener("click", e => { e.preventDefault(); closeMobileSheet(); });
-  });
-}
-
-let _mobileSheetTrigger = null;
-let _mobileSheetEscape = null;
-let _mobileSheetTab = null;
-function openMobileSheet() {
-  const sheet = document.getElementById("mobile-sheet");
-  if (!sheet) return;
-  _mobileSheetTrigger = document.activeElement;
-  sheet.classList.remove("hidden");
-  sheet.classList.remove("sheet-closing");
-  requestAnimationFrame(() => sheet.classList.add("sheet-open"));
-  _mobileSheetEscape = e => { if (e.key === "Escape") { e.preventDefault(); closeMobileSheet(); } };
-  _mobileSheetTab = e => {
-    if (e.key !== "Tab") return;
-    const focusable = _getFocusable(sheet);
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (e.shiftKey) {
-      if (document.activeElement === first || !sheet.contains(document.activeElement)) { e.preventDefault(); last.focus(); }
-    } else {
-      if (document.activeElement === last || !sheet.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
-    }
-  };
-  document.addEventListener("keydown", _mobileSheetEscape);
-  document.addEventListener("keydown", _mobileSheetTab);
-  const closeBtn = sheet.querySelector("[data-action='close-sheet']");
-  if (closeBtn) setTimeout(() => closeBtn.focus(), 50);
-}
-
-function closeMobileSheet() {
-  const sheet = document.getElementById("mobile-sheet");
-  if (!sheet) return;
-  sheet.classList.remove("sheet-open");
-  sheet.classList.add("sheet-closing");
-  if (_mobileSheetEscape) { document.removeEventListener("keydown", _mobileSheetEscape); _mobileSheetEscape = null; }
-  if (_mobileSheetTab) { document.removeEventListener("keydown", _mobileSheetTab); _mobileSheetTab = null; }
-  setTimeout(() => {
-    sheet.classList.remove("sheet-closing");
-    sheet.classList.add("hidden");
-    if (_mobileSheetTrigger) { try { _mobileSheetTrigger.focus(); } catch {} _mobileSheetTrigger = null; }
-  }, 200);
 }
 
 document.addEventListener("visibilitychange", () => {
@@ -1234,46 +1206,37 @@ document.addEventListener("visibilitychange", () => {
 function route(id) {
   if (routeTimer) clearTimeout(routeTimer);
   routeTimer = setTimeout(() => {
-    currentRoute = id;
-    if (window.location.hash.slice(1) !== id) {
-      window.location.hash = id;
+    const parsed = parseHash(id);
+    currentSectionId = parsed.sectionId;
+    currentTabId = parsed.tabId;
+    const sec = findSection(currentSectionId);
+    const tab = findTab(currentSectionId, currentTabId);
+    if (!sec || !tab) { route("dashboard/overview"); return; }
+    const fullId = currentSectionId + "/" + currentTabId;
+    currentRoute = fullId;
+    currentRouteId = tab.routeId;
+    persistActiveTab(currentSectionId, currentTabId);
+    if (window.location.hash.slice(1) !== fullId) {
+      window.location.hash = fullId;
     }
     clearPolls();
-    document.querySelectorAll("[data-route]").forEach(el => {
-      const isActive = el.dataset.route === id;
+    document.querySelectorAll("[data-section]").forEach(el => {
+      const isActive = el.dataset.section === currentSectionId;
       el.classList.toggle("active", isActive);
       if (isActive) el.setAttribute("aria-current", "page");
       else el.removeAttribute("aria-current");
     });
-    const titles = {
-      overview: "Overview",
-      setup: "Setup Wizard",
-      settings: "Settings",
-      signals: "Live Signal Feed",
-      "ea-map": "EA Connections Map",
-      analytics: "Trade Analytics",
-      pipeline: "Signal Pipeline Monitor",
-      "sys-health": "System Health",
-      "sys-webhooks": "Webhook Logs",
-      "sys-risk": "Risk Monitor",
-      "sys-errors": "Error Log Viewer",
-      "sys-database": "Database Manager",
-      "sys-metrics": "Performance Metrics",
-      "sys-diag": "Diagnostics",
-      "sys-bot": "Telegram Bot Status",
-      licenses: "License Manager",
-      security: "Security Center",
-      audit: "Audit Log Timeline",
-    };
-    document.getElementById("page-title").textContent = titles[id] || id;
+    renderTabBar(sec, tab);
+    const pageTitle = document.getElementById("page-title");
+    if (pageTitle) pageTitle.textContent = tab.title;
     const announcer = document.getElementById("panel-announcer");
-    if (announcer) announcer.textContent = (titles[id] || id) + " panel loaded";
+    if (announcer) announcer.textContent = tab.title + " panel loaded";
     const content = document.getElementById("content");
     const actions = document.getElementById("header-actions");
     const renderPanel = () => {
       actions.innerHTML = "";
-      if (id !== "overview") overviewRendered = false;
-      if (id === "overview") {
+      if (currentRouteId !== "overview") overviewRendered = false;
+      if (currentRouteId === "overview") {
         if (overviewRendered) {
           startOverviewPoll();
           startHealthPolling();
@@ -1281,23 +1244,21 @@ function route(id) {
         } else {
           renderOverview(content, actions);
         }
-      } else if (id === "setup") renderSetup(content);
-      else if (id === "settings") renderSettings(content);
-      else if (id === "signals") renderSignalFeed(content, actions);
-      else if (id === "ea-map") renderEaMap(content, actions);
-      else if (id === "analytics") renderTradeAnalytics(content, actions);
-      else if (id === "pipeline") renderPipelineMonitor(content, actions);
-      else if (id === "sys-health") renderSystemHealth(content);
-      else if (id === "sys-webhooks") renderWebhookLogs(content);
-      else if (id === "sys-risk") renderRiskMonitor(content);
-      else if (id === "sys-errors") renderErrorLogs(content);
-      else if (id === "sys-database") renderDatabaseManager(content);
-      else if (id === "sys-metrics") renderMetrics(content);
-      else if (id === "sys-diag") renderDiagnostics(content);
-      else if (id === "sys-bot") renderBotStatus(content);
-      else if (id === "licenses") renderLicenses(content, actions);
-      else if (id === "security") renderSecurity(content, actions);
-      else if (id === "audit") renderAuditTimeline(content, actions);
+      } else if (currentRouteId === "setup") renderSetup(content);
+      else if (currentRouteId === "settings") renderSettings(content);
+      else if (currentRouteId === "signals") renderSignalFeed(content, actions);
+      else if (currentRouteId === "analytics") renderTradeAnalytics(content, actions);
+      else if (currentRouteId === "pipeline") renderPipelineMonitor(content, actions);
+      else if (currentRouteId === "sys-health") renderSystemHealth(content);
+      else if (currentRouteId === "sys-webhooks") renderWebhookLogs(content);
+      else if (currentRouteId === "sys-risk") renderRiskMonitor(content);
+      else if (currentRouteId === "sys-database") renderDatabaseManager(content);
+      else if (currentRouteId === "sys-metrics") renderMetrics(content);
+      else if (currentRouteId === "sys-diag") renderDiagnostics(content);
+      else if (currentRouteId === "sys-bot") renderBotStatus(content);
+      else if (currentRouteId === "licenses") renderLicenses(content, actions);
+      else if (currentRouteId === "security") renderSecurity(content, actions);
+      else if (currentRouteId === "audit") renderAuditTimeline(content, actions);
       if (content && !prefersReducedMotion()) {
         content.classList.remove("panel-fade-in");
         void content.offsetWidth;
@@ -1306,7 +1267,6 @@ function route(id) {
         content.classList.add("cards-enter");
         setTimeout(() => { if (content._cardsTok === tok) content.classList.remove("cards-enter"); }, 900);
       }
-      const pageTitle = document.getElementById("page-title");
       if (pageTitle) {
         pageTitle.setAttribute("tabindex", "-1");
         pageTitle.focus({ preventScroll: true });
@@ -1326,6 +1286,25 @@ function route(id) {
   }, 100);
 }
 
+function renderTabBar(section, activeTab) {
+  const bar = document.getElementById("tab-bar");
+  if (!bar) return;
+  bar.innerHTML = section.tabs.map(t => {
+    const isActive = t.id === activeTab.id;
+    const href = "#" + section.id + "/" + t.id;
+    return `<a class="tab-bar-item${isActive ? " active" : ""}" href="${href}" data-tab-route="${section.id}/${t.id}" role="button" tabindex="0" aria-current="${isActive ? "page" : "false"}">${escapeHtml(t.label)}</a>`;
+  }).join("");
+  bar.querySelectorAll("[data-tab-route]").forEach(el => {
+    const go = () => { route(el.dataset.tabRoute); };
+    el.addEventListener("click", e => { e.preventDefault(); go(); });
+    el.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+    });
+  });
+  const activeEl = bar.querySelector(".tab-bar-item.active");
+  if (activeEl) activeEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
+}
+
 function skeletonCard(cols = 3) {
   return `<div class="card"><div class="grid grid-${cols}">${Array(cols).fill('<div><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>`;
 }
@@ -1336,10 +1315,10 @@ function badge(state, text, pulse = false) {
 }
 
 function pollOverview() {
-  if (currentRoute !== "overview" || !visibilityPolling) return;
+  if (currentRouteId !== "overview" || !visibilityPolling) return;
   useFetch(`${API}/setup-status`).then(({ data }) => {
     if (!data) return;
-    if (currentRoute !== "overview") return;
+    if (currentRouteId !== "overview") return;
     try {
       const sig = JSON.stringify(data);
       if (sig !== lastSetupStatus) {
@@ -2503,7 +2482,7 @@ function renderSignalFeed(content, actions) {
 }
 
 async function pollSignalFeed() {
-  if (currentRoute !== "signals" || !visibilityPolling) return;
+  if (currentRouteId !== "signals" || !visibilityPolling) return;
   let result;
   try {
     result = await useFetch("/api/signals/recent?limit=50");
@@ -2511,7 +2490,7 @@ async function pollSignalFeed() {
     console.error("[dashboard] pollSignalFeed fetch error:", e);
     return;
   }
-  if (currentRoute !== "signals") return;
+  if (currentRouteId !== "signals") return;
   const { data, error, stale } = result;
   try {
     const staleEl = document.getElementById("feed-stale-banner");
@@ -2674,7 +2653,7 @@ function renderEaMap(content, actions) {
 }
 
 async function pollEaMap() {
-  if (currentRoute !== "ea-map" || !visibilityPolling) return;
+  if (currentRouteId !== "ea-map" || !visibilityPolling) return;
   let overviewRes, eaCheckRes;
   try {
     [overviewRes, eaCheckRes] = await Promise.all([
@@ -2685,7 +2664,7 @@ async function pollEaMap() {
     console.error("[dashboard] pollEaMap fetch error:", e);
     return;
   }
-  if (currentRoute !== "ea-map") return;
+  if (currentRouteId !== "ea-map") return;
   try {
     const overview = overviewRes ? overviewRes.data : null;
     const eaCheck = eaCheckRes ? eaCheckRes.data : null;
@@ -2898,7 +2877,7 @@ function renderTradeAnalytics(content, actions) {
 }
 
 async function pollTradeAnalytics() {
-  if (currentRoute !== "analytics" || !visibilityPolling) return;
+  if (currentRouteId !== "analytics" || !visibilityPolling) return;
   let statsRes, dashRes;
   try {
     [statsRes, dashRes] = await Promise.all([
@@ -2909,7 +2888,7 @@ async function pollTradeAnalytics() {
     console.error("[dashboard] pollTradeAnalytics fetch error:", e);
     return;
   }
-  if (currentRoute !== "analytics") return;
+  if (currentRouteId !== "analytics") return;
   try {
     const stats = statsRes ? statsRes.data : null;
     const dash = dashRes ? dashRes.data : null;
@@ -3166,7 +3145,7 @@ let pipelineState = {
 };
 
 async function pollPipeline() {
-  if (currentRoute !== "pipeline" || !visibilityPolling) return;
+  if (currentRouteId !== "pipeline" || !visibilityPolling) return;
   let statusRes, metricsText;
   try {
     [statusRes, metricsText] = await Promise.all([
@@ -3177,7 +3156,7 @@ async function pollPipeline() {
     console.error("[dashboard] pollPipeline fetch error:", e);
     return;
   }
-  if (currentRoute !== "pipeline") return;
+  if (currentRouteId !== "pipeline") return;
   try {
     const status = statusRes ? statusRes.data : null;
     const m = metricsText;
@@ -3425,7 +3404,7 @@ function statusColor(code) {
 let sysHealthState = { cpu: [], mem: [], disk: null, lastHealth: null, lastStats: null };
 
 async function pollSystemHealth() {
-  if (currentRoute !== "sys-health" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-health" || !visibilityPolling) return;
   let hRes, sRes;
   try {
     [hRes, sRes] = await Promise.all([
@@ -3436,7 +3415,7 @@ async function pollSystemHealth() {
     console.error("[dashboard] pollSystemHealth fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-health") return;
+  if (currentRouteId !== "sys-health") return;
   try {
     const h = hRes ? hRes.data : null;
     const s = sRes ? sRes.data : null;
@@ -3694,7 +3673,7 @@ function updateScrollHint(table) {
 }
 
 async function pollWebhookLogs() {
-  if (currentRoute !== "sys-webhooks" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-webhooks" || !visibilityPolling) return;
   let recentRes, statsRes;
   try {
     [recentRes, statsRes] = await Promise.all([
@@ -3705,7 +3684,7 @@ async function pollWebhookLogs() {
     console.error("[dashboard] pollWebhookLogs fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-webhooks") return;
+  if (currentRouteId !== "sys-webhooks") return;
   try {
     const staleEl = document.getElementById("wl-stale-banner");
     if (staleEl) {
@@ -3951,7 +3930,7 @@ function toggleWebhookRow(tr) {
 }
 
 async function pollRiskMonitor() {
-  if (currentRoute !== "sys-risk" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-risk" || !visibilityPolling) return;
   let result;
   try {
     result = await useFetch("/api/risk-status");
@@ -3959,7 +3938,7 @@ async function pollRiskMonitor() {
     console.error("[dashboard] pollRiskMonitor fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-risk") return;
+  if (currentRouteId !== "sys-risk") return;
   try {
     const { data, error, stale } = result;
     const staleEl = document.getElementById("risk-stale-banner");
@@ -4059,7 +4038,7 @@ function renderRiskMonitor(content) {
 let errorLogState = { entries: [], paused: false, filter: "ALL", search: "" };
 
 async function pollErrorLogs() {
-  if (currentRoute !== "sys-errors" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-errors" || !visibilityPolling) return;
   let result;
   try {
     result = await useFetch("/api/logs/errors?limit=100");
@@ -4067,7 +4046,7 @@ async function pollErrorLogs() {
     console.error("[dashboard] pollErrorLogs fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-errors") return;
+  if (currentRouteId !== "sys-errors") return;
   try {
     const { data, error, stale } = result;
     const staleEl = document.getElementById("el-stale-banner");
@@ -4210,7 +4189,7 @@ function renderErrorLogs(content) {
 }
 
 async function pollDatabaseManager() {
-  if (currentRoute !== "sys-database" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-database" || !visibilityPolling) return;
   let result;
   try {
     result = await useFetch("/api/database/stats");
@@ -4218,7 +4197,7 @@ async function pollDatabaseManager() {
     console.error("[dashboard] pollDatabaseManager fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-database") return;
+  if (currentRouteId !== "sys-database") return;
   try {
     const { data, error, stale } = result;
     const staleEl = document.getElementById("db-stale-banner");
@@ -4348,7 +4327,7 @@ async function doDbCleanup(days) {
 let metricsState = { history: {}, lastValues: {} };
 
 async function pollMetrics() {
-  if (currentRoute !== "sys-metrics" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-metrics" || !visibilityPolling) return;
   let text;
   try {
     text = await fetchMetrics();
@@ -4356,7 +4335,7 @@ async function pollMetrics() {
     console.error("[dashboard] pollMetrics fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-metrics") return;
+  if (currentRouteId !== "sys-metrics") return;
   try {
     const staleEl = document.getElementById("metrics-stale-banner");
     if (staleEl) {
@@ -4457,7 +4436,7 @@ function renderMetrics(content) {
 }
 
 async function pollDiagnostics() {
-  if (currentRoute !== "sys-diag" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-diag" || !visibilityPolling) return;
   let result;
   try {
     result = await useFetch("/api/diagnostics");
@@ -4465,7 +4444,7 @@ async function pollDiagnostics() {
     console.error("[dashboard] pollDiagnostics fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-diag") return;
+  if (currentRouteId !== "sys-diag") return;
   try {
     const { data, error, stale } = result;
     const staleEl = document.getElementById("diag-stale-banner");
@@ -4545,7 +4524,7 @@ function renderDiagnostics(content) {
 }
 
 async function pollBotStatus() {
-  if (currentRoute !== "sys-bot" || !visibilityPolling) return;
+  if (currentRouteId !== "sys-bot" || !visibilityPolling) return;
   let result;
   try {
     result = await useFetch(`${API}/bot-info`);
@@ -4553,7 +4532,7 @@ async function pollBotStatus() {
     console.error("[dashboard] pollBotStatus fetch error:", e);
     return;
   }
-  if (currentRoute !== "sys-bot") return;
+  if (currentRouteId !== "sys-bot") return;
   try {
     const { data, error, stale } = result;
     const staleEl = document.getElementById("bot-stale-banner");
@@ -4827,9 +4806,9 @@ function filteredLicenseRows() {
 }
 
 function pollLicenses() {
-  if (currentRoute !== "licenses" || !visibilityPolling) return;
+  if (currentRouteId !== "licenses" || !visibilityPolling) return;
   useFetch(`${API}/users`).then(({ data, stale }) => {
-    if (currentRoute !== "licenses") return;
+    if (currentRouteId !== "licenses") return;
     try {
       const staleEl = document.getElementById("lic-stale-banner");
       if (staleEl) {
@@ -4924,7 +4903,7 @@ function handleLicenseAction(b) {
 
 function refreshLicenses() {
   invalidateCache(`${API}/users`);
-  if (currentRoute === "licenses") pollLicenses();
+  if (currentRouteId === "licenses") pollLicenses();
 }
 
 async function extendLicense(key, btn) {
@@ -5274,9 +5253,9 @@ async function renderSecurity(content, actions) {
 }
 
 function pollSecurity() {
-  if (currentRoute !== "security" || !visibilityPolling) return;
+  if (currentRouteId !== "security" || !visibilityPolling) return;
   Promise.all([useFetch(`${API}/rate-limits`), useFetch(`${API}/security-headers`)]).then(([rl, hdr]) => {
-    if (currentRoute !== "security") return;
+    if (currentRouteId !== "security") return;
     try {
       const staleEl = document.getElementById("sec-stale-banner");
       if (staleEl) {
@@ -5294,7 +5273,7 @@ function pollSecurity() {
       if (rl && rl.data) securityState.data = rl.data;
       if (hdr && hdr.data) securityState.headers = hdr.data;
       const content = domCache.content || document.getElementById("content");
-      if (content && currentRoute === "security") renderSecurityContent(content);
+      if (content && currentRouteId === "security") renderSecurityContent(content);
     } catch (e) {
       console.error("[dashboard] pollSecurity error:", e);
     }
@@ -5492,12 +5471,12 @@ async function loadAuditPage(isInitial) {
 }
 
 function pollAudit() {
-  if (currentRoute !== "audit" || !visibilityPolling) return;
+  if (currentRouteId !== "audit" || !visibilityPolling) return;
   loadAuditPage(false).then(() => {
-    if (currentRoute !== "audit") return;
+    if (currentRouteId !== "audit") return;
     try {
       const content = document.getElementById("content");
-      if (content && currentRoute === "audit") renderAuditContent(content);
+      if (content && currentRouteId === "audit") renderAuditContent(content);
     } catch (e) {
       console.error("[dashboard] pollAudit error:", e);
     }
@@ -5649,8 +5628,8 @@ window.sendTestWebhook = sendTestWebhook;
   await useFetch(`${API}/setup-status`);
   render();
   const hash = window.location.hash.slice(1);
-  const validRoutes = ["overview","signals","ea-map","analytics","pipeline","setup","licenses","security","audit","settings","sys-health","sys-webhooks","sys-risk","sys-errors","sys-database","sys-metrics","sys-diag","sys-bot"];
-  route(validRoutes.includes(hash) ? hash : "overview");
+  const parsed = parseHash(hash);
+  route(parsed.sectionId + "/" + parsed.tabId);
 })();
 
 let resizeTimer = null;
