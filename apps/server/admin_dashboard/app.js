@@ -1450,10 +1450,10 @@ function setupStepState(data) {
 async function renderSetup(content) {
   const tk = renderToken;
   content.innerHTML = skeletonCard(1);
-  const { data, error, stale } = await useFetch(`${API}/setup-status`);
+  const { data, error, stale } = await withMinDisplayTime(useFetch(`${API}/setup-status`));
   if (staleRender(tk)) return;
   if (error && !data) {
-    content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load setup status</div><button class="btn outline sm mt" data-action="retry-setup">Retry</button></div>`;
+    content.innerHTML = errorPanel("setup status", error, "retry-setup");
     bindRetry(content, "retry-setup", () => route("setup"));
     return;
   }
@@ -1902,15 +1902,16 @@ function renderSignalFeed(content, actions) {
       </div>
       <div class="feed-scroll" id="feed-scroll">
         <table class="feed-table">
+          <caption class="sr-only">Live Signal Feed - real-time webhook signals</caption>
           <thead>
             <tr>
-              <th>Time</th>
-              <th>License</th>
-              <th>Action</th>
-              <th>Symbol</th>
-              <th>Lots</th>
-              <th>Status</th>
-              <th>Latency</th>
+              <th scope="col">Time</th>
+              <th scope="col">License</th>
+              <th scope="col">Action</th>
+              <th scope="col">Symbol</th>
+              <th scope="col">Lots</th>
+              <th scope="col">Status</th>
+              <th scope="col">Latency</th>
             </tr>
           </thead>
           <tbody id="feed-body">
@@ -2696,7 +2697,7 @@ function svgLineChart(values, opts = {}) {
   const min = opts.min || 0;
   const range = max - min || 1;
   const n = values.length;
-  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${opts.label || "chart"}: no data"></svg>`;
+  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${opts.label || "chart"}: no data"><title>${escapeHtml(opts.label || "chart")}</title><desc>No data available</desc></svg>`;
   const pts = values.map((v, i) => {
     const x = pad + (i / Math.max(1, n - 1)) * (W - pad * 2);
     const norm = (v != null && !isNaN(v)) ? (v - min) / range : 0;
@@ -2769,7 +2770,7 @@ function svgSparkline(values, opts = {}) {
   </svg>`;
 }
 
-function fmtBytes(n) {
+function formatBytes(n) {
   if (n == null || isNaN(n)) return "--";
   if (n < 1024) return `${n} B`;
   if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
@@ -2777,7 +2778,7 @@ function fmtBytes(n) {
   return `${(n / 1073741824).toFixed(2)} GB`;
 }
 
-function fmtNum(n, digits = 0) {
+function formatNum(n, digits = 0) {
   if (n == null || isNaN(n)) return "--";
   return Number(n).toFixed(digits);
 }
@@ -2870,8 +2871,8 @@ function updateSystemHealthUI() {
   const netEl = document.getElementById("sh-net");
   if (netEl && s && s.network) {
     netEl.innerHTML = `
-      <div class="row"><span class="k">Bytes sent</span><span class="v">${escapeHtml(fmtBytes(s.network.bytes_sent))}</span></div>
-      <div class="row"><span class="k">Bytes recv</span><span class="v">${escapeHtml(fmtBytes(s.network.bytes_recv))}</span></div>
+      <div class="row"><span class="k">Bytes sent</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_sent))}</span></div>
+      <div class="row"><span class="k">Bytes recv</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_recv))}</span></div>
       <div class="row"><span class="k">Packets sent</span><span class="v">${escapeHtml(String((s.network.packets_sent || 0).toLocaleString()))}</span></div>
       <div class="row"><span class="k">Packets recv</span><span class="v">${escapeHtml(String((s.network.packets_recv || 0).toLocaleString()))}</span></div>`;
   }
@@ -4237,9 +4238,22 @@ async function renderSecurity(content, actions) {
 function pollSecurity() {
   if (currentRoute !== "security" || !visibilityPolling) return;
   Promise.all([useFetch(`${API}/rate-limits`), useFetch(`${API}/security-headers`)]).then(([rl, hdr]) => {
+    const staleEl = document.getElementById("sec-stale-banner");
+    if (staleEl) {
+      const partials = [];
+      if (rl.error && !rl.data) partials.push("rate limits");
+      if (hdr.error && !hdr.data) partials.push("security headers");
+      if ((rl.stale || hdr.stale) && (rl.data || hdr.data)) {
+        staleEl.innerHTML = staleBanner();
+      } else if (partials.length > 0 && (rl.data || hdr.data)) {
+        staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+      } else {
+        staleEl.innerHTML = "";
+      }
+    }
     if (rl.data) securityState.data = rl.data;
     if (hdr.data) securityState.headers = hdr.data;
-    const content = document.getElementById("content");
+    const content = domCache.content || document.getElementById("content");
     if (content && currentRoute === "security") renderSecurityContent(content);
   });
 }
@@ -4278,6 +4292,7 @@ function renderSecurityContent(content) {
       </tr>`).join("");
 
   content.innerHTML = `
+    <div id="sec-stale-banner"></div>
     <div class="stat-grid-4" role="group" aria-label="Security stats">
       <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${blockedCount}">
         <div class="value">${blockedCount}</div>
@@ -4291,7 +4306,7 @@ function renderSecurityContent(content) {
         <div class="value">${rateHits}</div>
         <div class="label">Rate Limit Hits</div>
       </div>
-      <div class="sec-stat ${headersCls}">
+      <div class="sec-stat ${headersCls}" role="group" aria-label="Security Headers: ${headersActive} of ${totalHeaders}">
         <div class="value">${headersActive}/${totalHeaders}</div>
         <div class="label">Security Headers</div>
       </div>
@@ -4310,11 +4325,11 @@ function renderSecurityContent(content) {
     <div class="card">
       <h2 class="card-title">Security Headers</h2>
       <div class="card-desc">HTTP security response headers</div>
-      <div class="headers-checklist">
+      <div class="headers-checklist" role="list" aria-label="Security headers checklist">
         ${headerList.map(h => {
           const ok = !!h.val;
-          return `<div class="header-item">
-            <span class="header-mark ${ok ? "ok" : "bad"}">${ok ? ICONS.check : ICONS.x}</span>
+          return `<div class="header-item" role="listitem">
+            <span class="header-mark ${ok ? "ok" : "bad"}" aria-hidden="true">${ok ? ICONS.check : ICONS.x}</span>
             <span class="h-name">${escapeHtml(h.name)}</span>
             <span class="h-val" title="${escapeHtml(h.val || "")}">${escapeHtml(h.val || "missing")}</span>
           </div>`;
@@ -4366,9 +4381,26 @@ async function renderAuditTimeline(content, actions) {
 async function loadAuditPage(isInitial) {
   if (auditState.loading) return;
   auditState.loading = true;
-  const { data, error } = await useFetch(`${API}/audit-actions?limit=${auditState.limit}`);
+  const { data, error, stale } = await useFetch(`${API}/audit-actions?limit=${auditState.limit}`);
   auditState.loading = false;
-  if (error && !data) return;
+  const staleEl = document.getElementById("audit-stale-banner");
+  if (staleEl) {
+    if (stale && data) {
+      staleEl.innerHTML = staleBanner();
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
+  if (error && !data) {
+    if (auditState.rows.length === 0) {
+      const content = domCache.content || document.getElementById("content");
+      if (content) {
+        content.innerHTML = errorPanel("audit log", error, "retry-audit");
+        bindRetryToScope("retry-audit", () => route("audit"));
+      }
+    }
+    return;
+  }
   if (!data || !data.actions) return;
   auditState.rows = data.actions;
   auditState.hasMore = data.actions.length >= auditState.limit;
