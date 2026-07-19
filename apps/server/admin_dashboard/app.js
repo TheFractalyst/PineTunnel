@@ -603,7 +603,13 @@ async function parseResponse(r) {
   if (ct.includes("application/json")) {
     const text = await r.text();
     if (!text) return null;
-    return JSON.parse(text);
+    try { return JSON.parse(text); } catch (e) {
+      const err = new Error("Malformed JSON response from server.");
+      err.status = 0;
+      err.transient = false;
+      err.friendly = "Server returned invalid JSON. Try again.";
+      throw err;
+    }
   }
   const text = await r.text();
   if (!text) return null;
@@ -1627,9 +1633,10 @@ async function renderSetup(content) {
     return;
   }
   const staleBannerHtml = stale ? staleBanner() : "";
-  const state = setupStepState(data);
+  const safeData = data || {};
+  const state = setupStepState(safeData);
   persistStep(state.step);
-  renderSetupStep(content, state.step, data, staleBannerHtml);
+  renderSetupStep(content, state.step, safeData, staleBannerHtml);
 }
 
 function renderSetupStep(content, step, data, staleBannerHtml = "") {
@@ -1853,21 +1860,26 @@ async function renderStep3(body, data) {
 
 async function advanceStep(step) {
   const content = document.getElementById("content");
+  if (!content) return;
   persistStep(step);
   content.innerHTML = skeletonCard(1);
   invalidateCache(`${API}/setup-status`);
   const { data, stale } = await useFetch(`${API}/setup-status`);
   const staleBannerHtml = stale ? staleBanner() : "";
-  renderSetupStep(content, step, data, staleBannerHtml);
+  renderSetupStep(content, step, data || {}, staleBannerHtml);
 }
 
 function skipCloudflare() {
   const content = document.getElementById("content");
+  if (!content) return;
   persistStep(3);
   invalidateCache(`${API}/setup-status`);
   useFetch(`${API}/setup-status`).then(({ data, stale }) => {
     const staleBannerHtml = stale ? staleBanner() : "";
-    renderSetupStep(content, 3, data, staleBannerHtml);
+    renderSetupStep(content, 3, data || {}, staleBannerHtml);
+  }).catch(e => {
+    console.error("[dashboard] skipCloudflare error:", e);
+    renderSetupStep(content, 3, {}, "");
   });
   toast("Skipped Cloudflare - complete later", "ok");
 }
@@ -2128,7 +2140,7 @@ async function renderSettings(content) {
     bindRetry(content, "retry-settings", () => route("settings"));
     return;
   }
-  const groups = groupConfigEntries(data);
+  const groups = groupConfigEntries(data || {});
   content.innerHTML = `
     ${stale ? staleBanner() : ""}
     <div id="settings-result" aria-live="polite"></div>
@@ -2477,6 +2489,7 @@ function renderFeedRows() {
     const scroll = document.getElementById("feed-scroll");
     if (scroll) scroll.scrollTop = 0;
   }
+  updateScrollHint(document.querySelector(".feed-table"));
 }
 
 let eaMapState = { expanded: null };
@@ -2658,12 +2671,13 @@ function toggleEaCard(card) {
 }
 
 async function loadEaTrades(key, container) {
+  if (!container) return;
   container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2><div class="card-desc">Loading trade history...</div></div>`;
   try {
     const r = await http(`/api/ea/ws-telemetry/trade-history/${encodeURIComponent(key)}`);
     const data = await r.json();
-    const trades = data.deals || data.trades || [];
-    if (trades.length === 0) {
+    const trades = (data && (data.deals || data.trades)) || [];
+    if (!Array.isArray(trades) || trades.length === 0) {
       container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}</div>`;
       return;
     }
@@ -2676,6 +2690,7 @@ async function loadEaTrades(key, container) {
           <thead><tr><th scope="col">Time</th><th scope="col">Symbol</th><th scope="col">Type</th><th scope="col">Lots</th><th scope="col">Ticket</th><th scope="col">Profit</th></tr></thead>
           <tbody>
             ${trades.map(t => {
+              if (!t) return "";
               const ts = t.close_time || t.open_time || t.timestamp;
               const tsStr = ts ? formatTime(ts) : "--";
               const sym = t.symbol || "--";
@@ -3065,8 +3080,8 @@ async function pollPipeline() {
     if (delivered > pipelineState.lastDelivered) {
       const diff = delivered - pipelineState.lastDelivered;
       pipelineState.signalHistory.push({ t: Date.now(), n: diff });
-      if (pipelineState.lastDelivered > 0 && httpDur && httpDur.avg != null) {
-        pipelineState.latencies.push(httpDur.avg * 1000);
+      if (pipelineState.lastDelivered > 0 && wsPushAvgMs != null) {
+        pipelineState.latencies.push(wsPushAvgMs);
         if (pipelineState.latencies.length > 100) pipelineState.latencies = pipelineState.latencies.slice(-50);
       }
       pipelineState.lastDelivered = delivered;
@@ -3532,6 +3547,22 @@ function skeletonRowsHTML(colspan, n) {
   ).join("");
 }
 
+function updateScrollHint(table) {
+  if (!table) return;
+  const wrap = table.closest(".table-wrap") || table.closest(".feed-scroll");
+  if (!wrap) return;
+  const scrollable = wrap.scrollWidth > wrap.clientWidth + 2;
+  wrap.classList.toggle("scrollable", scrollable);
+  wrap.classList.toggle("at-end", !scrollable || wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2);
+  if (!wrap._scrollHintBound) {
+    wrap._scrollHintBound = true;
+    wrap.addEventListener("scroll", () => {
+      const atEnd = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2;
+      wrap.classList.toggle("at-end", atEnd);
+    }, { passive: true });
+  }
+}
+
 async function pollWebhookLogs() {
   if (currentRoute !== "sys-webhooks" || !visibilityPolling) return;
   let recentRes, statsRes;
@@ -3696,10 +3727,13 @@ function renderWebhookLogs(content) {
 
 function filteredWebhookRows() {
   const f = webhookLogState.filter;
-  let rows = webhookLogState.rows;
-  if (f.status) rows = rows.filter(r => String(r.response_code) === f.status);
-  if (f.symbol) rows = rows.filter(r => (r.symbol || "").toUpperCase().includes(f.symbol));
-  if (f.license) rows = rows.filter(r => (JSON.stringify(r.payload || "")).includes(f.license));
+  let rows = Array.isArray(webhookLogState.rows) ? webhookLogState.rows : [];
+  if (f.status) rows = rows.filter(r => r && String(r.response_code) === f.status);
+  if (f.symbol) rows = rows.filter(r => r && (r.symbol || "").toUpperCase().includes(f.symbol));
+  if (f.license) rows = rows.filter(r => {
+    if (!r) return false;
+    try { return (JSON.stringify(r.payload || "")).includes(f.license); } catch { return false; }
+  });
   return sortRows(rows, webhookLogState.sort.key, webhookLogState.sort.dir);
 }
 
@@ -3746,6 +3780,7 @@ function renderWebhookTable() {
   if (nextBtn) nextBtn.disabled = end >= rows.length;
   const loadMore = document.querySelector("[data-action='wl-load-more']");
   if (loadMore) loadMore.classList.toggle("hidden", end >= rows.length);
+  updateScrollHint(document.querySelector("#wl-table"));
 }
 
 function toggleWebhookRow(tr) {
@@ -4467,11 +4502,11 @@ async function renderLicenses(content, actions) {
     bindRetry(content, "retry-licenses", () => route("licenses"));
     return;
   }
-  licenseState.rows = data ? data.users : [];
+  licenseState.rows = (data && Array.isArray(data.users)) ? data.users : [];
   licenseState.loaded = true;
   const staleBannerHtml = stale ? staleBanner() : "";
-  const total = data ? data.total_users : 0;
-  const totalEAs = licenseState.rows.reduce((n, u) => n + (u.stats && u.stats.connected_eas || 0), 0);
+  const total = (data && data.total_users) || licenseState.rows.length;
+  const totalEAs = licenseState.rows.reduce((n, u) => n + ((u && u.stats && u.stats.connected_eas) || 0), 0);
   content.innerHTML = `
     <div id="lic-stale-banner">${staleBannerHtml}</div>
     <div class="panel-toolbar">
@@ -4548,14 +4583,16 @@ async function renderLicenses(content, actions) {
 
 function filteredLicenseRows() {
   const q = licenseState.search;
-  let rows = licenseState.rows;
+  let rows = licenseState.rows || [];
   if (q) {
     rows = rows.filter(u => {
-      const hay = `${u.email || ""} ${u.name || ""} ` + (u.licenses || []).map(l => l.license_key || "").join(" ");
+      if (!u) return false;
+      const hay = `${u.email || ""} ${u.name || ""} ` + (Array.isArray(u.licenses) ? u.licenses : []).map(l => (l && l.license_key) || "").join(" ");
       return hay.toLowerCase().includes(q);
     });
   }
   const flat = rows.map(u => {
+    if (!u) return null;
     const lic = (u.licenses && u.licenses[0]) || {};
     const stats = u.stats || {};
     const status = lic.status || "active";
@@ -4579,20 +4616,27 @@ function filteredLicenseRows() {
       _lic: lic,
       _stats: stats,
     };
-  });
+  }).filter(r => r !== null);
   return sortRows(flat, licenseState.sort.key, licenseState.sort.dir);
 }
 
 function pollLicenses() {
   if (currentRoute !== "licenses" || !visibilityPolling) return;
   useFetch(`${API}/users`).then(({ data, stale }) => {
-    const staleEl = document.getElementById("lic-stale-banner");
-    if (staleEl) {
-      staleEl.innerHTML = (stale && data) ? staleBanner() : "";
+    if (currentRoute !== "licenses") return;
+    try {
+      const staleEl = document.getElementById("lic-stale-banner");
+      if (staleEl) {
+        staleEl.innerHTML = (stale && data) ? staleBanner() : "";
+      }
+      if (!data || !Array.isArray(data.users)) return;
+      licenseState.rows = data.users;
+      renderLicenseRows();
+    } catch (e) {
+      console.error("[dashboard] pollLicenses error:", e);
     }
-    if (!data) return;
-    licenseState.rows = data.users;
-    renderLicenseRows();
+  }).catch(e => {
+    console.error("[dashboard] pollLicenses fetch error:", e);
   });
 }
 
@@ -4624,16 +4668,16 @@ function renderLicenseRows() {
       const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
       const lastAct = r.last_activity ? formatTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
       return `<tr>
-        <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
-        <td>${escapeHtml(r.name || "--")}</td>
-        <td class="td-email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
-        <td class="td-status"><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
-        <td class="secret-cell" aria-label="Secret hidden">****</td>
-        <td>${escapeHtml(expires)}</td>
-        <td class="td-num">${formatNumber(r.connected_eas)}</td>
-        <td class="td-num">${formatNumber(r.total_trades)}</td>
-        <td>${escapeHtml(lastAct)}</td>
-        <td class="td-actions">
+        <td class="td-key" scope="row" data-label="License Key" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
+        <td data-label="Name">${escapeHtml(r.name || "--")}</td>
+        <td class="td-email" data-label="Email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
+        <td class="td-status" data-label="Status"><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
+        <td class="secret-cell" data-label="Secret" aria-label="Secret hidden">****</td>
+        <td data-label="Expires">${escapeHtml(expires)}</td>
+        <td class="td-num" data-label="EAs">${formatNumber(r.connected_eas)}</td>
+        <td class="td-num" data-label="Trades">${formatNumber(r.total_trades)}</td>
+        <td data-label="Last Activity">${escapeHtml(lastAct)}</td>
+        <td class="td-actions" data-label="Actions">
           <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit license ${escapeHtml(maskKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
           <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend license ${escapeHtml(maskKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
           <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} license ${escapeHtml(maskKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
@@ -4649,6 +4693,7 @@ function renderLicenseRows() {
   const nextBtn = document.getElementById("lic-next");
   if (prevBtn) prevBtn.disabled = licenseState.page === 0;
   if (nextBtn) nextBtn.disabled = end >= rows.length;
+  updateScrollHint(document.querySelector("#lic-table"));
 }
 
 function handleLicenseAction(b) {
@@ -5029,30 +5074,37 @@ async function renderSecurity(content, actions) {
 function pollSecurity() {
   if (currentRoute !== "security" || !visibilityPolling) return;
   Promise.all([useFetch(`${API}/rate-limits`), useFetch(`${API}/security-headers`)]).then(([rl, hdr]) => {
-    const staleEl = document.getElementById("sec-stale-banner");
-    if (staleEl) {
-      const partials = [];
-      if (rl.error && !rl.data) partials.push("rate limits");
-      if (hdr.error && !hdr.data) partials.push("security headers");
-      if ((rl.stale || hdr.stale) && (rl.data || hdr.data)) {
-        staleEl.innerHTML = staleBanner();
-      } else if (partials.length > 0 && (rl.data || hdr.data)) {
-        staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
-      } else {
-        staleEl.innerHTML = "";
+    if (currentRoute !== "security") return;
+    try {
+      const staleEl = document.getElementById("sec-stale-banner");
+      if (staleEl) {
+        const partials = [];
+        if (rl && rl.error && !rl.data) partials.push("rate limits");
+        if (hdr && hdr.error && !hdr.data) partials.push("security headers");
+        if ((rl && rl.stale || hdr && hdr.stale) && ((rl && rl.data) || (hdr && hdr.data))) {
+          staleEl.innerHTML = staleBanner();
+        } else if (partials.length > 0 && ((rl && rl.data) || (hdr && hdr.data))) {
+          staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+        } else {
+          staleEl.innerHTML = "";
+        }
       }
+      if (rl && rl.data) securityState.data = rl.data;
+      if (hdr && hdr.data) securityState.headers = hdr.data;
+      const content = domCache.content || document.getElementById("content");
+      if (content && currentRoute === "security") renderSecurityContent(content);
+    } catch (e) {
+      console.error("[dashboard] pollSecurity error:", e);
     }
-    if (rl.data) securityState.data = rl.data;
-    if (hdr.data) securityState.headers = hdr.data;
-    const content = domCache.content || document.getElementById("content");
-    if (content && currentRoute === "security") renderSecurityContent(content);
+  }).catch(e => {
+    console.error("[dashboard] pollSecurity fetch error:", e);
   });
 }
 
 function renderSecurityContent(content) {
   const d = securityState.data || {};
   const hdr = securityState.headers || {};
-  const blocked = d.blocked_ips || [];
+  const blocked = Array.isArray(d.blocked_ips) ? d.blocked_ips : [];
   const blockedCount = d.blocked_ip_count != null ? d.blocked_ip_count : blocked.length;
   const failed24h = d.failed_attempts_24h != null ? d.failed_attempts_24h : 0;
   const rateHits = d.rate_limited_requests || 0;
@@ -5069,18 +5121,24 @@ function renderSecurityContent(content) {
   const headersActive = headerList.filter(h => !!h.val).length;
   const headersCls = headersActive >= totalHeaders ? "ok" : headersActive > 0 ? "warn" : "bad";
 
-  const tvAllow = hdr.tradingview_ip_allowlist;
-  const tvIps = hdr.tradingview_ips || [];
+  const tvAllow = !!hdr.tradingview_ip_allowlist;
+  const tvIps = Array.isArray(hdr.tradingview_ips) ? hdr.tradingview_ips : [];
 
   const blockedRows = blocked.length === 0
     ? `<tr><td colspan="5" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
-    : blocked.map(b => `<tr>
-        <td class="td-key" scope="row">${escapeHtml(b.ip)}</td>
-        <td>${escapeHtml(formatTime(null))}</td>
-        <td>${escapeHtml(b.reason || "Blocked")}</td>
-        <td class="td-num">${escapeHtml(formatDuration(b.remaining_seconds || 0))}</td>
-        <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}" aria-label="Unblock IP ${escapeHtml(b.ip)}">Unblock</button></td>
-      </tr>`).join("");
+    : blocked.map(b => {
+      if (!b) return "";
+      const ip = b.ip || "--";
+      const reason = b.reason || "Blocked";
+      const remaining = b.remaining_seconds || 0;
+      return `<tr>
+        <td class="td-key" scope="row" data-label="IP">${escapeHtml(ip)}</td>
+        <td data-label="Blocked At">${escapeHtml(formatTime(null))}</td>
+        <td data-label="Reason">${escapeHtml(reason)}</td>
+        <td class="td-num" data-label="Remaining">${escapeHtml(formatDuration(remaining))}</td>
+        <td class="td-actions" data-label="Action"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(ip)}" aria-label="Unblock IP ${escapeHtml(ip)}">Unblock</button></td>
+      </tr>`;
+    }).join("");
 
   content.innerHTML = `
     <div id="sec-stale-banner"></div>
@@ -5170,6 +5228,7 @@ function renderSecurityContent(content) {
         });
     });
   }
+  updateScrollHint(content.querySelector(".table-wrap table"));
 }
 
 let auditState = { rows: [], filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "", loading: false, hasMore: true, limit: 50 };
@@ -5193,36 +5252,55 @@ async function renderAuditTimeline(content, actions) {
 async function loadAuditPage(isInitial) {
   if (auditState.loading) return;
   auditState.loading = true;
-  const { data, error, stale } = await useFetch(`${API}/audit-actions?limit=${auditState.limit}`);
-  auditState.loading = false;
-  const staleEl = document.getElementById("audit-stale-banner");
-  if (staleEl) {
-    if (stale && data) {
-      staleEl.innerHTML = staleBanner();
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (error && !data) {
-    if (auditState.rows.length === 0) {
-      const content = domCache.content || document.getElementById("content");
-      if (content) {
-        content.innerHTML = errorPanel("audit log", error, "retry-audit");
-        bindRetryToScope("retry-audit", () => route("audit"));
-      }
-    }
+  let result;
+  try {
+    result = await useFetch(`${API}/audit-actions?limit=${auditState.limit}`);
+  } catch (e) {
+    auditState.loading = false;
+    console.error("[dashboard] loadAuditPage fetch error:", e);
     return;
   }
-  if (!data || !data.actions) return;
-  auditState.rows = data.actions;
-  auditState.hasMore = data.actions.length >= auditState.limit;
+  auditState.loading = false;
+  try {
+    const { data, error, stale } = result;
+    const staleEl = document.getElementById("audit-stale-banner");
+    if (staleEl) {
+      if (stale && data) {
+        staleEl.innerHTML = staleBanner();
+      } else {
+        staleEl.innerHTML = "";
+      }
+    }
+    if (error && !data) {
+      if (auditState.rows.length === 0) {
+        const content = domCache.content || document.getElementById("content");
+        if (content) {
+          content.innerHTML = errorPanel("audit log", error, "retry-audit");
+          bindRetryToScope("retry-audit", () => route("audit"));
+        }
+      }
+      return;
+    }
+    if (!data || !Array.isArray(data.actions)) return;
+    auditState.rows = data.actions;
+    auditState.hasMore = data.actions.length >= auditState.limit;
+  } catch (e) {
+    console.error("[dashboard] loadAuditPage error:", e);
+  }
 }
 
 function pollAudit() {
   if (currentRoute !== "audit" || !visibilityPolling) return;
   loadAuditPage(false).then(() => {
-    const content = document.getElementById("content");
-    if (content && currentRoute === "audit") renderAuditContent(content);
+    if (currentRoute !== "audit") return;
+    try {
+      const content = document.getElementById("content");
+      if (content && currentRoute === "audit") renderAuditContent(content);
+    } catch (e) {
+      console.error("[dashboard] pollAudit error:", e);
+    }
+  }).catch(e => {
+    console.error("[dashboard] pollAudit fetch error:", e);
   });
 }
 
@@ -5245,24 +5323,26 @@ function sourceBadge(user) {
 function renderAuditContent(content) {
   const actions = new Set();
   const admins = new Set();
-  for (const a of auditState.rows) {
+  for (const a of (auditState.rows || [])) {
+    if (!a) continue;
     if (a.action) actions.add(a.action);
     if (a.user) admins.add(a.user);
   }
-  let filtered = auditState.rows;
-  if (auditState.filterAction) filtered = filtered.filter(a => a.action === auditState.filterAction);
-  if (auditState.filterAdmin) filtered = filtered.filter(a => a.user === auditState.filterAdmin);
+  let filtered = auditState.rows || [];
+  if (auditState.filterAction) filtered = filtered.filter(a => a && a.action === auditState.filterAction);
+  if (auditState.filterAdmin) filtered = filtered.filter(a => a && a.user === auditState.filterAdmin);
   if (auditState.filterFrom) {
     const from = new Date(auditState.filterFrom).getTime();
-    filtered = filtered.filter(a => new Date(a.timestamp).getTime() >= from);
+    filtered = filtered.filter(a => a && a.timestamp && new Date(a.timestamp).getTime() >= from);
   }
   if (auditState.filterTo) {
     const to = new Date(auditState.filterTo).getTime();
-    filtered = filtered.filter(a => new Date(a.timestamp).getTime() <= to);
+    filtered = filtered.filter(a => a && a.timestamp && new Date(a.timestamp).getTime() <= to);
   }
   if (auditState.search) {
     const q = auditState.search.toLowerCase();
     filtered = filtered.filter(a => {
+      if (!a) return false;
       const hay = `${a.action || ""} ${a.user || ""} ${a.ip_address || ""} ${a.details || ""}`;
       return hay.toLowerCase().includes(q);
     });
@@ -5293,14 +5373,18 @@ function renderAuditContent(content) {
   `;
   const tl = content.querySelector("#audit-timeline");
   if (filtered.length === 0) {
-    tl.innerHTML = `${auditState.rows.length === 0 ? emptyState(ICONS.audit, "No admin actions recorded yet.") : '<div class="empty small"><div class="msg">No matches</div></div>'}`;
+    tl.innerHTML = `${(auditState.rows || []).length === 0 ? emptyState(ICONS.audit, "No admin actions recorded yet.") : '<div class="empty small"><div class="msg">No matches</div></div>'}`;
   } else {
     tl.innerHTML = filtered.map(a => {
+      if (!a) return "";
       const sev = auditSeverityClass(a.action);
       const ts = a.timestamp ? formatTime(a.timestamp) : "--";
       const user = a.user || "unknown";
       const src = sourceBadge(a.user);
-      const details = a.details ? (typeof a.details === "string" ? a.details : JSON.stringify(a.details, null, 2)) : "";
+      let details = "";
+      try {
+        if (a.details) details = typeof a.details === "string" ? a.details : JSON.stringify(a.details, null, 2);
+      } catch (e) { details = ""; }
       const target = a.ip_address || "";
       return `<div class="tl-entry ${sev}">
         <div class="tl-head">

@@ -192,5 +192,39 @@ async def metrics() -> Response:
 
     Returns metrics in Prometheus text exposition format.
     Scrape with prometheus or curl: `curl http://host:8000/metrics`
+
+    Signal queue depth and WebSocket connection count are refreshed from
+    their live singletons (db_manager + ws_manager) on each scrape so the
+    exported values match what the Telegram bot reports, not just the
+    in-memory gauges that may lag.
     """
+    _refresh_live_gauges()
     return Response(content=_build_metrics(), media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+def _refresh_live_gauges() -> None:
+    """Pull queue depth and WS connection count from their live singletons.
+
+    Called on every /metrics scrape so the gauges reflect current state.
+    Silently no-ops if the singletons are not wired yet (startup / tests).
+    """
+    try:
+        from apps.server.state import db_manager, ws_manager
+
+        if ws_manager is not None:
+            try:
+                set_ws_connections(ws_manager.get_total_connections())
+            except Exception:
+                pass
+
+        if db_manager is not None:
+            try:
+                rows = db_manager.execute_query(
+                    "SELECT COUNT(*) AS cnt FROM signal_queue WHERE status = 'pending'"
+                )
+                depth = rows[0]["cnt"] if rows else 0
+                set_signal_queue_depth(int(depth) if depth is not None else 0)
+            except Exception:
+                pass
+    except Exception:
+        pass
