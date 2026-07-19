@@ -994,6 +994,17 @@ function render() {
   domCache.content = document.getElementById("content");
   domCache.actions = document.getElementById("header-actions");
   domCache.sidebar = document.querySelector(".sidebar");
+  const skipLink = document.querySelector(".skip-link");
+  if (skipLink) {
+    skipLink.addEventListener("click", e => {
+      e.preventDefault();
+      const target = document.getElementById("content");
+      if (target) {
+        target.setAttribute("tabindex", "-1");
+        target.focus({ preventScroll: false });
+      }
+    });
+  }
   document.querySelectorAll("[data-route]").forEach(el => {
     el.addEventListener("click", e => { e.preventDefault(); route(el.dataset.route); closeMobileSheet(); });
     el.addEventListener("keydown", e => {
@@ -1137,8 +1148,8 @@ async function renderOverview(content, actions) {
   const tk = renderToken;
   content.innerHTML = `
     <div class="card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
-    <div class="card"><div class="card-title"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
-    <div class="card"><div class="card-title"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
+    <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
+    <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
   `;
   const { data, error, stale } = await useFetch(`${API}/setup-status`);
   if (staleRender(tk)) return;
@@ -1333,8 +1344,10 @@ function setupStepState(data) {
 }
 
 async function renderSetup(content) {
+  const tk = renderToken;
   content.innerHTML = skeletonCard(1);
   const { data, error, stale } = await useFetch(`${API}/setup-status`);
+  if (staleRender(tk)) return;
   if (error && !data) {
     content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load setup status</div><button class="btn outline sm mt" data-action="retry-setup">Retry</button></div>`;
     bindRetry(content, "retry-setup", () => route("setup"));
@@ -1428,10 +1441,14 @@ function renderStep2(body, data) {
           <div class="hint">Dashboard will create the tunnel for you. Coming in Phase 2.</div>
         </div>
         <div class="field">
-          <label for="cf-token">Option B: I have a tunnel token already</label>
-          <input class="input" id="cf-token" placeholder="eyJ..." disabled>
-          <label for="cf-url" class="sr-only">Tunnel URL</label>
-          <input class="input mt" id="cf-url" placeholder="https://pinetunnel.example.com" disabled>
+          <label for="cf-token">Option B: Tunnel token <span class="opt">(optional)</span></label>
+          <input class="input" id="cf-token" type="password" placeholder="eyJ..." autocomplete="off" spellcheck="false" disabled>
+          <div class="hint">Must start with eyJ - from Cloudflare Tunnel dashboard</div>
+        </div>
+        <div class="field">
+          <label for="cf-url">Tunnel URL <span class="opt">(optional)</span></label>
+          <input class="input" id="cf-url" type="url" placeholder="https://pinetunnel.example.com" autocomplete="off" spellcheck="false" disabled>
+          <div class="hint">Must start with https://</div>
         </div>
         <button class="btn outline" disabled>${ICONS.external}Connect (Phase 2)</button>
         <div id="cf-result" aria-live="polite"></div>
@@ -1440,6 +1457,14 @@ function renderStep2(body, data) {
   `;
   const adv = body.querySelector("[data-action='advance-3']");
   if (adv) adv.addEventListener("click", e => { e.preventDefault(); advanceStep(3); });
+  const cfToken = body.querySelector("#cf-token");
+  const cfUrl = body.querySelector("#cf-url");
+  if (cfToken && !cfToken.disabled) {
+    attachValidator(cfToken, "cfToken");
+    addPasswordToggle(cfToken);
+  }
+  if (cfUrl && !cfUrl.disabled) attachValidator(cfUrl, "cfUrl");
+  if (!cf) autofocusFirst(body);
 }
 
 async function renderStep3(body, data) {
@@ -1676,8 +1701,10 @@ async function pollEaVerify() {
 }
 
 async function renderSettings(content) {
+  const tk = renderToken;
   content.innerHTML = skeletonCard(1);
   const { data, error, stale } = await useFetch(`${API}/config`);
+  if (staleRender(tk)) return;
   if (error && !data) {
     content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load settings</div><button class="btn outline sm mt" data-action="retry-settings">Retry</button></div>`;
     bindRetry(content, "retry-settings", () => route("settings"));
@@ -2289,11 +2316,11 @@ function drawDonutChart(stats, dash) {
     const large = frac > 0.5 ? 1 : 0;
     const path = `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${xi1} ${yi1} A ${innerR} ${innerR} 0 ${large} 0 ${xi2} ${yi2} Z`;
     const pct = (frac * 100).toFixed(1);
-    return `<path d="${path}" fill="${colors[i]}" stroke="#131318" stroke-width="1"><title>${e.name}: ${e.vol} (${pct}%)</title></path>`;
+    return `<path d="${path}" fill="${colors[i]}" stroke="#131318" stroke-width="1"><title>${escapeHtml(e.name)}: ${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</title></path>`;
   }).join("");
   const legend = entries.map((e, i) => {
     const pct = ((e.vol / total) * 100).toFixed(1);
-    return `<div class="legend-item"><span class="legend-dot" style="background:${colors[i]}"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${e.vol} (${pct}%)</span></div>`;
+    return `<div class="legend-item"><span class="legend-dot" style="background:${colors[i]}"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</span></div>`;
   }).join("");
   wrap.innerHTML = `<div class="donut-wrap">
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg donut-svg">
@@ -2537,6 +2564,30 @@ function svgLineChart(values, opts = {}) {
   </svg>`;
 }
 
+function updateLineChart(el, values, opts = {}) {
+  if (!el) return;
+  const paths = el.querySelectorAll("path");
+  if (paths.length < 2) { el.innerHTML = svgLineChart(values, opts); return; }
+  const W = opts.width || 600;
+  const H = opts.height || 160;
+  const pad = opts.pad || 24;
+  const max = opts.max != null ? opts.max : Math.max(100, ...values.map(v => v || 0));
+  const min = opts.min || 0;
+  const range = max - min || 1;
+  const n = values.length;
+  if (n === 0) return;
+  const pts = values.map((v, i) => {
+    const x = pad + (i / Math.max(1, n - 1)) * (W - pad * 2);
+    const norm = (v != null && !isNaN(v)) ? (v - min) / range : 0;
+    const y = H - pad - norm * (H - pad * 2);
+    return [x, y];
+  });
+  const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${H - pad} L${pts[0][0].toFixed(1)} ${H - pad} Z`;
+  paths[0].setAttribute("d", area);
+  paths[1].setAttribute("d", line);
+}
+
 function svgSparkline(values, opts = {}) {
   const W = 60, H = 20;
   const color = opts.color || PALETTE.green;
@@ -2612,8 +2663,8 @@ function updateSystemHealthUI() {
   if (!h) return;
   const cpuEl = document.getElementById("sh-cpu-chart");
   const memEl = document.getElementById("sh-mem-chart");
-  if (cpuEl) cpuEl.innerHTML = svgLineChart(cpu, { color: PALETTE.green, label: "CPU %", max: 100 });
-  if (memEl) memEl.innerHTML = svgLineChart(mem, { color: PALETTE.blue, label: "Memory %", max: 100 });
+  updateLineChart(cpuEl, cpu, { color: PALETTE.green, label: "CPU %", max: 100 });
+  updateLineChart(memEl, mem, { color: PALETTE.blue, label: "Memory %", max: 100 });
   const cpuVal = h.system ? h.system.cpu_percent : null;
   const memVal = h.system ? h.system.memory_percent : null;
   setTile("sh-cpu-val", cpuVal != null ? `${cpuVal.toFixed(1)}%` : "--", loadColor(cpuVal));
@@ -3678,7 +3729,7 @@ function renderLicenseRows() {
     e.preventDefault(); e.stopPropagation();
     const key = b.dataset.key;
     const name = b.dataset.name;
-    openConfirmModal("Delete license", `Delete license for ${escapeHtml(name)}?`, () => comingSoon("License deletion"));
+    openConfirmModal("Delete license", `Delete license for ${name}?`, () => comingSoon("License deletion"));
   }));
 }
 

@@ -403,7 +403,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   display: flex;
   flex-direction: column-reverse;
   gap: 8px;
-  z-index: 3000;
+  z-index: 1100;
   max-width: 360px;
   pointer-events: none;
 }
@@ -447,13 +447,21 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 
 .skeleton {
-  background: linear-gradient(90deg, var(--card) 25%, var(--card-2) 50%, var(--card) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  position: relative;
+  background: var(--card);
   border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--card-2) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: shimmer 1.5s var(--ease-default) infinite;
 }
 @keyframes shimmer {
-  to { background-position: -200% 0; }
+  to { transform: translateX(100%); }
 }
 .skeleton.line { height: 14px; margin-bottom: 8px; }
 .skeleton.line.short { width: 60%; }
@@ -708,7 +716,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .conn-banner {
   position: fixed;
   top: 0; left: 0; right: 0;
-  z-index: 2500;
+  z-index: 1200;
   background: var(--amber-bg);
   border-bottom: 1px solid rgba(242, 153, 74, 0.4);
   color: var(--amber);
@@ -871,6 +879,8 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .gauge { width: 120px; height: 120px; display: block; }
 @media (max-width: 768px) {
   .gauge { width: 80px; height: 80px; }
+  .gauge-value { font-size: 14px; }
+  .gauge-label { font-size: 8px; }
 }
 .gauge-value { font-size: 18px; font-weight: 700; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .gauge-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; font-family: var(--mono); }
@@ -1391,33 +1401,42 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(10, 10, 15, 0.7);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1500;
-  animation: fade-in var(--t-default) var(--ease-default);
+  z-index: 1000;
   padding: 20px;
+  opacity: 0;
+  transition: opacity var(--t-default);
 }
+.modal-overlay.modal-open { opacity: 1; }
+.modal-overlay.modal-closing { opacity: 0; }
 .modal-card {
   position: relative;
+  z-index: 1001;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 24px;
   max-width: 480px;
   width: 100%;
-  max-height: 90vh;
+  max-height: 80vh;
   overflow-y: auto;
   box-shadow: var(--shadow-lg);
-  animation: modal-in var(--t-slow) var(--ease-slow);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity var(--t-default), transform var(--t-default);
 }
-@keyframes modal-in {
-  from { opacity: 0; transform: translateY(12px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
+.modal-overlay.modal-open .modal-card { opacity: 1; transform: translateY(0); }
+.modal-card.confirm { max-width: 600px; }
+.confirm-icon { color: var(--amber); margin-bottom: 12px; display: flex; justify-content: center; }
+.confirm-icon svg { width: 32px; height: 32px; }
+.confirm-heading { font-size: 17px; font-weight: 700; text-align: center; margin-bottom: 6px; }
+.confirm-context { font-size: 13px; font-weight: 600; text-align: center; color: var(--text); margin-bottom: 4px; }
+.confirm-desc { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 18px; }
 .modal-title {
   font-size: 16px;
   font-weight: 700;
@@ -1536,7 +1555,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   border-left: 3px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 14px 16px;
-  animation: fade-in var(--t-default) ease-out;
+  animation: fade-in var(--t-default) var(--ease-default);
 }
 .tl-entry::before {
   content: "";
