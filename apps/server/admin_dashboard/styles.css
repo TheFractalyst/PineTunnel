@@ -954,6 +954,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   justify-content: space-between;
   margin-bottom: 16px;
 }
+.mobile-sheet-head .btn.ghost.sm { min-width: 44px; min-height: 44px; padding: 8px; }
 .mobile-sheet-title { font-size: 16px; font-weight: 700; }
 .mobile-sheet-body { display: flex; flex-direction: column; gap: 16px; }
 .mobile-sheet-group { display: flex; flex-direction: column; gap: 4px; }
