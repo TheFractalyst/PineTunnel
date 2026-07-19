@@ -43,10 +43,6 @@ function cleanupPanel(id) {
   const s = panelStates[id];
   if (s && s.pollTimer) { clearInterval(s.pollTimer); s.pollTimer = null; }
 }
-function resetPanelData(id) {
-  const s = getPanelState(id);
-  s.data = null; s.error = null; s.loading = false; s.sig = null;
-}
 function addPoll(timer) {
   const s = getPanelState(currentRoute);
   if (s.pollTimer) clearInterval(s.pollTimer);
@@ -156,16 +152,6 @@ function maskKey(k) {
   const s = String(k);
   if (s.length <= 8) return s + "...";
   return s.slice(0, 8) + "...";
-}
-
-function statusBadge(status) {
-  const s = String(status || "").toLowerCase();
-  let cls = "info";
-  if (["active", "ok", "healthy", "connected", "success", "executed", "running"].includes(s)) cls = "ok";
-  else if (["pending", "warn", "stale", "queued", "delivered"].includes(s)) cls = "warn";
-  else if (["failed", "error", "disabled", "expired", "rejected", "skipped", "stopped", "blocked"].includes(s)) cls = "bad";
-  else if (["info", "new"].includes(s)) cls = "info";
-  return '<span class="badge ' + cls + '"><span class="dot"></span>' + escapeHtml(status) + '</span>';
 }
 
 function isSafeUrl(url) {
@@ -441,6 +427,15 @@ function withMinDisplayTime(promise) {
   });
 }
 
+function debounce(fn, ms) {
+  let t = null;
+  return function() {
+    const ctx = this, args = arguments;
+    if (t) clearTimeout(t);
+    t = setTimeout(() => { t = null; fn.apply(ctx, args); }, ms);
+  };
+}
+
 function bindRetry(scope, action, fn) {
   const el = scope.querySelector(`[data-action="${action}"]`);
   if (el) el.addEventListener("click", e => { e.preventDefault(); fn(); });
@@ -510,10 +505,6 @@ function getCached(path) {
 function setCached(path, data) { cache[path] = { data, ts: Date.now() }; }
 function invalidateCache(path) { delete cache[path]; }
 function clearCache() { Object.keys(cache).forEach(k => delete cache[k]); }
-function forceRefresh(routeId) {
-  clearCache();
-  route(routeId || currentRoute);
-}
 
 async function http(path, opts = {}) {
   const method = (opts.method || "GET").toUpperCase();
@@ -1827,6 +1818,7 @@ function renderStep2(body, data) {
 async function renderStep3(body, data) {
   const cf = data?.cloudflare_configured;
   const skipped = !cf;
+  const sampleAlert = "LICENSE_KEY,buy,EURUSD,lots=0.10,sl=1.0850,tp=1.0950,secret=YOUR_SECRET";
   body.innerHTML = `
     <div class="card setup-card">
       <h2 class="card-title">TradingView Webhook</h2>
@@ -1837,6 +1829,61 @@ async function renderStep3(body, data) {
       </div>
       <div class="hint mt">In TradingView: Chart -&gt; Alert -&gt; Notifications -&gt; Webhook URL</div>
     </div>
+    <div class="card setup-card">
+      <h2 class="card-title">Sample Alert Message</h2>
+      <div class="card-desc">Paste this into the TradingView alert message box</div>
+      <div class="webhook-display">
+        <code class="webhook-url" id="step3-sample-alert">${escapeHtml(sampleAlert)}</code>
+        <button class="btn outline full-sm" id="copy-sample" data-action="copy-sample">${ICONS.copy}Copy Message</button>
+      </div>
+      <div class="hint mt">Replace LICENSE_KEY and YOUR_SECRET with your actual values</div>
+    </div>
+    <div class="card setup-card">
+      <h2 class="card-title">Test Webhook</h2>
+      <div class="card-desc">Send a test signal to verify your webhook is working</div>
+      <div class="webhook-test-section mt">
+        <button class="btn outline" id="s3-test-toggle" data-action="s3-toggle-test" ${skipped ? "disabled" : ""}>${ICONS.external}Test Webhook</button>
+        <div id="s3-test-form" class="webhook-test-form hidden">
+          <div class="grid grid-3">
+            <div class="field">
+              <label for="s3-test-symbol">Symbol <span class="req">*</span></label>
+              <input class="input" id="s3-test-symbol" value="EURUSD" placeholder="EURUSD" maxlength="12" inputmode="text" spellcheck="false" autocomplete="off" aria-required="true">
+              <div class="hint">Uppercase letters, e.g. EURUSD</div>
+            </div>
+            <div class="field">
+              <label for="s3-test-action">Action <span class="req">*</span></label>
+              <select class="input" id="s3-test-action" aria-required="true">
+                <option value="buy">buy</option>
+                <option value="sell">sell</option>
+                <option value="close_long">close_long</option>
+                <option value="close_short">close_short</option>
+                <option value="close_all">close_all</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="s3-test-lots">Lots <span class="req">*</span></label>
+              <input class="input" id="s3-test-lots" value="0.10" placeholder="0.10" type="number" min="0.01" step="0.01" inputmode="decimal" aria-required="true">
+              <div class="hint">Positive number, e.g. 0.10</div>
+            </div>
+          </div>
+          <div class="grid grid-2">
+            <div class="field">
+              <label for="s3-test-sl">Stop Loss <span class="opt">(optional)</span></label>
+              <input class="input" id="s3-test-sl" placeholder="e.g. 1.0850" type="number" min="0" step="0.00001" inputmode="decimal">
+            </div>
+            <div class="field">
+              <label for="s3-test-tp">Take Profit <span class="opt">(optional)</span></label>
+              <input class="input" id="s3-test-tp" placeholder="e.g. 1.0950" type="number" min="0" step="0.00001" inputmode="decimal">
+            </div>
+          </div>
+          <div class="webhook-test-actions">
+            <button class="btn primary" id="s3-test-send" data-action="s3-send-test">${ICONS.check}Send Test Signal</button>
+            <button class="btn outline" id="s3-test-cancel" data-action="s3-cancel-test">Cancel</button>
+          </div>
+          <div id="s3-test-result" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
     <div class="step3-actions">
       <a class="btn outline full-sm" href="https://www.tradingview.com/chart/" target="_blank" rel="noopener" data-action="open-tv">${ICONS.external}Open TradingView</a>
       <button class="btn primary full-sm" data-action="goto-overview">${ICONS.check}Go to Dashboard</button>
@@ -1844,18 +1891,107 @@ async function renderStep3(body, data) {
   `;
   const copyBtn = body.querySelector("[data-action='copy-step3']");
   if (copyBtn) copyBtn.addEventListener("click", e => { e.preventDefault(); copyWebhookStep3(); });
+  const copySampleBtn = body.querySelector("[data-action='copy-sample']");
+  if (copySampleBtn) copySampleBtn.addEventListener("click", e => { e.preventDefault(); copy(sampleAlert); });
   const backBtn = body.querySelector("[data-action='goto-overview']");
   if (backBtn) backBtn.addEventListener("click", e => { e.preventDefault(); route("overview"); });
+  const toggleBtn = body.querySelector("[data-action='s3-toggle-test']");
+  if (toggleBtn) toggleBtn.addEventListener("click", e => { e.preventDefault(); toggleStep3TestForm(); });
+  const cancelBtn = body.querySelector("[data-action='s3-cancel-test']");
+  if (cancelBtn) cancelBtn.addEventListener("click", e => { e.preventDefault(); toggleStep3TestForm(false); });
+  const sendBtn = body.querySelector("[data-action='s3-send-test']");
+  if (sendBtn) sendBtn.addEventListener("click", e => { e.preventDefault(); sendStep3TestWebhook(); });
   if (skipped) return;
   try {
     const r = await http(`${API}/webhook-url`);
     const info = await r.json();
     const urlEl = document.getElementById("step3-webhook-url");
-    if (urlEl) urlEl.textContent = info.url || "";
+    if (urlEl) {
+      if (info.ready && info.url) {
+        urlEl.textContent = info.url;
+      } else {
+        urlEl.textContent = info.message || "Complete Cloudflare setup to get your webhook URL";
+      }
+    }
   } catch (e) {
     const urlEl = document.getElementById("step3-webhook-url");
     if (urlEl) urlEl.textContent = data?.server_url || "";
   }
+}
+
+function toggleStep3TestForm(force) {
+  const form = document.getElementById("s3-test-form");
+  if (!form) return;
+  const result = document.getElementById("s3-test-result");
+  if (result) result.innerHTML = "";
+  if (force === false) {
+    form.classList.add("hidden");
+  } else if (force === true) {
+    form.classList.remove("hidden");
+  } else {
+    form.classList.toggle("hidden");
+  }
+  if (!form.classList.contains("hidden")) {
+    const sym = form.querySelector("#s3-test-symbol");
+    const lots = form.querySelector("#s3-test-lots");
+    if (sym && !sym.dataset.validator) { sym.dataset.validator = "1"; attachValidator(sym, "symbol"); }
+    if (lots && !lots.dataset.validator) { lots.dataset.validator = "1"; attachValidator(lots, "lots"); }
+    submitOnEnter(form, sendStep3TestWebhook);
+    autofocusFirst(form);
+  }
+}
+
+async function sendStep3TestWebhook() {
+  const btn = document.getElementById("s3-test-send");
+  const result = document.getElementById("s3-test-result");
+  if (!btn || !result) return;
+  const symEl = document.getElementById("s3-test-symbol");
+  const lotsEl = document.getElementById("s3-test-lots");
+  const okSym = validateInput(symEl, "symbol");
+  const okLots = validateInput(lotsEl, "lots");
+  if (!okSym || !okLots) return;
+  const symbol = symEl.value.trim().toUpperCase();
+  const action = document.getElementById("s3-test-action").value;
+  const lots = parseFloat(lotsEl.value.trim());
+  const slVal = document.getElementById("s3-test-sl").value.trim();
+  const tpVal = document.getElementById("s3-test-tp").value.trim();
+  const body = { symbol, action, lots: String(lots) };
+  if (slVal) body.sl = slVal;
+  if (tpVal) body.tp = tpVal;
+  setBtnLoading(btn, "Sending...");
+  result.innerHTML = "";
+  const t0 = Date.now();
+  try {
+    const r = await http(`${API}/test-webhook`, {
+      method: "POST",
+      headers: jsonHeaders(true),
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    const clientLatency = Date.now() - t0;
+    if (data.status === "sent") {
+      const ok = data.response_code >= 200 && data.response_code < 300;
+      const serverLat = data.latency_ms != null ? data.latency_ms : clientLatency;
+      if (ok) {
+        toast("Signal sent - check Signal Feed", "ok");
+      } else {
+        toast("Webhook returned error", "bad");
+      }
+      result.innerHTML = `<div class="inline-${ok ? "ok" : "error"}">${ok ? ICONS.check : ICONS.x}HTTP ${escapeHtml(String(data.response_code))} - ${ok ? "Signal delivered" : "Webhook returned error"} (${escapeHtml(String(serverLat))}ms)</div>
+        <div class="hint mt">Response: ${escapeHtml(data.response_body || "")}</div>
+        ${ok ? `<div class="mt"><button class="btn outline sm" data-action="s3-view-feed">${ICONS.feed}View in Signal Feed</button></div>` : ""}`;
+      const vfBtn = result.querySelector("[data-action='s3-view-feed']");
+      if (vfBtn) vfBtn.addEventListener("click", e => { e.preventDefault(); route("signals"); });
+    } else {
+      toast("Test failed", "bad");
+      result.innerHTML = `<div class="inline-error">${ICONS.x}${escapeHtml(data.message || "Test failed")}</div>`;
+    }
+  } catch (e) {
+    toast("Request failed", "bad");
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(friendlyMsg(e))}</div>`;
+  }
+  btn.disabled = false;
+  btn.innerHTML = btn.dataset.origHtml || btn.innerHTML;
 }
 
 async function advanceStep(step) {
@@ -1894,9 +2030,24 @@ async function saveTelegram() {
   if (!okToken || !okUid) return;
   const token = tokenEl.value.trim();
   const uid = uidEl.value.trim();
-  setBtnLoading(btn, "Saving...");
+  setBtnLoading(btn, "Verifying...");
   result.innerHTML = "";
   try {
+    const validateRes = await http(`${API}/validate-telegram`, {
+      method: "POST",
+      headers: jsonHeaders(true),
+      body: JSON.stringify({ token, user_id: uid }),
+    });
+    const validateData = await validateRes.json();
+    if (!validateData.valid) {
+      setBtnError(btn, "Invalid token");
+      result.innerHTML = `<div class="inline-error">${ICONS.x}${escapeHtml(validateData.error || "Invalid token")}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
+      const retry = result.querySelector("[data-action='retry-save']");
+      if (retry) retry.addEventListener("click", ev => { ev.preventDefault(); saveTelegram(); });
+      return;
+    }
+    const botName = validateData.bot_username || "@yourbot";
+    setBtnLoading(btn, "Saving...");
     const r = await http(`${API}/config`, {
       method: "PUT",
       headers: jsonHeaders(true),
@@ -1906,12 +2057,6 @@ async function saveTelegram() {
     setupDirty = false;
     invalidateCache(`${API}/setup-status`);
     invalidateCache(`${API}/config`);
-    let botName = "@yourbot";
-    try {
-      const infoRes = await http(`${API}/bot-info`);
-      const info = await infoRes.json();
-      if (info.username) botName = "@" + info.username;
-    } catch {}
     setBtnSuccess(btn, "Connected", 2000);
     result.innerHTML = `<div class="inline-ok">${ICONS.check}Connected as ${escapeHtml(botName)}</div>`;
     if (data.needs_restart) {
@@ -2102,15 +2247,6 @@ function isSecretKey(k) {
   return SECRET_PATTERNS.some(p => u.indexOf(p) >= 0);
 }
 
-function generateSecret(len = 32) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-  let s = "";
-  const arr = new Uint8Array(len);
-  crypto.getRandomValues(arr);
-  for (let i = 0; i < len; i++) s += chars[arr[i] % chars.length];
-  return s;
-}
-
 function groupConfigEntries(data) {
   const used = new Set();
   const groups = [];
@@ -2187,7 +2323,7 @@ async function renderSettings(content) {
 
 function bindSettingsActions(scope) {
   scope.querySelectorAll("[data-action='rotate-secret']").forEach(btn => {
-    btn.addEventListener("click", e => { e.preventDefault(); rotateSecret(btn.dataset.key, btn); });
+    btn.addEventListener("click", e => { e.preventDefault(); openConfirmModal("Rotate secret", `Generate a new value for ${btn.dataset.key}? The old value will be invalidated. This cannot be undone.`, () => rotateSecret(btn.dataset.key, btn), "Rotate"); });
   });
   scope.querySelectorAll("[data-action='edit-config']").forEach(btn => {
     btn.addEventListener("click", e => { e.preventDefault(); editConfigKey(btn.dataset.key); });
@@ -2340,7 +2476,7 @@ function renderSignalFeed(content, actions) {
   const pauseBtn = content.querySelector("[data-action='feed-pause']");
   const scrollEl = content.querySelector("#feed-scroll");
   licenseSel.addEventListener("change", () => { signalFeedState.filterLicense = licenseSel.value; setPanelState("signals", { filters: { filterLicense: licenseSel.value } }); renderFeedRows(); });
-  symbolInput.addEventListener("input", () => { signalFeedState.filterSymbol = symbolInput.value.trim().toUpperCase(); setPanelState("signals", { filters: { filterSymbol: symbolInput.value.trim().toUpperCase() } }); renderFeedRows(); });
+  symbolInput.addEventListener("input", debounce(() => { signalFeedState.filterSymbol = symbolInput.value.trim().toUpperCase(); setPanelState("signals", { filters: { filterSymbol: signalFeedState.filterSymbol } }); renderFeedRows(); }, 200));
   statusSel.addEventListener("change", () => { signalFeedState.filterStatus = statusSel.value; setPanelState("signals", { filters: { filterStatus: statusSel.value } }); renderFeedRows(); });
   pauseBtn.addEventListener("click", e => {
     e.preventDefault();
@@ -3181,18 +3317,6 @@ function parsePromMetricLabeled(text, name, labels) {
   return match ? parseInt(match[1], 10) : 0;
 }
 
-function parseHistogram(text, name) {
-  if (!text) return null;
-  const countRe = new RegExp(`^${name}_count\\{[^}]*\\}\\s+(\\d+(?:\\.\\d+)?)`, "m");
-  const sumRe = new RegExp(`^${name}_sum\\{[^}]*\\}\\s+(\\d+(?:\\.\\d+)?)`, "m");
-  const cMatch = text.match(countRe);
-  const sMatch = text.match(sumRe);
-  if (!cMatch) return null;
-  const count = parseInt(cMatch[1], 10);
-  const sum = parseFloat(sMatch ? sMatch[1] : 0);
-  return { count, sum, avg: count > 0 ? sum / count : 0 };
-}
-
 function svgLineChart(values, opts = {}) {
   const W = opts.width || 600;
   const H = opts.height || 160;
@@ -3279,14 +3403,6 @@ function svgSparkline(values, opts = {}) {
 function formatNum(n, digits = 0) {
   if (n == null || isNaN(n)) return "--";
   return Number(n).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
-}
-
-function colorClass(c) {
-  if (c === PALETTE.green) return "c-green";
-  if (c === PALETTE.blue) return "c-blue";
-  if (c === PALETTE.amber) return "c-amber";
-  if (c === PALETTE.red) return "c-red";
-  return "c-muted";
 }
 
 function statusColor(code) {
@@ -3698,8 +3814,8 @@ function renderWebhookLogs(content) {
   const clearEl = document.getElementById("wl-clear");
   if (rangeEl) rangeEl.addEventListener("change", () => { webhookLogState.filter.range = rangeEl.value; renderWebhookTable(); });
   if (statusEl) statusEl.addEventListener("change", () => { webhookLogState.filter.status = statusEl.value; webhookLogState.page = 0; renderWebhookTable(); });
-  if (symEl) symEl.addEventListener("input", () => { webhookLogState.filter.symbol = symEl.value.trim().toUpperCase(); webhookLogState.page = 0; renderWebhookTable(); });
-  if (licEl) licEl.addEventListener("input", () => { webhookLogState.filter.license = licEl.value.trim(); webhookLogState.page = 0; renderWebhookTable(); });
+  if (symEl) symEl.addEventListener("input", debounce(() => { webhookLogState.filter.symbol = symEl.value.trim().toUpperCase(); webhookLogState.page = 0; renderWebhookTable(); }, 200));
+  if (licEl) licEl.addEventListener("input", debounce(() => { webhookLogState.filter.license = licEl.value.trim(); webhookLogState.page = 0; renderWebhookTable(); }, 200));
   if (clearEl) clearEl.addEventListener("click", () => {
     webhookLogState.filter = { range: "today", status: "", symbol: "", license: "" };
     webhookLogState.page = 0;
@@ -4057,7 +4173,7 @@ function renderErrorLogs(content) {
   const searchEl = document.getElementById("el-search");
   const pauseBtn = content.querySelector("[data-action='el-pause']");
   if (filterEl) filterEl.addEventListener("change", () => { errorLogState.filter = filterEl.value; renderErrorLogList(); });
-  if (searchEl) searchEl.addEventListener("input", () => { errorLogState.search = searchEl.value.trim(); renderErrorLogList(); });
+  if (searchEl) searchEl.addEventListener("input", debounce(() => { errorLogState.search = searchEl.value.trim(); renderErrorLogList(); }, 200));
   if (pauseBtn) pauseBtn.addEventListener("click", e => {
     e.preventDefault();
     errorLogState.paused = !errorLogState.paused;
@@ -4599,7 +4715,7 @@ async function renderLicenses(content, actions) {
       <span class="badge info">${pluralize(total, "user")}</span>
       <span class="badge ok">${formatNumber(totalEAs)} EAs connected</span>
     </div>
-    <div class="card">
+    <div class="card license-stack">
       <div class="table-wrap">
         <table class="data-table mgr-table" id="lic-table" aria-label="Licenses">
           <caption class="sr-only">License manager</caption>
@@ -4631,11 +4747,11 @@ async function renderLicenses(content, actions) {
     </div>
   `;
   const searchEl = content.querySelector("#lic-search");
-  if (searchEl) searchEl.addEventListener("input", () => {
+  if (searchEl) searchEl.addEventListener("input", debounce(() => {
     licenseState.search = searchEl.value.trim().toLowerCase();
     licenseState.page = 0;
     renderLicenseRows();
-  });
+  }, 200));
   const clearEl = content.querySelector("#lic-clear");
   if (clearEl) clearEl.addEventListener("click", () => {
     licenseState.search = "";
@@ -4874,23 +4990,6 @@ async function deleteLicense(key) {
   }
 }
 
-async function regenerateLicenseSecret(key, btn) {
-  if (btn) setBtnLoading(btn, "Regenerating...");
-  try {
-    const r = await http(`${API}/licenses/${encodeURIComponent(key)}/regenerate-secret`, { method: "POST", headers: jsonHeaders(true) });
-    const data = await parseResponse(r);
-    toast(`New secret: ${data && data.new_secret ? data.new_secret : "(generated)"}`, "ok");
-  } catch (e) {
-    toast(`Regenerate failed: ${friendlyMsg(e)}`, "bad");
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = `${ICONS.refresh}Regenerate`; }
-  }
-}
-
-function comingSoon(feature) {
-  toast(`${feature} - coming soon (Phase 3)`, "bad");
-}
-
 function genKey(prefix) {
   const seg = () => Math.random().toString(36).slice(2, 6).toUpperCase();
   return `${prefix}-${seg()}-${seg()}-${seg()}-${seg()}`;
@@ -5075,6 +5174,11 @@ function openEditLicenseModal(key, dataset) {
           <option value="false"${lic.enabled === false ? " selected" : ""}>Disabled</option>
         </select>
       </div>
+      <div class="field">
+        <label>Secret</label>
+        <button class="btn outline sm" data-action="regen-secret" type="button">${ICONS.refresh}Regenerate Secret</button>
+        <div class="hint">Generates a new secret key. The EA must be updated with the new secret.</div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn outline" data-action="modal-cancel">Cancel</button>
@@ -5084,6 +5188,8 @@ function openEditLicenseModal(key, dataset) {
   openModal(overlay);
   overlay.querySelector("[data-action='modal-close']").addEventListener("click", () => closeModal(overlay));
   overlay.querySelector("[data-action='modal-cancel']").addEventListener("click", () => closeModal(overlay));
+  const regenBtn = overlay.querySelector("[data-action='regen-secret']");
+  if (regenBtn) regenBtn.addEventListener("click", e => { e.preventDefault(); regenerateLicenseSecret(key, regenBtn); });
   const emailEl = overlay.querySelector("#lic-edit-email");
   if (emailEl) attachValidator(emailEl, "email");
   submitOnEnter(overlay.querySelector("#lic-edit-form"), () => overlay.querySelector("[data-action='modal-save']").click());
@@ -5499,7 +5605,7 @@ function renderAuditContent(content) {
   if (adminSel) adminSel.addEventListener("change", () => { auditState.filterAdmin = adminSel.value; setPanelState("audit", { filters: { filterAdmin: adminSel.value } }); renderAuditContent(content); });
   if (fromEl) fromEl.addEventListener("change", () => { auditState.filterFrom = fromEl.value; setPanelState("audit", { filters: { filterFrom: fromEl.value } }); renderAuditContent(content); });
   if (toEl) toEl.addEventListener("change", () => { auditState.filterTo = toEl.value; setPanelState("audit", { filters: { filterTo: toEl.value } }); renderAuditContent(content); });
-  if (searchEl) searchEl.addEventListener("input", () => { auditState.search = searchEl.value.trim(); setPanelState("audit", { filters: { search: searchEl.value.trim() } }); renderAuditContent(content); });
+  if (searchEl) searchEl.addEventListener("input", debounce(() => { auditState.search = searchEl.value.trim(); setPanelState("audit", { filters: { search: auditState.search } }); renderAuditContent(content); }, 200));
   const clearEl = content.querySelector("#audit-clear");
   if (clearEl) clearEl.addEventListener("click", () => {
     auditState.filterAction = "";
