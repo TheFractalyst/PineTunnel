@@ -704,6 +704,8 @@ function showConnectionLost(msg) {
       banner = document.createElement("div");
       banner.id = "conn-lost";
       banner.className = "conn-banner";
+      banner.setAttribute("role", "alert");
+      banner.setAttribute("aria-live", "assertive");
       document.body.appendChild(banner);
     }
     banner.innerHTML = `<div class="conn-banner-inner">
@@ -1109,6 +1111,7 @@ function render() {
           <h1 class="title" id="page-title">Overview</h1>
           <div class="actions" id="header-actions"></div>
         </header>
+        <div id="panel-announcer" class="sr-only" aria-live="polite" role="status"></div>
         <main class="content" id="content" tabindex="-1"></main>
       </div>
     </div>
@@ -1262,6 +1265,8 @@ function route(id) {
       audit: "Audit Log Timeline",
     };
     document.getElementById("page-title").textContent = titles[id] || id;
+    const announcer = document.getElementById("panel-announcer");
+    if (announcer) announcer.textContent = (titles[id] || id) + " panel loaded";
     const content = document.getElementById("content");
     const actions = document.getElementById("header-actions");
     const renderPanel = () => {
