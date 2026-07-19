@@ -1294,6 +1294,15 @@ function badge(state, text, pulse = false) {
   return `<span class="badge ${cls} ${pulse ? "pulse" : ""}"><span class="dot"></span>${text}</span>`;
 }
 
+function autoPollIndicator(seconds) {
+  return `${ICONS.refresh}<span>Auto-poll ${seconds}s</span>`;
+}
+
+function setHeaderAutoPoll(seconds) {
+  const actions = document.getElementById("header-actions");
+  if (actions) actions.innerHTML = autoPollIndicator(seconds);
+}
+
 function pollOverview() {
   if (currentRouteId !== "overview" || !visibilityPolling) return;
   useFetch(`${API}/setup-status`).then(({ data }) => {
@@ -1366,8 +1375,8 @@ async function renderOverview(content, actions) {
   const tk = renderToken;
   content.innerHTML = `
     <div class="card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
-    <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
-    <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
+    <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>').join("")}</div></div>
+    <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="card-desc"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>').join("")}</div></div>
   `;
   const { data, error, stale } = await withMinDisplayTime(useFetch(`${API}/setup-status`));
   if (staleRender(tk)) return;
@@ -1654,7 +1663,7 @@ function stepSummary(tg, cf, data) {
 function renderStep1(body, data) {
   const tg = data?.telegram_configured;
   body.innerHTML = `
-    <div class="card setup-card">
+    <div class="card">
       <h2 class="card-title">Telegram Bot</h2>
       <div class="card-desc">Required for dashboard login and trade alerts</div>
       ${tg ? `
@@ -1708,7 +1717,7 @@ function renderStep1(body, data) {
 function renderStep2(body, data) {
   const cf = data?.cloudflare_configured;
   body.innerHTML = `
-    <div class="card setup-card">
+    <div class="card">
       <h2 class="card-title">Cloudflare Tunnel</h2>
       <div class="card-desc">Provides a public HTTPS URL for TradingView webhooks</div>
       ${cf ? `
@@ -1785,7 +1794,7 @@ async function renderStep3(body, data) {
   const skipped = !cf;
   const sampleAlert = "LICENSE_KEY,buy,EURUSD,lots=0.10,sl=1.0850,tp=1.0950,secret=YOUR_SECRET";
   body.innerHTML = `
-    <div class="card setup-card">
+    <div class="card">
       <h2 class="card-title">TradingView Webhook</h2>
       <div class="card-desc">${skipped ? "Complete Cloudflare setup to get your webhook URL" : "Copy this URL and paste it into TradingView"}</div>
       <div class="webhook-display">
@@ -1794,7 +1803,7 @@ async function renderStep3(body, data) {
       </div>
       <div class="hint mt">In TradingView: Chart -&gt; Alert -&gt; Notifications -&gt; Webhook URL</div>
     </div>
-    <div class="card setup-card">
+    <div class="card">
       <h2 class="card-title">Sample Alert Message</h2>
       <div class="card-desc">Paste this into the TradingView alert message box</div>
       <div class="webhook-display">
@@ -1803,7 +1812,7 @@ async function renderStep3(body, data) {
       </div>
       <div class="hint mt">Replace LICENSE_KEY and YOUR_SECRET with your actual values</div>
     </div>
-    <div class="card setup-card">
+    <div class="card">
       <h2 class="card-title">Test Webhook</h2>
       <div class="card-desc">Send a test signal to verify your webhook is working</div>
       <div class="webhook-test-section mt">
@@ -2396,18 +2405,16 @@ function renderSignalFeed(content, actions) {
     <div class="card">
       <h2 class="card-title">Live Signal Feed</h2>
       <div class="card-desc">Real-time signal delivery - polling every 5s</div>
-      <div class="feed-toolbar">
-        <div class="filter-bar">
-          <select class="input filter-sel" id="feed-filter-license" aria-label="Filter by license"><option value="">All licenses</option></select>
-          <input class="input filter-txt" id="feed-filter-symbol" placeholder="Symbol filter" aria-label="Filter by symbol" value="${escapeHtml(signalFeedState.filterSymbol)}">
-          <select class="input filter-sel" id="feed-filter-status" aria-label="Filter by status">
-            <option value="">All status</option>
-            <option value="executed" ${signalFeedState.filterStatus === "executed" ? "selected" : ""}>Executed</option>
-            <option value="pending" ${signalFeedState.filterStatus === "pending" ? "selected" : ""}>Pending</option>
-            <option value="delivered" ${signalFeedState.filterStatus === "delivered" ? "selected" : ""}>Delivered</option>
-            <option value="failed" ${signalFeedState.filterStatus === "failed" ? "selected" : ""}>Failed</option>
-          </select>
-        </div>
+      <div class="filter-bar">
+        <select class="input filter-sel" id="feed-filter-license" aria-label="Filter by license"><option value="">All licenses</option></select>
+        <input class="input filter-txt" id="feed-filter-symbol" placeholder="Symbol filter" aria-label="Filter by symbol" value="${escapeHtml(signalFeedState.filterSymbol)}">
+        <select class="input filter-sel" id="feed-filter-status" aria-label="Filter by status">
+          <option value="">All status</option>
+          <option value="executed" ${signalFeedState.filterStatus === "executed" ? "selected" : ""}>Executed</option>
+          <option value="pending" ${signalFeedState.filterStatus === "pending" ? "selected" : ""}>Pending</option>
+          <option value="delivered" ${signalFeedState.filterStatus === "delivered" ? "selected" : ""}>Delivered</option>
+          <option value="failed" ${signalFeedState.filterStatus === "failed" ? "selected" : ""}>Failed</option>
+        </select>
         <button class="btn outline sm" id="feed-pause-btn" data-action="feed-pause" aria-pressed="false">${ICONS.pause}Pause</button>
       </div>
       <div class="feed-scroll" id="feed-scroll">
@@ -2457,7 +2464,7 @@ function renderSignalFeed(content, actions) {
   scrollEl.addEventListener("focusout", () => {
     if (pauseBtn.innerHTML.indexOf("Resume") === -1) signalFeedState.paused = false;
   });
-  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
+  actions.innerHTML = autoPollIndicator(5);
   startPoll(pollSignalFeed, 5000);
 }
 
@@ -2566,7 +2573,7 @@ function feedRowHtml(r) {
     <td><span class="action-tag ${actionCls}">${escapeHtml(action)}</span></td>
     <td>${escapeHtml(sym)}</td>
     <td class="td-num">${escapeHtml(String(lots))}</td>
-    <td class="td-status"><span class="status-tag ${cls}">${escapeHtml(status)}</span></td>
+    <td class="td-status">${badge(cls, escapeHtml(status))}</td>
     <td class="td-lat">${escapeHtml(lat)}</td>
   </tr>`;
 }
@@ -2615,7 +2622,7 @@ function renderEaMap(content, actions) {
     </div>
     <div id="ea-expand-container"></div>
   `;
-  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
+  actions.innerHTML = autoPollIndicator(10);
   const gridEl = document.getElementById("ea-grid");
   if (gridEl) {
     gridEl.addEventListener("click", e => {
@@ -2736,11 +2743,12 @@ async function pollEaMap() {
       const broker = acc.company || acc.server || "--";
       const positions = ea.open_position_count || 0;
       const lat = ea.latency != null ? formatLatency(ea.latency) : "--";
+      const wsLabel = `WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}`;
       const connBadge = ea.connType === "WS"
-        ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span>`
+        ? badge("info", wsLabel)
         : ea.connType === "WS+HTTP"
-          ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span><span class="conn-badge http">HTTP</span>`
-          : '<span class="conn-badge http">HTTP</span>';
+          ? badge("info", wsLabel) + badge("ok", "HTTP")
+          : badge("ok", "HTTP");
       return `<div class="ea-card ${statusCls}" data-key="${escapeHtml(ea.license_key)}" data-action="ea-expand" tabindex="0" role="button" aria-expanded="false" aria-label="EA ${escapeHtml(ea.masked)}, ${statusLabel}, click to view trades">
         <div class="ea-card-head">
           <span class="ea-key">${escapeHtml(ea.masked)}</span>
@@ -2851,7 +2859,7 @@ function renderTradeAnalytics(content, actions) {
       <div id="donut-chart-wrap" class="chart-wrap"></div>
     </div>
   `;
-  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 15s</span>`;
+  actions.innerHTML = autoPollIndicator(15);
   analyticsChartsAnimated = false;
   startPoll(pollTradeAnalytics, 15000);
 }
@@ -3106,12 +3114,16 @@ function renderPipelineMonitor(content, actions) {
       <div class="card-desc">Latency distribution across buckets</div>
       <div id="histogram-wrap" class="chart-wrap"></div>
     </div>
-    <div class="grid grid-2">
-      <div class="stat" id="stat-dupes"><div class="value skeleton line" aria-live="polite"></div><div class="label">Duplicate Rejections</div></div>
-      <div class="stat" id="stat-retries"><div class="value skeleton line" aria-live="polite"></div><div class="label">Retries</div></div>
+    <div class="card">
+      <h2 class="card-title">Queue Stats</h2>
+      <div class="card-desc">Duplicate rejections and retry counts</div>
+      <div class="grid grid-2">
+        <div class="stat" id="stat-dupes"><div class="value skeleton line" aria-live="polite"></div><div class="label">Duplicate Rejections</div></div>
+        <div class="stat" id="stat-retries"><div class="value skeleton line" aria-live="polite"></div><div class="label">Retries</div></div>
+      </div>
     </div>
   `;
-  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
+  actions.innerHTML = autoPollIndicator(5);
   pipelineState.signalHistory = [];
   pipelineState.lastDelivered = 0;
   pipelineState.latencies = [];
@@ -3583,6 +3595,7 @@ function renderSystemHealth(content) {
       <div class="stat" id="sh-services"><div class="value skeleton line" aria-live="polite"></div><div class="label">Services</div></div>
     </div>
   `;
+  setHeaderAutoPoll(5);
   startPoll(pollSystemHealth, 5000);
 }
 
@@ -3709,11 +3722,15 @@ function renderWebhookLogs(content) {
   webhookLogState.page = 0;
   content.innerHTML = `
     <div id="wl-stale-banner"></div>
-    <div class="grid grid-4">
-      <div class="stat" id="wl-stat-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total (7d)</div></div>
-      <div class="stat" id="wl-stat-success"><div class="value skeleton line" aria-live="polite"></div><div class="label">Successful</div></div>
-      <div class="stat" id="wl-stat-failed"><div class="value skeleton line" aria-live="polite"></div><div class="label">Failed</div></div>
-      <div class="stat" id="wl-stat-rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Success Rate</div></div>
+    <div class="card">
+      <h2 class="card-title">Webhook Stats</h2>
+      <div class="card-desc">7-day webhook delivery summary</div>
+      <div class="grid grid-4">
+        <div class="stat" id="wl-stat-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total (7d)</div></div>
+        <div class="stat" id="wl-stat-success"><div class="value skeleton line" aria-live="polite"></div><div class="label">Successful</div></div>
+        <div class="stat" id="wl-stat-failed"><div class="value skeleton line" aria-live="polite"></div><div class="label">Failed</div></div>
+        <div class="stat" id="wl-stat-rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Success Rate</div></div>
+      </div>
     </div>
     <div class="card">
       <h2 class="card-title">Webhook Logs</h2>
@@ -3805,6 +3822,7 @@ function renderWebhookLogs(content) {
       }
     });
   }
+  setHeaderAutoPoll(10);
   startPoll(pollWebhookLogs, 10000);
 }
 
@@ -4000,6 +4018,7 @@ function renderRiskMonitor(content) {
     </div>
     <div class="card">
       <h2 class="card-title">Alerts</h2>
+      <div class="card-desc">Active risk warnings</div>
       <div id="risk-alerts"></div>
     </div>
   `;
@@ -4234,10 +4253,14 @@ function updateDatabaseUI(data) {
 function renderDatabaseManager(content) {
   content.innerHTML = `
     <div id="db-stale-banner"></div>
-    <div class="grid grid-3">
-      <div class="stat" id="db-size"><div class="value skeleton line" aria-live="polite"></div><div class="label">DB Size</div></div>
-      <div class="stat" id="db-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total Records</div></div>
-      <div class="stat" id="db-type"><div class="value skeleton line" aria-live="polite"></div><div class="label">DB Type</div></div>
+    <div class="card">
+      <h2 class="card-title">Database Overview</h2>
+      <div class="card-desc">Size, record count, and engine type</div>
+      <div class="grid grid-3">
+        <div class="stat" id="db-size"><div class="value skeleton line" aria-live="polite"></div><div class="label">DB Size</div></div>
+        <div class="stat" id="db-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total Records</div></div>
+        <div class="stat" id="db-type"><div class="value skeleton line" aria-live="polite"></div><div class="label">DB Type</div></div>
+      </div>
     </div>
     <div class="card">
       <h2 class="card-title">Table Row Counts</h2>
@@ -4266,6 +4289,7 @@ function renderDatabaseManager(content) {
   if (btn) btn.addEventListener("click", e => { e.preventDefault(); runDbCleanup(); });
   const daysInput = content.querySelector("#db-days");
   if (daysInput) attachValidator(daysInput, "days");
+  setHeaderAutoPoll(30);
   startPoll(pollDatabaseManager, 30000);
 }
 
@@ -4380,6 +4404,7 @@ function updateMetricsUI() {
     return `<div class="stat">
       <div class="value" aria-live="polite" aria-label="${escapeHtml(s.label)}: ${val != null ? escapeHtml(formatNum(val, s.digits)) : '--'}">${val != null ? escapeHtml(formatNum(val, s.digits)) : "--"}</div>
       <div class="label">${escapeHtml(s.label)}</div>
+      <div class="card-desc">Prometheus metric with sparkline</div>
       ${svgSparkline(hist, { color: s.color })}
     </div>`;
   }).join("");
@@ -4394,11 +4419,12 @@ function renderMetrics(content) {
       <div class="card-desc">Prometheus metrics - polling every 10s - sparklines show last 20 samples</div>
     </div>
     <div class="grid grid-3" id="metrics-grid">
-      <div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
-      <div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
-      <div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
+      <div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>
+      <div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>
+      <div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>
     </div>
   `;
+  setHeaderAutoPoll(10);
   startPoll(pollMetrics, 10000);
 }
 
@@ -4474,12 +4500,14 @@ function renderDiagnostics(content) {
     <div id="diag-stale-banner"></div>
     <div class="card">
       <h2 class="card-title">Overall Status</h2>
+      <div class="card-desc">8 system probes</div>
       <div class="stat hero" id="diag-overall"><div class="value skeleton line" aria-live="polite"></div><div class="label">Running diagnostics...</div></div>
     </div>
     <div class="grid grid-4" id="diag-grid">
-      ${Array(8).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}
+      ${Array(8).fill('<div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>').join("")}
     </div>
   `;
+  setHeaderAutoPoll(15);
   startPoll(pollDiagnostics, 15000);
 }
 
@@ -4568,12 +4596,14 @@ function renderBotStatus(content) {
       </div>
       <div class="card">
         <h2 class="card-title">Bot Info</h2>
+        <div class="card-desc">Bot identity and handler count</div>
         <div class="stat" id="bot-username"><div class="value skeleton line" aria-live="polite"></div><div class="label">Username</div></div>
         <div class="stat" id="bot-handlers"><div class="value skeleton line" aria-live="polite"></div><div class="label">Handler Count</div></div>
       </div>
     </div>
     <div class="card">
       <h2 class="card-title">Status Flags</h2>
+      <div class="card-desc">Bot startup and runtime flags</div>
       <div class="grid grid-4">
         <div class="stat" id="bot-started"><div class="value skeleton line" aria-live="polite"></div><div class="label">Started</div></div>
         <div class="stat" id="bot-app"><div class="value skeleton line" aria-live="polite"></div><div class="label">App Exists</div></div>
@@ -4583,6 +4613,7 @@ function renderBotStatus(content) {
     </div>
     <div class="card">
       <h2 class="card-title">Admin Configuration</h2>
+      <div class="card-desc">Authorized admin user IDs</div>
       <div id="bot-admins"></div>
     </div>
     <div class="card">
@@ -4598,6 +4629,7 @@ function renderBotStatus(content) {
   `;
   const testBtn = content.querySelector("[data-action='bot-test-msg']");
   if (testBtn) testBtn.addEventListener("click", e => { e.preventDefault(); sendBotTestMessage(); });
+  setHeaderAutoPoll(15);
   startPoll(pollBotStatus, 15000);
 }
 
@@ -4630,7 +4662,7 @@ let licenseState = { rows: [], search: "", loaded: false, sort: { key: "email", 
 async function renderLicenses(content, actions) {
   const tk = renderToken;
   content.innerHTML = skeletonCard(1);
-  actions.innerHTML = `<button class="btn primary sm" id="add-license-btn" data-action="add-license">${ICONS.plus}Add License</button>`;
+  actions.innerHTML = `${autoPollIndicator(15)}<button class="btn primary sm" id="add-license-btn" data-action="add-license">${ICONS.plus}Add License</button>`;
   const addBtn = actions.querySelector("[data-action='add-license']");
   if (addBtn) addBtn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
   licenseState.loaded = false;
@@ -4649,13 +4681,15 @@ async function renderLicenses(content, actions) {
   const totalEAs = licenseState.rows.reduce((n, u) => n + ((u && u.stats && u.stats.connected_eas) || 0), 0);
   content.innerHTML = `
     <div id="lic-stale-banner">${staleBannerHtml}</div>
-    <div class="panel-toolbar">
+    <div class="filter-bar">
       <input class="input search-input" id="lic-search" placeholder="Search by key, name, or email" value="${escapeHtml(licenseState.search)}" aria-label="Search licenses">
       <button class="filter-clear" id="lic-clear" type="button">Clear</button>
       <span class="badge info">${pluralize(total, "user")}</span>
       <span class="badge ok">${formatNumber(totalEAs)} EAs connected</span>
     </div>
     <div class="card license-stack">
+      <h2 class="card-title">Licenses</h2>
+      <div class="card-desc">Manage API keys and EA access</div>
       <div class="table-wrap">
         <table class="data-table mgr-table" id="lic-table" aria-label="Licenses">
           <caption class="sr-only">License manager</caption>
@@ -4812,7 +4846,7 @@ function renderLicenseRows() {
         <td class="td-key" scope="row" data-label="License Key" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
         <td data-label="Name">${escapeHtml(r.name || "--")}</td>
         <td class="td-email" data-label="Email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
-        <td class="td-status" data-label="Status"><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
+        <td class="td-status" data-label="Status">${badge(r.status_cls, escapeHtml(r.status))}</td>
         <td class="secret-cell" data-label="Secret" aria-label="Secret hidden">****</td>
         <td data-label="Expires">${escapeHtml(expires)}</td>
         <td class="td-num" data-label="EAs">${formatNumber(r.connected_eas)}</td>
@@ -5190,7 +5224,7 @@ let securityState = { data: null, headers: null };
 async function renderSecurity(content, actions) {
   const tk = renderToken;
   content.innerHTML = skeletonCard(2);
-  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
+  actions.innerHTML = autoPollIndicator(10);
   const [rlRes, hdrRes] = await withMinDisplayTime(Promise.all([
     useFetch(`${API}/rate-limits`),
     useFetch(`${API}/security-headers`),
@@ -5278,22 +5312,26 @@ function renderSecurityContent(content) {
 
   content.innerHTML = `
     <div id="sec-stale-banner"></div>
-    <div class="grid grid-4" role="group" aria-label="Security stats">
-      <div class="stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${escapeHtml(formatNumber(blockedCount))}">
-        <div class="value">${escapeHtml(formatNumber(blockedCount))}</div>
-        <div class="label">Blocked IPs</div>
-      </div>
-      <div class="stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(formatNumber(failed24h))}">
-        <div class="value">${escapeHtml(formatNumber(failed24h))}</div>
-        <div class="label">Failed Attempts (24h)</div>
-      </div>
-      <div class="stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(formatNumber(rateHits))}">
-        <div class="value">${escapeHtml(formatNumber(rateHits))}</div>
-        <div class="label">Rate Limit Hits</div>
-      </div>
-      <div class="stat ${headersCls}" role="group" aria-label="Security Headers: ${escapeHtml(formatNumber(headersActive))} of ${escapeHtml(formatNumber(totalHeaders))}">
-        <div class="value">${escapeHtml(formatNumber(headersActive))}/${escapeHtml(formatNumber(totalHeaders))}</div>
-        <div class="label">Security Headers</div>
+    <div class="card">
+      <h2 class="card-title">Security Overview</h2>
+      <div class="card-desc">Blocked IPs, failed attempts, and rate limiter activity</div>
+      <div class="grid grid-4" role="group" aria-label="Security stats">
+        <div class="stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${escapeHtml(formatNumber(blockedCount))}">
+          <div class="value">${escapeHtml(formatNumber(blockedCount))}</div>
+          <div class="label">Blocked IPs</div>
+        </div>
+        <div class="stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(formatNumber(failed24h))}">
+          <div class="value">${escapeHtml(formatNumber(failed24h))}</div>
+          <div class="label">Failed Attempts (24h)</div>
+        </div>
+        <div class="stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(formatNumber(rateHits))}">
+          <div class="value">${escapeHtml(formatNumber(rateHits))}</div>
+          <div class="label">Rate Limit Hits</div>
+        </div>
+        <div class="stat ${headersCls}" role="group" aria-label="Security Headers: ${escapeHtml(formatNumber(headersActive))} of ${escapeHtml(formatNumber(totalHeaders))}">
+          <div class="value">${escapeHtml(formatNumber(headersActive))}/${escapeHtml(formatNumber(totalHeaders))}</div>
+          <div class="label">Security Headers</div>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -5329,7 +5367,7 @@ function renderSecurityContent(content) {
           <div class="label">Status: <strong class="${tvAllow ? "txt-green" : "txt-muted2"}">${tvAllow ? "Enabled" : "Disabled"}</strong></div>
           ${tvIps.length > 0 ? `<div class="ips">${tvIps.map(escapeHtml).join(", ")}</div>` : ""}
         </div>
-        <span class="status-pill ${tvAllow ? "ok" : "muted"}"><span class="dot"></span>${tvAllow ? "ON" : "OFF"}</span>
+        ${badge(tvAllow ? "ok" : "info", tvAllow ? "ON" : "OFF")}
       </div>
     </div>
     <div class="card">
@@ -5373,7 +5411,7 @@ async function renderAuditTimeline(content, actions) {
   const tk = renderToken;
   const ps = getPanelState("audit");
   content.innerHTML = skeletonCard(1);
-  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
+  actions.innerHTML = autoPollIndicator(10);
   auditState = {
     rows: [], filterAction: ps.filters.filterAction || "", filterAdmin: ps.filters.filterAdmin || "",
     filterFrom: ps.filters.filterFrom || "", filterTo: ps.filters.filterTo || "",
@@ -5450,9 +5488,9 @@ function auditSeverityClass(action) {
 
 function sourceBadge(user) {
   const u = (user || "").toLowerCase();
-  if (u.includes("telegram") || u.startsWith("tg")) return '<span class="src-badge tg">Telegram</span>';
-  if (u.includes("dashboard") || u.includes("admin")) return '<span class="src-badge dash">Dashboard</span>';
-  if (u.includes("api")) return '<span class="src-badge api">API</span>';
+  if (u.includes("telegram") || u.startsWith("tg")) return badge("info", "Telegram");
+  if (u.includes("dashboard") || u.includes("admin")) return badge("ok", "Dashboard");
+  if (u.includes("api")) return badge("warn", "API");
   return "";
 }
 
@@ -5486,7 +5524,7 @@ function renderAuditContent(content) {
 
   content.innerHTML = `
     <div id="audit-stale-banner"></div>
-    <div class="panel-toolbar">
+    <div class="filter-bar">
       <select class="input filter-sel" id="audit-filter-action" aria-label="Filter by action">
         <option value="">All actions</option>
         ${Array.from(actions).sort().map(a => `<option value="${escapeHtml(a)}" ${auditState.filterAction === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
