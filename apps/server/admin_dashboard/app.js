@@ -1753,13 +1753,13 @@ function renderStep2(body, data) {
         <button class="btn primary full-sm" data-action="advance-3">${ICONS.arrow}Continue to Step 3</button>
       ` : `
         <div class="setup-form" id="cf-setup-form">
-          <div class="field">
-            <label for="cf-api-token">Cloudflare API Token</label>
-            <input class="input" id="cf-api-token" type="password" placeholder="Enter your Cloudflare API token" autocomplete="off" spellcheck="false">
-            <div class="hint">Create at dash.cloudflare.com > My Profile > API Tokens. Needs: Account > Cloudflare Tunnel > Edit, Zone > DNS > Edit, Zone > Zone > Read</div>
+          <div id="cf-login-section">
+            <div class="field">
+              <div class="hint" style="margin-bottom:16px">Click the button below to open Cloudflare in your browser. Log in and select the domain you want to use for your webhook URL.</div>
+              <button class="btn primary full-sm" id="cf-login-btn">${ICONS.external}Connect Cloudflare</button>
+            </div>
+            <div id="cf-login-result" aria-live="polite"></div>
           </div>
-          <button class="btn outline" id="cf-verify-btn" disabled>Verify Token</button>
-          <div id="cf-verify-result" aria-live="polite"></div>
           <div id="cf-zones-section" class="hidden">
             <div class="field">
               <label for="cf-zone">Select Domain</label>
@@ -1772,7 +1772,7 @@ function renderStep2(body, data) {
               <input class="input" id="cf-subdomain" type="text" placeholder="signals" autocomplete="off" spellcheck="false">
               <div class="hint">Your webhook URL will be: https://[subdomain].[domain]/webhook</div>
             </div>
-            <button class="btn primary" id="cf-connect-btn" disabled>${ICONS.external}Create Tunnel</button>
+            <button class="btn primary full-sm" id="cf-connect-btn" disabled>${ICONS.external}Create Tunnel</button>
             <div id="cf-connect-result" aria-live="polite"></div>
           </div>
         </div>
@@ -1788,51 +1788,69 @@ function renderStep2(body, data) {
   if (skipLink) skipLink.addEventListener("click", e => { e.preventDefault(); skipCloudflare(); });
 
   if (!cf) {
-    const tokenInput = body.querySelector("#cf-api-token");
-    const verifyBtn = body.querySelector("#cf-verify-btn");
-    const verifyResult = body.querySelector("#cf-verify-result");
+    const loginBtn = body.querySelector("#cf-login-btn");
+    const loginResult = body.querySelector("#cf-login-result");
     const zonesSection = body.querySelector("#cf-zones-section");
     const zoneSelect = body.querySelector("#cf-zone");
     const subdomainInput = body.querySelector("#cf-subdomain");
     const connectBtn = body.querySelector("#cf-connect-btn");
     const connectResult = body.querySelector("#cf-connect-result");
-    let cfToken = "";
+    let pollTimer = null;
 
-    if (tokenInput) {
-      tokenInput.addEventListener("input", () => {
-        cfToken = tokenInput.value.trim();
-        if (verifyBtn) verifyBtn.disabled = !cfToken;
-      });
-      addPasswordToggle(tokenInput);
+    async function checkLoginStatus() {
+      try {
+        const r = await http("/api/dashboard/cloudflare/login-status");
+        const d = await r.json();
+        if (d.authenticated) {
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          loginResult.innerHTML = '<span class="ok-text">Connected to Cloudflare</span>';
+          zonesSection.classList.remove("hidden");
+          loginBtn.textContent = "Cloudflare Connected";
+          loginBtn.disabled = true;
+          await loadZonesFromCert(zoneSelect, subdomainInput, connectBtn);
+          return true;
+        }
+        return false;
+      } catch (e) {
+        return false;
+      }
     }
 
-    if (verifyBtn) {
-      verifyBtn.addEventListener("click", async () => {
-        if (!cfToken) return;
-        verifyBtn.disabled = true;
-        verifyBtn.textContent = "Verifying...";
-        verifyResult.innerHTML = '<span class="muted">Checking token...</span>';
+    if (loginBtn) {
+      loginBtn.addEventListener("click", async () => {
+        loginBtn.disabled = true;
+        loginBtn.textContent = "Opening browser...";
+        loginResult.innerHTML = '<span class="muted">A browser window will open. Log in to Cloudflare and select your domain.</span>';
         try {
-          const r = await http("/api/dashboard/cloudflare/verify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: cfToken }),
-          });
+          const r = await http("/api/dashboard/cloudflare/login", { method: "POST" });
           const d = await r.json();
-          if (d.valid) {
-            verifyResult.innerHTML = '<span class="ok-text">Token valid</span>';
-            zonesSection.classList.remove("hidden");
-            verifyBtn.textContent = "Token Verified";
-            await loadZones(cfToken, zoneSelect, subdomainInput, connectBtn);
+          if (d.success) {
+            if (d.already_authenticated) {
+              loginResult.innerHTML = '<span class="ok-text">Already connected to Cloudflare</span>';
+              zonesSection.classList.remove("hidden");
+              loginBtn.textContent = "Cloudflare Connected";
+              loginBtn.disabled = true;
+              await loadZonesFromCert(zoneSelect, subdomainInput, connectBtn);
+            } else {
+              loginResult.innerHTML = '<span class="muted">Browser opened. Log in to Cloudflare and select your domain. This page will update automatically when done.</span>';
+              loginBtn.textContent = "Waiting for login...";
+              pollTimer = setInterval(async () => {
+                const done = await checkLoginStatus();
+                if (!done) {
+                  loginBtn.textContent = "Waiting for login... (" + Math.floor((Date.now() - loginBtn._startTime) / 1000) + "s)";
+                }
+              }, 2000);
+              loginBtn._startTime = Date.now();
+            }
           } else {
-            verifyResult.innerHTML = '<span class="bad-text">' + escapeHtml(d.error || "Invalid token") + '</span>';
-            verifyBtn.disabled = false;
-            verifyBtn.textContent = "Verify Token";
+            loginResult.innerHTML = '<span class="bad-text">' + escapeHtml(d.error || "Failed to start login") + '</span>';
+            loginBtn.disabled = false;
+            loginBtn.textContent = "Connect Cloudflare";
           }
         } catch (e) {
-          verifyResult.innerHTML = '<span class="bad-text">' + escapeHtml(friendlyMsg(e)) + '</span>';
-          verifyBtn.disabled = false;
-          verifyBtn.textContent = "Verify Token";
+          loginResult.innerHTML = '<span class="bad-text">' + escapeHtml(friendlyMsg(e)) + '</span>';
+          loginBtn.disabled = false;
+          loginBtn.textContent = "Connect Cloudflare";
         }
       });
     }
@@ -1853,18 +1871,17 @@ function renderStep2(body, data) {
 
     if (connectBtn) {
       connectBtn.addEventListener("click", async () => {
-        const zoneId = zoneSelect.value;
-        const zoneName = zoneSelect.options[zoneSelect.selectedIndex].text;
+        const zoneName = zoneSelect.value;
         const sub = subdomainInput.value.trim();
-        if (!zoneId || !sub) return;
+        if (!zoneName || !sub) return;
         connectBtn.disabled = true;
         connectBtn.textContent = "Creating tunnel...";
-        connectResult.innerHTML = '<span class="muted">Creating tunnel, configuring DNS, and saving settings...</span>';
+        connectResult.innerHTML = '<span class="muted">Creating tunnel and configuring DNS...</span>';
         try {
           const r = await http("/api/dashboard/cloudflare/connect", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: cfToken, zone_id: zoneId, hostname: zoneName, subdomain: sub }),
+            body: JSON.stringify({ zone_name: zoneName, subdomain: sub }),
           });
           const d = await r.json();
           if (d.success) {
@@ -1888,20 +1905,16 @@ function renderStep2(body, data) {
   }
 }
 
-async function loadZones(token, zoneSelect, subdomainInput, connectBtn) {
+async function loadZonesFromCert(zoneSelect, subdomainInput, connectBtn) {
   try {
-    const r = await http("/api/dashboard/cloudflare/zones", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
+    const r = await http("/api/dashboard/cloudflare/zones");
     const d = await r.json();
     if (d.zones && d.zones.length > 0) {
-      zoneSelect.innerHTML = d.zones.map(z => '<option value="' + escapeHtml(z.id) + '">' + escapeHtml(z.name) + '</option>').join("");
+      zoneSelect.innerHTML = d.zones.map(z => '<option value="' + escapeHtml(z.name) + '">' + escapeHtml(z.name) + '</option>').join("");
       zoneSelect.disabled = false;
       subdomainInput.disabled = false;
     } else {
-      zoneSelect.innerHTML = '<option value="">No domains found</option>';
+      zoneSelect.innerHTML = '<option value="">' + escapeHtml(d.error || "No domains found") + '</option>';
       subdomainInput.disabled = true;
     }
   } catch (e) {

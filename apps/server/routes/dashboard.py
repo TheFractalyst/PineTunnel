@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import os
 import re
 import secrets
+import shutil
+import subprocess
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -234,9 +237,7 @@ class CloudflareTokenRequest(BaseModel):
 
 
 class CloudflareConnectRequest(BaseModel):
-    token: str
-    zone_id: str
-    hostname: str
+    zone_name: str
     subdomain: str
 
 
@@ -631,114 +632,136 @@ def create_dashboard_router(
             pass
 
     # -----------------------------------------------------------------
-    # Cloudflare tunnel endpoints
+    # Cloudflare tunnel endpoints (browser-based login, no API token)
     # -----------------------------------------------------------------
 
     CF_API = "https://api.cloudflare.com/client/v4"
+    CF_CERT_DIR = Path.home() / ".cloudflared"
+    CF_CERT_FILE = CF_CERT_DIR / "cert.pem"
 
-    @router.post("/cloudflare/verify")
-    async def cf_verify_token(req: CloudflareTokenRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
-        headers = {"Authorization": f"Bearer {req.token}"}
+    @router.post("/cloudflare/login")
+    async def cf_login(_=Depends(require_auth), _c=Depends(require_csrf)):
+        """Start cloudflared tunnel login - opens browser for user to pick domain."""
+        if not shutil.which("cloudflared"):
+            return {"success": False, "error": "cloudflared is not installed. Install it from https://pkg.cloudflare.com"}
         try:
-            r = await httpx.AsyncClient(timeout=10).get(f"{CF_API}/user/tokens/verify", headers=headers)
-            data = r.json()
-            if not data.get("success"):
-                return {"valid": False, "error": "Invalid token"}
-            token_info = data.get("result", {})
-            return {"valid": True, "token_id": token_info.get("id"), "status": token_info.get("status")}
+            if CF_CERT_FILE.exists():
+                return {"success": True, "already_authenticated": True, "message": "Already logged in to Cloudflare"}
+            proc = await asyncio.create_subprocess_exec(
+                "cloudflared", "tunnel", "login",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            return {"success": True, "already_authenticated": False, "pid": proc.pid, "message": "Browser opened. Log in to Cloudflare and select your domain."}
         except Exception as e:
-            return {"valid": False, "error": str(e)}
+            return {"success": False, "error": str(e)}
 
-    @router.post("/cloudflare/zones")
-    async def cf_list_zones(req: CloudflareTokenRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
-        headers = {"Authorization": f"Bearer {req.token}"}
+    @router.get("/cloudflare/login-status")
+    async def cf_login_status(_=Depends(require_auth)):
+        """Check if cloudflared login completed (cert.pem exists)."""
+        if CF_CERT_FILE.exists():
+            return {"authenticated": True}
+        return {"authenticated": False}
+
+    @router.get("/cloudflare/zones")
+    async def cf_list_zones_from_cert(_=Depends(require_auth)):
+        """List available zones from cloudflared cert."""
+        if not CF_CERT_FILE.exists():
+            return {"zones": [], "error": "Not logged in. Run login first."}
         try:
-            r = await httpx.AsyncClient(timeout=10).get(f"{CF_API}/zones?per_page=50", headers=headers)
-            data = r.json()
-            if not data.get("success"):
-                errors = data.get("errors", [])
-                return {"zones": [], "error": errors[0].get("message", "Failed to list zones") if errors else "Unknown error"}
-            zones = [
-                {"id": z.get("id"), "name": z.get("name"), "status": z.get("status")}
-                for z in data.get("result", [])
-            ]
+            proc = await asyncio.create_subprocess_exec(
+                "cloudflared", "tunnel", "list",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            zones = []
+            cert_content = CF_CERT_FILE.read_text()
+            import re as _re
+            matches = _re.findall(r"Origin\s*:\s*https://api\.cloudflare\.com/client/v4/accounts/([a-f0-9]+)", cert_content)
+            account_id = matches[0] if matches else ""
+            if not account_id:
+                cert_json = _json.loads(cert_content.split("-----BEGIN CERTIFICATE-----")[0])
+                account_id = cert_json.get("AccountTag", "")
+            if account_id:
+                token_r = await httpx.AsyncClient(timeout=10).get(
+                    f"{CF_API}/zones?per_page=50",
+                    headers={"Authorization": f"Bearer {account_id}"},
+                )
+                data = token_r.json()
+                if data.get("success"):
+                    zones = [{"id": z.get("id"), "name": z.get("name")} for z in data.get("result", [])]
+            if not zones:
+                proc2 = await asyncio.create_subprocess_exec(
+                    "cloudflared", "tunnel", "route", "dns", "--help",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                out2, _ = await proc2.communicate()
+                zone_lines = [l for l in out2.decode().split("\n") if "zone" in l.lower()]
+                for line in _json.loads(CF_CERT_FILE.read_text().split("-----BEGIN")[0] or "{}").get("Zones", []):
+                    zones.append({"id": line.get("ID", ""), "name": line.get("Name", "")})
             return {"zones": zones}
         except Exception as e:
             return {"zones": [], "error": str(e)}
 
-    @router.post("/cloudflare/accounts")
-    async def cf_list_accounts(req: CloudflareTokenRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
-        headers = {"Authorization": f"Bearer {req.token}"}
-        try:
-            r = await httpx.AsyncClient(timeout=10).get(f"{CF_API}/accounts", headers=headers)
-            data = r.json()
-            if not data.get("success"):
-                return {"accounts": [], "error": "Failed to list accounts"}
-            accounts = [
-                {"id": a.get("id"), "name": a.get("name")}
-                for a in data.get("result", [])
-            ]
-            return {"accounts": accounts}
-        except Exception as e:
-            return {"accounts": [], "error": str(e)}
-
     @router.post("/cloudflare/connect")
     async def cf_connect_tunnel(req: CloudflareConnectRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
-        headers = {"Authorization": f"Bearer {req.token}", "Content-Type": "application/json"}
-        client = httpx.AsyncClient(timeout=15)
+        """Create tunnel, configure DNS, and save to .env using cloudflared CLI."""
+        if not CF_CERT_FILE.exists():
+            return {"success": False, "error": "Not logged in to Cloudflare. Click Connect first."}
+        if not shutil.which("cloudflared"):
+            return {"success": False, "error": "cloudflared is not installed"}
+
+        full_hostname = f"{req.subdomain}.{req.zone_name}"
         try:
-            accounts_r = await client.get(f"{CF_API}/accounts", headers=headers)
-            accounts_data = accounts_r.json()
-            if not accounts_data.get("success") or not accounts_data.get("result"):
-                return {"success": False, "error": "No Cloudflare accounts found for this token"}
-            account_id = accounts_data["result"][0]["id"]
-
-            tunnel_r = await client.post(
-                f"{CF_API}/accounts/{account_id}/cfd_tunnel",
-                headers=headers,
-                json={"name": "pinetunnel", "config_src": "cloudflare"},
+            proc = await asyncio.create_subprocess_exec(
+                "cloudflared", "tunnel", "create", "pinetunnel",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            tunnel_data = tunnel_r.json()
-            if not tunnel_data.get("success"):
-                errors = tunnel_data.get("errors", [])
-                return {"success": False, "error": errors[0].get("message", "Failed to create tunnel") if errors else "Unknown error"}
-            tunnel = tunnel_data["result"]
-            tunnel_id = tunnel["id"]
-            tunnel_token = tunnel.get("token", "")
+            stdout, stderr = await proc.communicate()
+            output = stdout.decode() + stderr.decode()
+            tunnel_id = None
+            for line in output.split("\n"):
+                if "Created tunnel" in line:
+                    parts = line.split()
+                    for p in parts:
+                        if "-" in p and len(p) == 36:
+                            tunnel_id = p
+                            break
+                m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", output)
+                if m and not tunnel_id:
+                    tunnel_id = m.group(1)
+            if not tunnel_id:
+                return {"success": False, "error": "Failed to create tunnel. " + output[:200]}
 
-            full_hostname = f"{req.subdomain}.{req.hostname}"
-            config_r = await client.put(
-                f"{CF_API}/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations",
-                headers=headers,
-                json={
-                    "config": {
-                        "ingress": [
-                            {"hostname": full_hostname, "service": "http://localhost:8000", "originRequest": {}},
-                            {"service": "http_status:404"},
-                        ]
-                    }
-                },
+            proc2 = await asyncio.create_subprocess_exec(
+                "cloudflared", "tunnel", "route", "dns", tunnel_id, full_hostname,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if not config_r.json().get("success"):
-                return {"success": False, "error": "Tunnel created but ingress config failed", "tunnel_id": tunnel_id}
+            out2, err2 = await proc2.communicate()
+            if proc2.returncode != 0:
+                err_out = err2.decode() + out2.decode()
+                if "record already exists" not in err_out.lower():
+                    return {"success": False, "error": "Tunnel created but DNS setup failed: " + err_out[:200]}
 
-            dns_r = await client.post(
-                f"{CF_API}/zones/{req.zone_id}/dns_records",
-                headers=headers,
-                json={
-                    "type": "CNAME",
-                    "proxied": True,
-                    "name": full_hostname,
-                    "content": f"{tunnel_id}.cfargotunnel.com",
-                },
-            )
-            if not dns_r.json().get("success"):
-                return {"success": False, "error": "Tunnel + config done but DNS record failed", "tunnel_id": tunnel_id}
+            config_dir = CF_CERT_DIR
+            config_dir.mkdir(exist_ok=True)
+            config_path = config_dir / "config.yml"
+            config_content = f"""tunnel: {tunnel_id}
+credentials-file: {CF_CERT_DIR / f"{tunnel_id}.json"}
+
+ingress:
+  - hostname: {full_hostname}
+    service: http://localhost:8000
+  - service: http_status:404
+"""
+            config_path.write_text(config_content)
 
             env_updates = {
-                "CLOUDFLARE_API_TOKEN": req.token,
                 "CLOUDFLARE_TUNNEL_ID": tunnel_id,
-                "CLOUDFLARE_TUNNEL_TOKEN": tunnel_token,
                 "SERVER_BASE_URL": f"https://{full_hostname}",
             }
             write_env_updates(env_path, env_updates)
@@ -746,50 +769,40 @@ def create_dashboard_router(
             return {
                 "success": True,
                 "tunnel_id": tunnel_id,
-                "tunnel_token": tunnel_token,
                 "hostname": full_hostname,
                 "url": f"https://{full_hostname}",
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
-        finally:
-            await client.aclose()
 
     @router.get("/cloudflare/status")
     async def cf_status(_=Depends(require_auth)):
         env = read_env(env_path)
-        token = env.get("CLOUDFLARE_API_TOKEN", "")
         tunnel_id = env.get("CLOUDFLARE_TUNNEL_ID", "")
         base_url = env.get("SERVER_BASE_URL", "")
         return {
-            "configured": bool(token and tunnel_id),
+            "configured": bool(tunnel_id),
             "tunnel_id": tunnel_id,
             "url": base_url if base_url.startswith("https://") else None,
-            "has_token": bool(token),
+            "logged_in": CF_CERT_FILE.exists(),
         }
 
     @router.post("/cloudflare/disconnect")
     async def cf_disconnect(_=Depends(require_auth), _c=Depends(require_csrf)):
         env = read_env(env_path)
         tunnel_id = env.get("CLOUDFLARE_TUNNEL_ID", "")
-        token = env.get("CLOUDFLARE_API_TOKEN", "")
-        if tunnel_id and token:
-            headers = {"Authorization": f"Bearer {token}"}
+        if tunnel_id and shutil.which("cloudflared") and CF_CERT_FILE.exists():
             try:
-                accounts_r = await httpx.AsyncClient(timeout=10).get(f"{CF_API}/accounts", headers=headers)
-                accounts_data = accounts_r.json()
-                if accounts_data.get("success") and accounts_data.get("result"):
-                    account_id = accounts_data["result"][0]["id"]
-                    await httpx.AsyncClient(timeout=10).delete(
-                        f"{CF_API}/accounts/{account_id}/cfd_tunnel/{tunnel_id}",
-                        headers=headers,
-                    )
+                proc = await asyncio.create_subprocess_exec(
+                    "cloudflared", "tunnel", "delete", "pinetunnel",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await proc.communicate()
             except Exception:
                 pass
         write_env_updates(env_path, {
-            "CLOUDFLARE_API_TOKEN": "",
             "CLOUDFLARE_TUNNEL_ID": "",
-            "CLOUDFLARE_TUNNEL_TOKEN": "",
             "SERVER_BASE_URL": "",
         })
         return {"success": True}
