@@ -4,6 +4,35 @@ let pollTimers = [];
 let currentRoute = "overview";
 let lastSetupStatus = null;
 
+const CSRF_HEADER = "X-Admin-CSRF";
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function adminHeaders(extra = {}) {
+  const h = Object.assign({}, extra);
+  h[CSRF_HEADER] = "1";
+  return h;
+}
+
+function jsonHeaders(withCsrf = false) {
+  const h = { "Content-Type": "application/json" };
+  if (withCsrf) h[CSRF_HEADER] = "1";
+  return h;
+}
+let routeTimer = null;
+let domCache = { content: null, actions: null, sidebar: null };
+let overviewRendered = false;
+let overviewSig = null;
+let visibilityPolling = true;
+
 const ICONS = {
   overview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>',
   signals: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h4l3-9 6 18 3-9h4"/></svg>',
@@ -71,6 +100,7 @@ async function fetchHealth() {
 }
 
 function startHealthPolling() {
+  if (!visibilityPolling) return;
   healthActive = true;
   if (healthTimer) return;
   fetchHealth();
@@ -111,7 +141,7 @@ function updateHealthCard() {
   if (!data && error) {
     const grid = document.getElementById("health-grid");
     if (grid) {
-      grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="msg">Health unavailable</div><div class="sub">${error}</div></div>`;
+      grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="msg">Health unavailable</div><div class="sub">${escapeHtml(error)}</div></div>`;
     }
     return;
   }
@@ -187,22 +217,48 @@ function render() {
       route(el.dataset.route);
     });
   });
+  domCache.content = document.getElementById("content");
+  domCache.actions = document.getElementById("header-actions");
+  domCache.sidebar = document.querySelectorAll("[data-route]");
 }
 
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    visibilityPolling = false;
+    clearPolls();
+  } else {
+    visibilityPolling = true;
+    if (currentRoute === "overview") {
+      route("overview");
+    }
+  }
+});
+
 function route(id) {
-  currentRoute = id;
-  clearPolls();
-  document.querySelectorAll("[data-route]").forEach(el => {
-    el.classList.toggle("active", el.dataset.route === id);
-  });
-  const titles = { overview: "Overview", setup: "Setup Wizard", settings: "Settings" };
-  document.getElementById("page-title").textContent = titles[id] || id;
-  const content = document.getElementById("content");
-  const actions = document.getElementById("header-actions");
-  actions.innerHTML = "";
-  if (id === "overview") renderOverview(content, actions);
-  else if (id === "setup") renderSetup(content);
-  else if (id === "settings") renderSettings(content);
+  if (routeTimer) clearTimeout(routeTimer);
+  routeTimer = setTimeout(() => {
+    currentRoute = id;
+    clearPolls();
+    domCache.sidebar.forEach(el => {
+      el.classList.toggle("active", el.dataset.route === id);
+    });
+    const titles = { overview: "Overview", setup: "Setup Wizard", settings: "Settings" };
+    document.getElementById("page-title").textContent = titles[id] || id;
+    const content = domCache.content || document.getElementById("content");
+    const actions = domCache.actions || document.getElementById("header-actions");
+    actions.innerHTML = "";
+    if (id !== "overview") overviewRendered = false;
+    if (id === "overview") {
+      if (overviewRendered && overviewSig === lastSetupStatus) {
+        startOverviewPoll();
+        startHealthPolling();
+        if (healthState.data || healthState.error) updateHealthCard();
+      } else {
+        renderOverview(content, actions);
+      }
+    } else if (id === "setup") renderSetup(content);
+    else if (id === "settings") renderSettings(content);
+  }, 100);
 }
 
 function skeletonCard(cols = 3) {
@@ -215,15 +271,16 @@ function badge(state, text, pulse = false) {
 }
 
 function startOverviewPoll() {
+  if (!visibilityPolling) return;
   const t = setInterval(async () => {
-    if (currentRoute !== "overview") return;
+    if (currentRoute !== "overview" || !visibilityPolling) return;
     const { data } = await useFetch(`${API}/setup-status`);
     if (!data) return;
     const sig = JSON.stringify(data);
     if (sig !== lastSetupStatus) {
       lastSetupStatus = sig;
-      const content = document.getElementById("content");
-      const actions = document.getElementById("header-actions");
+      const content = domCache.content || document.getElementById("content");
+      const actions = domCache.actions || document.getElementById("header-actions");
       if (content && actions) renderOverview(content, actions);
     }
   }, POLL_INTERVAL);
@@ -242,7 +299,7 @@ async function renderOverview(content, actions) {
   const init = data.initialized;
   const allDone = tg && cf && init;
   lastSetupStatus = JSON.stringify(data);
-  actions.innerHTML = badge(allDone ? "ok" : "warn", allDone ? "All Ready" : "Setup Needed", !allDone);
+  actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? "All Ready" : "Welcome", !allDone);
 
   const tgHint = tg ? "" : '<div class="stat-hint">Click Setup to configure</div>';
   const cfHint = cf ? "" : '<div class="stat-hint">Click Setup to configure</div>';
@@ -287,8 +344,8 @@ async function renderOverview(content, actions) {
 
   const setupBlock = !allDone ? `
     <div class="card">
-      <div class="card-title">${ICONS.alert}Setup Incomplete</div>
-      <div class="card-desc">Complete these steps to start receiving TradingView webhooks</div>
+      <div class="card-title">Get Started</div>
+      <div class="card-desc">3 quick steps to start receiving TradingView webhooks</div>
       <div class="steps">
         <div class="step ${tg ? "done" : ""}">
           <div class="num">${tg ? ICONS.check : "1"}</div>
@@ -322,13 +379,13 @@ async function renderOverview(content, actions) {
       <div class="card-title">System Status</div>
       <div class="card-desc">Current configuration state</div>
       <div class="grid grid-3">
-        <div class="stat ${tg ? "ok" : "bad"} clickable" onclick="route('setup')">
-          <div class="value">${tg ? "Connected" : "Not Set"}</div>
+        <div class="stat ${tg ? "ok" : "info"} clickable" onclick="route('setup')">
+          <div class="value">${tg ? "Connected" : "Pending"}</div>
           <div class="label">Telegram Bot</div>
           ${tgHint}
         </div>
-        <div class="stat ${cf ? "ok" : "warn"} clickable" onclick="route('setup')">
-          <div class="value">${cf ? "Active" : "Not Set"}</div>
+        <div class="stat ${cf ? "ok" : "info"} clickable" onclick="route('setup')">
+          <div class="value">${cf ? "Active" : "Pending"}</div>
           <div class="label">Cloudflare Tunnel</div>
           ${cfHint}
         </div>
@@ -354,6 +411,8 @@ async function renderOverview(content, actions) {
   startOverviewPoll();
   startHealthPolling();
   if (healthState.data || healthState.error) updateHealthCard();
+  overviewRendered = true;
+  overviewSig = lastSetupStatus;
 }
 
 function setupStepState(data) {

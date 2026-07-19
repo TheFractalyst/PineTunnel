@@ -4,8 +4,8 @@
   --card-2: #1a1a22;
   --border: #26262e;
   --text: #e4e4e7;
-  --muted: #71717a;
-  --muted-2: #52525b;
+  --muted: #9a9aa3;
+  --muted-2: #82828b;
   --green: #22c55e;
   --green-bg: rgba(34,197,94,0.1);
   --red: #ef4444;
@@ -67,7 +67,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   text-decoration: none;
   font-size: 13.5px;
   font-weight: 500;
-  min-height: 40px;
+  min-height: 44px;
   cursor: pointer;
   position: relative;
   transition: background 0.15s, color 0.15s;
@@ -193,6 +193,8 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 .stat.bad .value { color: var(--red); }
 .stat.warn { border-left-color: var(--amber); }
 .stat.warn .value { color: var(--amber); }
+.stat.info { border-left-color: var(--blue); }
+.stat.info .value { color: var(--blue); }
 
 .welcome {
   max-width: 640px;
@@ -263,7 +265,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   font-weight: 600;
   border: none;
   cursor: pointer;
-  min-height: 40px;
+  min-height: 44px;
   transition: all 0.15s ease;
   font-family: var(--sans);
 }
@@ -298,13 +300,40 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   color: var(--text);
   font-size: 13.5px;
   font-family: var(--mono);
-  min-height: 40px;
+  min-height: 44px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
 .input:disabled { color: var(--muted); }
 .input::placeholder { color: var(--muted-2); }
+
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: 12px;
+  z-index: 2000;
+  background: var(--blue);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+.skip-link:focus { top: 12px; }
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.btn:focus-visible { outline-offset: 2px; }
+.nav-item:focus-visible { outline-offset: -2px; }
+.mobile-nav .tab:focus-visible { outline-offset: -2px; }
+.stat.clickable:focus-visible { outline-offset: 0; }
+.retry-link:focus-visible { outline-offset: 1px; }
 
 .field { margin-bottom: 14px; }
 .field label {
