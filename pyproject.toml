@@ -39,13 +39,13 @@ dependencies = [
     "pydantic-settings==2.2.1",
     "psutil==6.1.0",
     "python-json-logger==2.0.7",
+    "python-telegram-bot[job-queue,rate-limiter]>=21.7",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "pytest-cov", "black", "isort", "mypy"]
 postgres = ["asyncpg", "psycopg[binary]>=3.1.0"]
-telegram = ["python-telegram-bot[job-queue,rate-limiter]>=21.7"]
-all = ["pinetunnel[dev,postgres,telegram]"]
+all = ["pinetunnel[dev,postgres]"]
 
 [project.urls]
 Homepage = "https://github.com/TheFractalyst/PineTunnel"
