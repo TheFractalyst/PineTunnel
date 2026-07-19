@@ -364,16 +364,10 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 @media (max-width: 480px) {
   .stat { padding: 14px; }
-  .stat .value { font-size: 18px; }
-}
-@media (max-width: 375px) {
-  .stat .value { font-size: 18px; }
-  .card-title { font-size: var(--text-base); }
-}
-@media (max-width: 320px) {
-  .stat { padding: 12px; }
   .stat .value { font-size: 16px; }
   .stat .label { font-size: 10px; }
+}
+@media (max-width: 320px) {
   .card-title { font-size: var(--text-base); }
 }
 @media (min-width: 1440px) {
