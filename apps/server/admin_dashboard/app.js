@@ -1640,9 +1640,9 @@ function renderSetupStep(content, step, data, staleBannerHtml = "") {
     ${staleBannerHtml}
     <div class="setup-wizard">
       <div class="setup-prog">
-        <div class="prog-bar">${segments}</div>
+        <div class="prog-bar" data-step="${step}">${segments}</div>
         <div class="prog-labels">
-          ${SETUP_STEPS.map(s => `<span class="prog-label">${escapeHtml(s.label)}</span>`).join("")}
+          ${SETUP_STEPS.map(s => `<span class="prog-label"><span class="lab-full">${escapeHtml(s.label)}</span><span class="lab-short">${escapeHtml(s.short)}</span></span>`).join("")}
         </div>
       </div>
       <div id="step-body"></div>
@@ -2261,7 +2261,7 @@ function renderSignalFeed(content, actions) {
   content.innerHTML = `
     <div class="card">
       <h2 class="card-title">Live Signal Feed</h2>
-      <div class="card-desc">Real-time webhook signals - polling every 5s</div>
+      <div class="card-desc">Real-time signal delivery - polling every 5s</div>
       <div class="feed-toolbar">
         <div class="filter-bar">
           <select class="input filter-sel" id="feed-filter-license" aria-label="Filter by license"><option value="">All licenses</option></select>
@@ -2434,14 +2434,7 @@ function renderFeedRows() {
     return lk === filterLicense;
   });
   if (filterSymbol) filtered = filtered.filter(r => (r.symbol || "").toUpperCase().includes(filterSymbol));
-  if (filterStatus) filtered = filtered.filter(r => {
-    const cls = statusClassFor(r.status);
-    if (filterStatus === "success") return cls === "ok";
-    if (filterStatus === "pending") return cls === "warn";
-    if (filterStatus === "failed") return cls === "bad";
-    if (filterStatus === "duplicate") return cls === "muted";
-    return false;
-  });
+  if (filterStatus) filtered = filtered.filter(r => (r.execution_status || "pending") === filterStatus);
   const countEl = document.getElementById("feed-count");
   if (countEl) countEl.textContent = pluralize(filtered.length, "signal");
   if (filtered.length === 0) {
