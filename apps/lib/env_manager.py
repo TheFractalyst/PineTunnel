@@ -10,6 +10,7 @@ _SECRET_KEY_PATTERNS = (
     "TOKEN",
     "KEY",
     "PASSWORD",
+    "PASSPHRASE",
     "CREDENTIAL",
 )
 

@@ -869,6 +869,14 @@ async function renderSettings(content) {
 }
 
 window.route = route;
+window.doLogin = doLogin;
+window.retryLastRoute = retryLastRoute;
+window.saveTelegram = saveTelegram;
+window.copyWebhook = copyWebhook;
+window.copyWebhookStep3 = copyWebhookStep3;
+window.advanceStep = advanceStep;
+window.toggleTestForm = toggleTestForm;
+window.sendTestWebhook = sendTestWebhook;
 
 (async function init() {
   await useFetch(`${API}/setup-status`);

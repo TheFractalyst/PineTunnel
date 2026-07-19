@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from apps.lib.env_manager import read_env, redact_value, write_env_updates
@@ -34,6 +34,11 @@ class TestWebhookRequest(BaseModel):
     lots: str = "0.10"
 
 
+async def require_csrf(x_admin_csrf: str | None = Header(default=None)) -> None:
+    if x_admin_csrf != "1":
+        raise HTTPException(status_code=403, detail="Missing CSRF header")
+
+
 def create_dashboard_router(
     auth_store: TelegramAuthStore,
     admin_ids: list[int],
@@ -42,17 +47,18 @@ def create_dashboard_router(
     router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
     @router.post("/login")
-    async def login(req: LoginRequest, request: Request):
+    async def login(req: LoginRequest, request: Request, _=Depends(require_csrf)):
         if req.user_id not in admin_ids:
             raise HTTPException(status_code=401, detail="Not authorized")
         if not await auth_store.verify_code_async(req.code, expected_user_id=req.user_id):
             raise HTTPException(status_code=401, detail="Invalid or expired code")
+        request.session.clear()
         request.session["authenticated"] = True
         request.session["user_id"] = req.user_id
         return {"status": "ok"}
 
     @router.post("/logout")
-    async def logout(request: Request):
+    async def logout(request: Request, _=Depends(require_csrf)):
         request.session.clear()
         return {"status": "ok"}
 
@@ -71,7 +77,7 @@ def create_dashboard_router(
         return {k: redact_value(k, v) for k, v in env.items()}
 
     @router.put("/config")
-    async def update_config(req: ConfigUpdateRequest, _=Depends(require_auth)):
+    async def update_config(req: ConfigUpdateRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
         write_env_updates(env_path, req.updates)
         return {"status": "ok", "updated_keys": list(req.updates.keys())}
 
@@ -110,7 +116,7 @@ def create_dashboard_router(
         return {"url": url, "ready": ready, "message": message}
 
     @router.post("/test-webhook")
-    async def test_webhook(req: TestWebhookRequest, _=Depends(require_auth)):
+    async def test_webhook(req: TestWebhookRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
         env = read_env(env_path)
         webhook_secret = env.get("WEBHOOK_SECRET", "")
         port = env.get("PORT", "8000")

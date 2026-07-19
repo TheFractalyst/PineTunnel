@@ -103,11 +103,14 @@ def dashboard_app(tmp_path):
     return app, store
 
 
+CSRF_HEADERS = {"X-Admin-CSRF": "1"}
+
+
 def test_login_with_valid_code(dashboard_app):
     app, store = dashboard_app
     code = store.issue_code(user_id=123)
     client = TestClient(app)
-    r = client.post("/api/dashboard/login", json={"code": code, "user_id": 123})
+    r = client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
 
@@ -116,23 +119,31 @@ def test_login_with_wrong_user_id(dashboard_app):
     app, store = dashboard_app
     code = store.issue_code(user_id=123)
     client = TestClient(app)
-    r = client.post("/api/dashboard/login", json={"code": code, "user_id": 999})
+    r = client.post("/api/dashboard/login", json={"code": code, "user_id": 999}, headers=CSRF_HEADERS)
     assert r.status_code == 401
 
 
 def test_login_with_invalid_code(dashboard_app):
     app, _ = dashboard_app
     client = TestClient(app)
-    r = client.post("/api/dashboard/login", json={"code": "bogus", "user_id": 123})
+    r = client.post("/api/dashboard/login", json={"code": "bogus", "user_id": 123}, headers=CSRF_HEADERS)
     assert r.status_code == 401
+
+
+def test_login_rejects_missing_csrf_header(dashboard_app):
+    app, store = dashboard_app
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    r = client.post("/api/dashboard/login", json={"code": code, "user_id": 123})
+    assert r.status_code == 403
 
 
 def test_logout_clears_session(dashboard_app):
     app, store = dashboard_app
     code = store.issue_code(user_id=123)
     client = TestClient(app)
-    client.post("/api/dashboard/login", json={"code": code, "user_id": 123})
-    r = client.post("/api/dashboard/logout")
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.post("/api/dashboard/logout", headers=CSRF_HEADERS)
     assert r.status_code == 200
 
 
@@ -158,7 +169,7 @@ def test_config_after_login_returns_redacted_secrets(dashboard_app):
     app, store = dashboard_app
     code = store.issue_code(user_id=123)
     client = TestClient(app)
-    client.post("/api/dashboard/login", json={"code": code, "user_id": 123})
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
     r = client.get("/api/dashboard/config")
     assert r.status_code == 200
     data = r.json()
@@ -171,8 +182,8 @@ def test_config_after_logout_is_unauthorized(dashboard_app):
     app, store = dashboard_app
     code = store.issue_code(user_id=123)
     client = TestClient(app)
-    client.post("/api/dashboard/login", json={"code": code, "user_id": 123})
-    client.post("/api/dashboard/logout")
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    client.post("/api/dashboard/logout", headers=CSRF_HEADERS)
     r = client.get("/api/dashboard/config")
     assert r.status_code == 401
 
@@ -180,15 +191,24 @@ def test_config_after_logout_is_unauthorized(dashboard_app):
 def test_put_config_requires_auth(dashboard_app):
     app, _ = dashboard_app
     client = TestClient(app)
-    r = client.put("/api/dashboard/config", json={"updates": {"FOO": "bar"}})
+    r = client.put("/api/dashboard/config", json={"updates": {"FOO": "bar"}}, headers=CSRF_HEADERS)
     assert r.status_code == 401
+
+
+def test_put_config_rejects_missing_csrf(dashboard_app):
+    app, store = dashboard_app
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.put("/api/dashboard/config", json={"updates": {"NEW_KEY": "new_value"}})
+    assert r.status_code == 403
 
 
 def test_put_config_after_login_writes_env(dashboard_app):
     app, store = dashboard_app
     code = store.issue_code(user_id=123)
     client = TestClient(app)
-    client.post("/api/dashboard/login", json={"code": code, "user_id": 123})
-    r = client.put("/api/dashboard/config", json={"updates": {"NEW_KEY": "new_value"}})
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.put("/api/dashboard/config", json={"updates": {"NEW_KEY": "new_value"}}, headers=CSRF_HEADERS)
     assert r.status_code == 200
     assert "NEW_KEY" in r.json()["updated_keys"]

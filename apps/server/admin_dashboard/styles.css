@@ -599,3 +599,55 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   .btn { padding: 8px 12px; min-height: 44px; font-size: 12.5px; }
   .btn.lg { padding: 10px 16px; min-height: 44px; font-size: 14px; }
 }
+
+.grid-span-all { grid-column: 1 / -1; }
+
+.stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.stale-banner svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+.conn-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 15, 0.85);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fade-in 0.2s ease-out;
+}
+.conn-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px 28px;
+  text-align: center;
+  max-width: 360px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.conn-icon { color: var(--amber); margin-bottom: 14px; display: flex; justify-content: center; }
+.conn-icon svg { width: 36px; height: 36px; }
+.conn-msg { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.conn-sub { font-size: 13px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+
+.login-form {
+  max-width: 320px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-form .input { text-align: center; }
