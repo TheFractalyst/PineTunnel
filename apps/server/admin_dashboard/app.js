@@ -371,20 +371,6 @@ function friendlyMsg(e) {
   return "Something went wrong. Please try again.";
 }
 
-function errorBlock(opts) {
-  const title = opts.title || "Could not load data";
-  const detail = opts.detail ? `<div class="sub">${escapeHtml(opts.detail)}</div>` : "";
-  const hint = opts.hint ? `<div class="sub">${escapeHtml(opts.hint)}</div>` : "";
-  const retryAction = opts.retryAction || "retry-generic";
-  const retryLabel = opts.retryLabel || "Retry";
-  return `<div class="empty error-state">
-    <div class="icon">${ICONS.alert}</div>
-    <div class="msg">${escapeHtml(title)}</div>
-    ${detail}${hint}
-    <button class="btn outline sm mt" data-action="${escapeHtml(retryAction)}">${ICONS.refresh}${escapeHtml(retryLabel)}</button>
-  </div>`;
-}
-
 function partialErrorBadge(label) {
   return `<div class="partial-badge">${ICONS.alert}<span>${escapeHtml(label)}</span></div>`;
 }
@@ -934,13 +920,7 @@ function updateHealthCard() {
   if (!data && error) {
     const grid = document.getElementById("health-grid");
     if (grid) {
-      grid.innerHTML = errorBlock({
-        title: "Could not load health metrics",
-        detail: error,
-        hint: "Check if the server is running and try again.",
-        retryAction: "retry-overview",
-        retryLabel: "Retry",
-      });
+      grid.innerHTML = errorPanel("health metrics", error, "retry-overview");
       bindRetry(card, "retry-overview", () => route("overview"));
     }
     return;
@@ -3118,7 +3098,7 @@ function renderPipelineMonitor(content, actions) {
       <div class="card">
         <h2 class="card-title">Throughput</h2>
         <div class="card-desc">Signals per minute (rolling 60s)</div>
-        <div class="stat big-stat" id="throughput-stat" role="group" aria-label="Throughput"><div class="value" aria-live="polite">--</div><div class="label">signals/min</div></div>
+        <div class="stat hero" id="throughput-stat" role="group" aria-label="Throughput"><div class="value" aria-live="polite">--</div><div class="label">signals/min</div></div>
       </div>
     </div>
     <div class="card">
@@ -3221,7 +3201,7 @@ async function pollPipeline() {
     if (tpEl) {
       const v = tpEl.querySelector(".value");
       if (v) v.textContent = formatNumber(perMin);
-      tpEl.className = `stat big-stat ${perMin > 10 ? "ok" : perMin > 0 ? "info" : "warn"}`;
+      tpEl.className = `stat hero ${perMin > 10 ? "ok" : perMin > 0 ? "info" : "warn"}`;
     }
     setTile("stat-dupes", formatNumber(dupes || 0), dupes > 0 ? "warn" : "ok");
     setTile("stat-retries", formatNumber(retries || 0), retries > 0 ? "warn" : "ok");
@@ -3543,7 +3523,7 @@ function updateSystemHealthUI() {
         <div class="row"><span class="k">Keyspace hits</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_hits || 0))}</span></div>
         <div class="row"><span class="k">Keyspace misses</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_misses || 0))}</span></div>`;
     } else {
-      redisEl.innerHTML = `<div class="empty small"><div class="msg">Redis not configured</div></div>`;
+      redisEl.innerHTML = emptyState(ICONS.database, "Redis not configured");
     }
   }
 }
@@ -3863,7 +3843,7 @@ function renderWebhookTable() {
   const end = Math.min(start + perPage, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty small">${(webhookLogState.rows || []).length === 0 ? emptyState(ICONS.webhook, "No webhooks received yet.") : '<div class="msg">No matches</div>'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8">${(webhookLogState.rows || []).length === 0 ? emptyState(ICONS.webhook, "No webhooks received yet.") : emptyState(ICONS.filter, "No matches")}</td></tr>`;
   } else {
     tbody.innerHTML = shown.map(r => {
       if (!r) return "";
@@ -3951,11 +3931,8 @@ async function pollRiskMonitor() {
     }
     if (error || !data) {
       const card = document.getElementById("risk-status-card");
-      if (card && !cache["/api/risk-status"]) {
+      if (card) {
         card.innerHTML = errorPanel("risk monitor", error, "retry-sys-risk");
-        bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
-      } else if (card) {
-        card.innerHTML = `<div class="empty small"><div class="msg">Risk data unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-risk">${ICONS.refresh}Retry</button></div>`;
         bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
       }
       return;
@@ -3971,7 +3948,7 @@ function updateRiskUI(data) {
   const card = document.getElementById("risk-status-card");
   if (card) {
     const ok = data.can_trade;
-    card.className = `stat big-stat ${ok ? "ok" : "bad"}`;
+    card.className = `stat hero ${ok ? "ok" : "bad"}`;
     const v = card.querySelector(".value");
     if (v) v.textContent = ok ? "CAN TRADE" : "BLOCKED";
     const l = card.querySelector(".label");
@@ -4008,7 +3985,7 @@ function renderRiskMonitor(content) {
     <div class="card">
       <h2 class="card-title">Trading Status</h2>
       <div class="card-desc">Current risk gate - polling every 10s</div>
-      <div class="stat big-stat" id="risk-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
+      <div class="stat hero" id="risk-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
     </div>
     <div class="card">
       <h2 class="card-title">Risk Metrics</h2>
@@ -4287,7 +4264,7 @@ function renderDatabaseManager(content) {
     <div class="card">
       <h2 class="card-title">Migration Status</h2>
       <div class="card-desc">Database schema migrations</div>
-      <div id="db-migrations" class="empty small"><div class="msg">Migration info not available via API</div></div>
+      <div id="db-migrations">${emptyState(ICONS.database, "Migration info not available via API")}</div>
     </div>
   `;
   const btn = content.querySelector("[data-action='db-cleanup']");
@@ -4405,17 +4382,12 @@ function updateMetricsUI() {
   grid.innerHTML = specs.map(s => {
     const val = metricsState.lastValues[s.key];
     const hist = metricsState.history[s.key] || [];
-    return `<div class="card metric-card">
-      <div class="metric-header">
-        <span class="metric-name">${s.label}</span>
-        ${svgSparkline(hist, { color: s.color })}
-      </div>
-      <div class="metric-value" data-color="${escapeHtml(s.color)}" aria-live="polite" aria-label="${escapeHtml(s.label)}: ${val != null ? escapeHtml(formatNum(val, s.digits)) : '--'}">${val != null ? escapeHtml(formatNum(val, s.digits)) : "--"}</div>
+    return `<div class="stat">
+      <div class="value" aria-live="polite" aria-label="${escapeHtml(s.label)}: ${val != null ? escapeHtml(formatNum(val, s.digits)) : '--'}">${val != null ? escapeHtml(formatNum(val, s.digits)) : "--"}</div>
+      <div class="label">${escapeHtml(s.label)}</div>
+      ${svgSparkline(hist, { color: s.color })}
     </div>`;
   }).join("");
-  grid.querySelectorAll(".metric-value[data-color]").forEach(el => {
-    el.style.setProperty("--metric-color", el.dataset.color);
-  });
 }
 
 function renderMetrics(content) {
@@ -4427,9 +4399,9 @@ function renderMetrics(content) {
       <div class="card-desc">Prometheus metrics - polling every 10s - sparklines show last 20 samples</div>
     </div>
     <div class="grid grid-3" id="metrics-grid">
-      <div class="card metric-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
-      <div class="card metric-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
-      <div class="card metric-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
+      <div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
+      <div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
+      <div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
     </div>
   `;
   startPoll(pollMetrics, 10000);
@@ -4458,13 +4430,8 @@ async function pollDiagnostics() {
     if (error || !data) {
       const overall = document.getElementById("diag-overall");
       if (overall) {
-        if (!cache["/api/diagnostics"]) {
-          overall.innerHTML = errorPanel("diagnostics", error, "retry-sys-diag");
-          bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
-        } else {
-          overall.innerHTML = `<div class="empty small"><div class="msg">Diagnostics unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-diag">${ICONS.refresh}Retry</button></div>`;
-          bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
-        }
+        overall.innerHTML = errorPanel("diagnostics", error, "retry-sys-diag");
+        bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
       }
       return;
     }
@@ -4482,7 +4449,7 @@ function updateDiagnosticsUI(data) {
     const issueCount = (data.probes || []).filter(p => p.status !== "ok").length;
     const cls = status === "ok" ? "ok" : status === "degraded" ? "warn" : "bad";
     const msg = status === "ok" ? "All Systems Operational" : `${issueCount} issue${issueCount !== 1 ? "s" : ""} detected`;
-    overall.className = `stat big-stat ${cls}`;
+    overall.className = `stat hero ${cls}`;
     const v = overall.querySelector(".value");
     if (v) v.textContent = msg;
   }
@@ -4494,15 +4461,13 @@ function updateDiagnosticsUI(data) {
     for (const p of probes) probeMap[p.name] = p;
     grid.innerHTML = wanted.map(name => {
       const p = probeMap[name];
-      if (!p) return `<div class="card probe-card warn"><div class="probe-name">${name}</div><div class="badge warn"><span class="dot"></span>unknown</div><div class="probe-latency">-- ms</div><div class="probe-detail">No probe data</div></div>`;
+      if (!p) return `<div class="stat warn"><div class="value"><span class="badge warn"><span class="dot"></span>unknown</span></div><div class="label">${escapeHtml(name)}</div><div class="probe-detail">No probe data</div></div>`;
       const cls = p.status === "ok" ? "ok" : p.status === "fail" ? "bad" : "warn";
       const badgeCls = cls === "ok" ? "ok" : cls === "bad" ? "bad" : "warn";
-      return `<div class="card probe-card ${cls}">
-        <div class="probe-header">
-          <span class="probe-name">${escapeHtml(p.name)}</span>
-          <span class="badge ${badgeCls}"><span class="dot"></span>${escapeHtml(p.status)}</span>
-        </div>
-        <div class="probe-latency mono">${p.latency_ms != null ? escapeHtml(formatLatency(p.latency_ms)) : "-- ms"}</div>
+      const lat = p.latency_ms != null ? escapeHtml(formatLatency(p.latency_ms)) : "-- ms";
+      return `<div class="stat ${cls}">
+        <div class="value"><span class="badge ${badgeCls}"><span class="dot"></span>${escapeHtml(p.status)}</span> <span class="mono">${lat}</span></div>
+        <div class="label">${escapeHtml(p.name)}</div>
         <div class="probe-detail trunc">${escapeHtml(p.detail || "")}</div>
       </div>`;
     }).join("");
@@ -4514,10 +4479,10 @@ function renderDiagnostics(content) {
     <div id="diag-stale-banner"></div>
     <div class="card">
       <h2 class="card-title">Overall Status</h2>
-      <div class="stat big-stat" id="diag-overall"><div class="value skeleton line" aria-live="polite"></div><div class="label">Running diagnostics...</div></div>
+      <div class="stat hero" id="diag-overall"><div class="value skeleton line" aria-live="polite"></div><div class="label">Running diagnostics...</div></div>
     </div>
-    <div class="probe-grid" id="diag-grid">
-      ${Array(8).fill('<div class="card probe-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}
+    <div class="grid grid-4" id="diag-grid">
+      ${Array(8).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}
     </div>
   `;
   startPoll(pollDiagnostics, 15000);
@@ -4546,13 +4511,8 @@ async function pollBotStatus() {
     if (error || !data) {
       const card = document.getElementById("bot-status-card");
       if (card) {
-        if (!cache[`${API}/bot-info`]) {
-          card.innerHTML = errorPanel("bot status", error, "retry-sys-bot");
-          bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
-        } else {
-          card.innerHTML = `<div class="empty small"><div class="msg">Bot status unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-bot">${ICONS.refresh}Retry</button></div>`;
-          bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
-        }
+        card.innerHTML = errorPanel("bot status", error, "retry-sys-bot");
+        bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
       }
       return;
     }
@@ -4573,7 +4533,7 @@ function updateBotUI(data) {
   const card = document.getElementById("bot-status-card");
   if (card) {
     const ok = started && updaterRunning;
-    card.className = `stat big-stat ${ok ? "ok" : "bad"}`;
+    card.className = `stat hero ${ok ? "ok" : "bad"}`;
     const v = card.querySelector(".value");
     if (v) v.textContent = ok ? "RUNNING" : "STOPPED";
     const l = card.querySelector(".label");
@@ -4609,7 +4569,7 @@ function renderBotStatus(content) {
       <div class="card">
         <h2 class="card-title">Bot Status</h2>
         <div class="card-desc">Telegram bot health - polling every 15s</div>
-        <div class="stat big-stat" id="bot-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
+        <div class="stat hero" id="bot-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
       </div>
       <div class="card">
         <h2 class="card-title">Bot Info</h2>
@@ -4842,7 +4802,7 @@ function renderLicenseRows() {
   const end = Math.min(start + pp, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    body.innerHTML = `<tr><td colspan="10" class="empty small">${(licenseState.rows || []).length === 0 ? emptyState(ICONS.license, "No licenses configured. Click 'Add License' to create one.", "Add License", "empty-add-license") : '<div class="msg">No matches</div>'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10">${(licenseState.rows || []).length === 0 ? emptyState(ICONS.license, "No licenses configured. Click 'Add License' to create one.", "Add License", "empty-add-license") : emptyState(ICONS.filter, "No matches")}</td></tr>`;
     if ((licenseState.rows || []).length === 0) {
       const btn = body.querySelector("[data-action='empty-add-license']");
       if (btn) btn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
@@ -5306,7 +5266,7 @@ function renderSecurityContent(content) {
   const tvIps = Array.isArray(hdr.tradingview_ips) ? hdr.tradingview_ips : [];
 
   const blockedRows = blocked.length === 0
-    ? `<tr><td colspan="5" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
+    ? `<tr><td colspan="5">${emptyState(ICONS.ban, "No blocked IPs")}</td></tr>`
     : blocked.map(b => {
       if (!b) return "";
       const ip = b.ip || "--";
@@ -5323,20 +5283,20 @@ function renderSecurityContent(content) {
 
   content.innerHTML = `
     <div id="sec-stale-banner"></div>
-    <div class="stat-grid-4" role="group" aria-label="Security stats">
-      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${escapeHtml(formatNumber(blockedCount))}">
+    <div class="grid grid-4" role="group" aria-label="Security stats">
+      <div class="stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${escapeHtml(formatNumber(blockedCount))}">
         <div class="value">${escapeHtml(formatNumber(blockedCount))}</div>
         <div class="label">Blocked IPs</div>
       </div>
-      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(formatNumber(failed24h))}">
+      <div class="stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(formatNumber(failed24h))}">
         <div class="value">${escapeHtml(formatNumber(failed24h))}</div>
         <div class="label">Failed Attempts (24h)</div>
       </div>
-      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(formatNumber(rateHits))}">
+      <div class="stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(formatNumber(rateHits))}">
         <div class="value">${escapeHtml(formatNumber(rateHits))}</div>
         <div class="label">Rate Limit Hits</div>
       </div>
-      <div class="sec-stat ${headersCls}" role="group" aria-label="Security Headers: ${escapeHtml(formatNumber(headersActive))} of ${escapeHtml(formatNumber(totalHeaders))}">
+      <div class="stat ${headersCls}" role="group" aria-label="Security Headers: ${escapeHtml(formatNumber(headersActive))} of ${escapeHtml(formatNumber(totalHeaders))}">
         <div class="value">${escapeHtml(formatNumber(headersActive))}/${escapeHtml(formatNumber(totalHeaders))}</div>
         <div class="label">Security Headers</div>
       </div>
@@ -5380,7 +5340,7 @@ function renderSecurityContent(content) {
     <div class="card">
       <h2 class="card-title">Recent 401/403 Responses</h2>
       <div class="card-desc">Authentication and authorization failures</div>
-      <div class="empty small"><div class="msg">Requires audit log filtering by action - available when audit endpoints support status filtering</div></div>
+      ${emptyState(ICONS.security, "Requires audit log filtering by action - available when audit endpoints support status filtering")}
     </div>
   `;
   if (!content._secDelegated) {
@@ -5554,7 +5514,7 @@ function renderAuditContent(content) {
   `;
   const tl = content.querySelector("#audit-timeline");
   if (filtered.length === 0) {
-    tl.innerHTML = `${(auditState.rows || []).length === 0 ? emptyState(ICONS.audit, "No admin actions recorded yet.") : '<div class="empty small"><div class="msg">No matches</div></div>'}`;
+    tl.innerHTML = `${(auditState.rows || []).length === 0 ? emptyState(ICONS.audit, "No admin actions recorded yet.") : emptyState(ICONS.filter, "No matches")}`;
   } else {
     tl.innerHTML = filtered.map(a => {
       if (!a) return "";
