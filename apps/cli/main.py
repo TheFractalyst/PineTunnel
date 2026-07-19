@@ -292,7 +292,16 @@ def _step2_cloudflare(env_path: Path) -> bool:
 
     if CF_CERT_FILE.exists():
         print("  Already logged in to Cloudflare.")
-    else:
+        print()
+        print("  a. Use current account")
+        print("  b. Log in with a different Cloudflare account")
+        print()
+        acct = input("  Choose (a/b): ").strip().lower()
+        if acct == "b":
+            CF_CERT_FILE.unlink(missing_ok=True)
+            print("  -> Previous login cleared.")
+            print()
+    if not CF_CERT_FILE.exists():
         print("  Starting Cloudflare login...")
         proc = subprocess.Popen(
             ["cloudflared", "tunnel", "login"],
