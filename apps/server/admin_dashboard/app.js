@@ -3055,19 +3055,29 @@ function applySort(scope, sortKey) {
   const ths = scope.querySelectorAll("th.sortable");
   ths.forEach(th => {
     th.classList.remove("sort-asc", "sort-desc");
-    if (th.dataset.sort === sortKey.key) th.classList.add(sortKey.dir === "asc" ? "sort-asc" : "sort-desc");
+    th.removeAttribute("aria-sort");
+    if (th.dataset.sort === sortKey.key) {
+      th.classList.add(sortKey.dir === "asc" ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", sortKey.dir === "asc" ? "ascending" : "descending");
+    }
   });
 }
 
 function bindSortHeaders(scope, sortState, onSort) {
   scope.querySelectorAll("th.sortable").forEach(th => {
-    th.addEventListener("click", () => {
+    th.setAttribute("tabindex", "0");
+    th.setAttribute("role", "columnheader");
+    const handler = () => {
       const k = th.dataset.sort;
       if (!k) return;
       if (sortState.key === k) sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
       else { sortState.key = k; sortState.dir = "asc"; }
       applySort(scope, sortState);
       onSort();
+    };
+    th.addEventListener("click", handler);
+    th.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handler(); }
     });
   });
 }
@@ -3213,6 +3223,19 @@ function renderWebhookLogs(content) {
   if (loadMore) loadMore.addEventListener("click", e => { e.preventDefault(); webhookLogState.page++; renderWebhookTable(); });
   bindSortHeaders(content.querySelector("#wl-table"), webhookLogState.sort, renderWebhookTable);
   applySort(content.querySelector("#wl-table"), webhookLogState.sort);
+  const wlBody = document.getElementById("wl-body");
+  if (wlBody) {
+    wlBody.addEventListener("click", e => {
+      const tr = e.target.closest(".row-expandable");
+      if (tr) toggleWebhookRow(tr);
+    });
+    wlBody.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        const tr = e.target.closest(".row-expandable");
+        if (tr) { e.preventDefault(); toggleWebhookRow(tr); }
+      }
+    });
+  }
   startPoll(pollWebhookLogs, 10000);
 }
 
@@ -3268,36 +3291,31 @@ function renderWebhookTable() {
   if (nextBtn) nextBtn.disabled = end >= rows.length;
   const loadMore = document.querySelector("[data-action='wl-load-more']");
   if (loadMore) loadMore.style.display = end >= rows.length ? "none" : "";
-  tbody.querySelectorAll(".row-expandable").forEach(tr => {
-    const toggle = () => {
-      const tbodyEl = tr.parentElement;
-      const existingOpen = tbodyEl.querySelector(".row-expanded");
-      const existingSelf = tr.nextElementSibling && tr.nextElementSibling.classList.contains("row-expanded");
-      if (existingSelf) { tr.nextElementSibling.remove(); tr.classList.remove("expanded"); tr.setAttribute("aria-expanded", "false"); return; }
-      if (existingOpen) {
-        const prevRow = existingOpen.previousElementSibling;
-        existingOpen.remove();
-        if (prevRow) { prevRow.classList.remove("expanded"); prevRow.setAttribute("aria-expanded", "false"); }
-      }
-      const payload = tr.dataset.payload || "(no payload)";
-      const exp = document.createElement("tr");
-      exp.className = "row-expanded";
-      const td = document.createElement("td");
-      td.colSpan = 8;
-      const pre = document.createElement("pre");
-      pre.className = "payload-pre";
-      pre.textContent = payload;
-      td.appendChild(pre);
-      exp.appendChild(td);
-      tr.after(exp);
-      tr.classList.add("expanded");
-      tr.setAttribute("aria-expanded", "true");
-    };
-    tr.addEventListener("click", toggle);
-    tr.addEventListener("keydown", e => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
-    });
-  });
+}
+
+function toggleWebhookRow(tr) {
+  const tbodyEl = tr.parentElement;
+  const existingOpen = tbodyEl.querySelector(".row-expanded");
+  const existingSelf = tr.nextElementSibling && tr.nextElementSibling.classList.contains("row-expanded");
+  if (existingSelf) { tr.nextElementSibling.remove(); tr.classList.remove("expanded"); tr.setAttribute("aria-expanded", "false"); return; }
+  if (existingOpen) {
+    const prevRow = existingOpen.previousElementSibling;
+    existingOpen.remove();
+    if (prevRow) { prevRow.classList.remove("expanded"); prevRow.setAttribute("aria-expanded", "false"); }
+  }
+  const payload = tr.dataset.payload || "(no payload)";
+  const exp = document.createElement("tr");
+  exp.className = "row-expanded";
+  const td = document.createElement("td");
+  td.colSpan = 8;
+  const pre = document.createElement("pre");
+  pre.className = "payload-pre";
+  pre.textContent = payload;
+  td.appendChild(pre);
+  exp.appendChild(td);
+  tr.after(exp);
+  tr.classList.add("expanded");
+  tr.setAttribute("aria-expanded", "true");
 }
 
 async function pollRiskMonitor() {
@@ -3957,10 +3975,10 @@ async function renderLicenses(content, actions) {
   if (addBtn) addBtn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
   licenseState.loaded = false;
   licenseState.page = 0;
-  const { data, error, stale } = await useFetch(`${API}/users`);
+  const { data, error, stale } = await withMinDisplayTime(useFetch(`${API}/users`));
   if (staleRender(tk)) return;
   if (error && !data) {
-    content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load licenses</div><div class="sub">${escapeHtml(error)}</div><button class="btn outline sm mt" data-action="retry-licenses">Retry</button></div>`;
+    content.innerHTML = errorPanel("licenses", error, "retry-licenses");
     bindRetry(content, "retry-licenses", () => route("licenses"));
     return;
   }
@@ -4027,6 +4045,18 @@ async function renderLicenses(content, actions) {
   if (nextBtn) nextBtn.addEventListener("click", e => { e.preventDefault(); const t = filteredLicenseRows().length; if ((licenseState.page + 1) * licenseState.perPage < t) { licenseState.page++; renderLicenseRows(); } });
   bindSortHeaders(content.querySelector("#lic-table"), licenseState.sort, renderLicenseRows);
   applySort(content.querySelector("#lic-table"), licenseState.sort);
+  const licBody = document.getElementById("lic-body");
+  if (licBody) {
+    licBody.addEventListener("click", e => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const a = btn.dataset.action;
+      if (a === "lic-edit" || a === "lic-extend" || a === "lic-toggle" || a === "lic-disconnect" || a === "lic-delete") {
+        e.preventDefault(); e.stopPropagation();
+        handleLicenseAction(btn);
+      }
+    });
+  }
   renderLicenseRows();
   startPoll(pollLicenses, 15000);
 }
@@ -4134,20 +4164,16 @@ function renderLicenseRows() {
   const nextBtn = document.getElementById("lic-next");
   if (prevBtn) prevBtn.disabled = licenseState.page === 0;
   if (nextBtn) nextBtn.disabled = end >= rows.length;
-  body.querySelectorAll("[data-action='lic-edit']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("License editing"); }));
-  body.querySelectorAll("[data-action='lic-extend']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("License extension"); }));
-  body.querySelectorAll("[data-action='lic-toggle']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("Enable/disable license"); }));
-  body.querySelectorAll("[data-action='lic-disconnect']").forEach(b => b.addEventListener("click", e => {
-    e.preventDefault(); e.stopPropagation();
-    const key = b.dataset.key;
-    openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${formatMaskedKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
-  }));
-  body.querySelectorAll("[data-action='lic-delete']").forEach(b => b.addEventListener("click", e => {
-    e.preventDefault(); e.stopPropagation();
-    const key = b.dataset.key;
-    const name = b.dataset.name;
-    openConfirmModal("Delete license", `Delete license for ${name}?`, () => comingSoon("License deletion"));
-  }));
+}
+
+function handleLicenseAction(b) {
+  const action = b.dataset.action;
+  const key = b.dataset.key;
+  if (action === "lic-edit") comingSoon("License editing");
+  else if (action === "lic-extend") comingSoon("License extension");
+  else if (action === "lic-toggle") comingSoon("Enable/disable license");
+  else if (action === "lic-disconnect") openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${formatMaskedKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
+  else if (action === "lic-delete") openConfirmModal("Delete license", `Delete license for ${b.dataset.name}?`, () => comingSoon("License deletion"));
 }
 
 function comingSoon(feature) {
@@ -4307,13 +4333,13 @@ async function renderSecurity(content, actions) {
   const tk = renderToken;
   content.innerHTML = skeletonCard(2);
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
-  const [rlRes, hdrRes] = await Promise.all([
+  const [rlRes, hdrRes] = await withMinDisplayTime(Promise.all([
     useFetch(`${API}/rate-limits`),
     useFetch(`${API}/security-headers`),
-  ]);
+  ]));
   if (staleRender(tk)) return;
   if (rlRes.error && !rlRes.data) {
-    content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load security data</div><div class="sub">${escapeHtml(rlRes.error)}</div><button class="btn outline sm mt" data-action="retry-security">Retry</button></div>`;
+    content.innerHTML = errorPanel("security data", rlRes.error, "retry-security");
     bindRetry(content, "retry-security", () => route("security"));
     return;
   }
@@ -4375,27 +4401,27 @@ function renderSecurityContent(content) {
         <td class="td-key" scope="row">${escapeHtml(b.ip)}</td>
         <td>${escapeHtml(formatRelativeTime(null))}</td>
         <td>Rate limit exceeded</td>
-        <td class="td-num">${b.remaining_seconds || 0}s</td>
+        <td class="td-num">${escapeHtml(String(b.remaining_seconds || 0))}s</td>
         <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}" aria-label="Unblock IP ${escapeHtml(b.ip)}">Unblock</button></td>
       </tr>`).join("");
 
   content.innerHTML = `
     <div id="sec-stale-banner"></div>
     <div class="stat-grid-4" role="group" aria-label="Security stats">
-      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${blockedCount}">
-        <div class="value">${blockedCount}</div>
+      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${escapeHtml(String(blockedCount))}">
+        <div class="value">${escapeHtml(String(blockedCount))}</div>
         <div class="label">Blocked IPs</div>
       </div>
-      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${failed24h}">
-        <div class="value">${failed24h}</div>
+      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(String(failed24h))}">
+        <div class="value">${escapeHtml(String(failed24h))}</div>
         <div class="label">Failed Attempts</div>
       </div>
-      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${rateHits}">
-        <div class="value">${rateHits}</div>
+      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(String(rateHits))}">
+        <div class="value">${escapeHtml(String(rateHits))}</div>
         <div class="label">Rate Limit Hits</div>
       </div>
-      <div class="sec-stat ${headersCls}" role="group" aria-label="Security Headers: ${headersActive} of ${totalHeaders}">
-        <div class="value">${headersActive}/${totalHeaders}</div>
+      <div class="sec-stat ${headersCls}" role="group" aria-label="Security Headers: ${escapeHtml(String(headersActive))} of ${escapeHtml(String(totalHeaders))}">
+        <div class="value">${escapeHtml(String(headersActive))}/${escapeHtml(String(totalHeaders))}</div>
         <div class="label">Security Headers</div>
       </div>
     </div>
@@ -4460,7 +4486,7 @@ async function renderAuditTimeline(content, actions) {
     filterFrom: ps.filters.filterFrom || "", filterTo: ps.filters.filterTo || "",
     search: ps.filters.search || "", loading: false, hasMore: true, limit: 50,
   };
-  await loadAuditPage(true);
+  await withMinDisplayTime(loadAuditPage(true));
   if (staleRender(tk)) return;
   renderAuditContent(content);
   startPoll(pollAudit, 10000);

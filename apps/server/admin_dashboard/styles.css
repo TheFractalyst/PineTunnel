@@ -776,6 +776,13 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   .header .title { font-size: 14px; }
   .badge { font-size: 11px; padding: 4px 8px; }
   .btn.full-sm { width: 100%; }
+  .mobile-nav .tab { margin: 6px 2px; }
+}
+
+@media (max-width: 400px) {
+  .mobile-nav .tab span { display: none; }
+  .mobile-nav .tab { margin: 6px 1px; gap: 0; }
+  .mobile-nav .tab svg { width: 22px; height: 22px; }
 }
 
 @media (max-width: 320px) {
@@ -987,9 +994,8 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .gauge-wrap { display: inline-block; }
 .gauge { width: 120px; height: 120px; display: block; }
 @media (max-width: 768px) {
-  .gauge { width: 80px; height: 80px; }
-  .gauge-value { font-size: 14px; }
-  .gauge-label { font-size: 8px; }
+  .gauge { width: 100px; height: 100px; }
+  .gauge-value { font-size: 16px; }
 }
 .gauge-value { font-size: 18px; font-weight: 700; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .gauge-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; font-family: var(--mono); }
