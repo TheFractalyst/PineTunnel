@@ -24,14 +24,24 @@ router = APIRouter(tags=["auth"])
 # ---------------------------------------------------------------------------
 
 
+def _is_localhost(request: Request) -> bool:
+    client = request.client
+    return bool(client and client.host in ("127.0.0.1", "::1", "localhost"))
+
+
 async def _require_auth(
+    request: Request,
     session_token: str | None = Cookie(None),
 ) -> str:
     """Session-based authentication dependency.
 
     Delegates to the dependency created during startup (stored in state).
     Falls back to inline verification if state hasn't been initialized yet.
+    Localhost requests bypass auth (matches dashboard endpoint behavior).
     """
+    if _is_localhost(request):
+        return "localhost"
+
     from apps.server.state import _require_auth_dependency
 
     # If the wired dependency is available, use it (normal runtime path)
@@ -65,6 +75,9 @@ async def _require_auth(
 
 
 async def _verify_admin_key(request: Request) -> None:
+    if _is_localhost(request):
+        return
+
     from apps.server.state import settings
 
     if not settings.admin_api_key:

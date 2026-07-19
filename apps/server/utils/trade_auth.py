@@ -6,8 +6,15 @@ from apps.server.config.settings import get_config
 from apps.server.utils.security import verify_secret_key
 
 
+def _is_localhost(request: Request) -> bool:
+    client = request.client
+    return bool(client and client.host in ("127.0.0.1", "::1", "localhost"))
+
+
 async def get_current_user(request: Request):
-    """Validate admin access via X-Admin-Key header."""
+    """Validate admin access via X-Admin-Key header. Localhost bypasses auth."""
+    if _is_localhost(request):
+        return {"auth": "localhost"}
     try:
         config = get_config()
         secret = config.admin_api_key
