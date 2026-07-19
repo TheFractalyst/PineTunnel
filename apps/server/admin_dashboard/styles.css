@@ -286,7 +286,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 .card-desc { font-size: var(--text-sm); color: var(--muted); margin-bottom: var(--sp-5); }
 
-.grid { display: grid; gap: var(--sp-3); }
+.grid { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
 .grid-3 { grid-template-columns: repeat(3, 1fr); }
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
