@@ -8,6 +8,8 @@ route wiring and app creation.
 import asyncio
 import json
 import os
+import sys
+import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -747,6 +749,23 @@ async def lifespan(app: FastAPI):
     logger.info("Health readiness flag set")
 
     logger.info("Server started successfully")
+
+    _first_run_marker = Path.home() / ".pinetunnel" / "initialized"
+    _open_browser = (
+        os.getenv("PINETUNNEL_NO_OPEN_BROWSER", "") != "1"
+        and not _first_run_marker.exists()
+        and os.getenv("RENDER_WEB_CONCURRENCY") is None
+        and sys.stdout.isatty()
+    )
+    if _open_browser:
+        port = os.getenv("PORT", "8000")
+        try:
+            webbrowser.open(f"http://127.0.0.1:{port}/admin/", new=2, autoraise=True)
+        except Exception:
+            logger.debug("Could not open browser", exc_info=True)
+        _first_run_marker.parent.mkdir(parents=True, exist_ok=True)
+        _first_run_marker.write_text("1")
+
     yield
 
     # --- Shutdown ---
