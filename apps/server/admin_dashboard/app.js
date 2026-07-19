@@ -342,6 +342,7 @@ let routeTimer = null;
 let overviewRendered = false;
 let overviewSig = null;
 let visibilityPolling = true;
+let domCache = { content: null, actions: null, sidebar: null };
 
 const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="190 48 475 48" preserveAspectRatio="xMidYMid meet" class="brand-logo" aria-label="PineTunnel"><g fill="currentColor"><g transform="translate(196,91.6)"><path d="M32.25-37.94c1.38 0 2.66.34 3.81 1.03 1.16.68 2.07 1.6 2.75 2.75.68 1.15 1.02 2.42 1.02 3.81v7.58c0 1.39-.34 2.66-1.02 3.81-.68 1.15-1.6 2.07-2.75 2.75-1.15.68-2.42 1.02-3.81 1.02H9.48v15.17H1.89v-37.94zM9.48-22.77h22.77v-7.58H9.48z"/></g><g transform="translate(243,91.6)"><path d="M39.83 0H1.89v-7.59h15.19v-22.75H1.89v-7.59h37.94v7.59H24.66v22.75h15.17z"/></g><g transform="translate(290,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(338,91.6)"><path d="M39.83-37.94v7.59H9.48v7.58h30.35v7.59H9.48v7.58h30.35V0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-22.75c0-1.39.34-2.66 1.02-3.81.68-1.16 1.6-2.07 2.75-2.75 1.16-.69 2.44-1.03 3.83-1.03z"/></g><g transform="translate(385,91.6)"><path d="M39.83-37.94v7.59H24.66V0h-7.58v-30.35H1.89v-7.59z"/></g><g transform="translate(432,91.6)"><path d="M32.25 0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-30.35h7.59v30.35H32.25v-30.35h7.58v30.35c0 1.39-.34 2.66-1.02 3.81-.68 1.16-1.6 2.07-2.75 2.75-1.15.69-2.43 1.03-3.81 1.03z"/></g><g transform="translate(479,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(526,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(574,91.6)"><path d="M39.83-37.94v7.59H9.48v7.58h30.35v7.59H9.48v7.58h30.35V0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-22.75c0-1.39.34-2.66 1.02-3.81.68-1.16 1.6-2.07 2.75-2.75 1.16-.69 2.44-1.03 3.83-1.03z"/></g><g transform="translate(621,91.6)"><path d="M39.83 0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-30.35h7.59v30.35h30.35z"/></g></g></svg>';
 
@@ -904,6 +905,7 @@ function clearPolls() {
   pollTimers.forEach(t => clearInterval(t));
   pollTimers = [];
   stopHealthPolling();
+  if (eaVerifyTimer) { clearInterval(eaVerifyTimer); eaVerifyTimer = null; }
 }
 
 function toast(msg, type = "ok") {
@@ -1043,6 +1045,9 @@ function render() {
       </div>
     </div>
   `;
+  domCache.content = document.getElementById("content");
+  domCache.actions = document.getElementById("header-actions");
+  domCache.sidebar = document.querySelector(".sidebar");
   const skipLink = document.querySelector(".skip-link");
   if (skipLink) {
     skipLink.addEventListener("click", e => {
@@ -1250,7 +1255,7 @@ async function renderOverview(content, actions) {
     <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
     <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
   `;
-  const { data, error, stale } = await useFetch(`${API}/setup-status`);
+  const { data, error, stale } = await withMinDisplayTime(useFetch(`${API}/setup-status`));
   if (staleRender(tk)) return;
   if (error && !data) {
     content.innerHTML = errorPanel("overview", error, "retry-overview");
@@ -1646,9 +1651,11 @@ async function saveTelegram() {
   }
 }
 
-function copyWebhook() {
-  const el = document.getElementById("copy-webhook");
-  const url = document.querySelector(".webhook-card .webhook-url").textContent;
+function copyUrlWithFeedback(btnId, urlSelector) {
+  const el = document.getElementById(btnId);
+  const urlEl = document.querySelector(urlSelector);
+  if (!el || !urlEl) return;
+  const url = urlEl.textContent;
   const original = el.innerHTML;
   navigator.clipboard.writeText(url).then(() => {
     el.innerHTML = `${ICONS.check}Copied!`;
@@ -1661,19 +1668,12 @@ function copyWebhook() {
   });
 }
 
+function copyWebhook() {
+  copyUrlWithFeedback("copy-webhook", ".webhook-card .webhook-url");
+}
+
 function copyWebhookStep3() {
-  const el = document.getElementById("copy-step3");
-  const url = document.querySelector("#step-body .webhook-url").textContent;
-  const original = el.innerHTML;
-  navigator.clipboard.writeText(url).then(() => {
-    el.innerHTML = `${ICONS.check}Copied!`;
-    el.classList.add("btn-success");
-    toast("Webhook URL copied", "ok");
-    setTimeout(() => {
-      el.innerHTML = original;
-      el.classList.remove("btn-success");
-    }, 2000);
-  });
+  copyUrlWithFeedback("copy-step3", "#step-body .webhook-url");
 }
 
 function toggleTestForm(force) {
@@ -2637,7 +2637,10 @@ function drawHistogram() {
       <text x="${x + barW / 2}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${b.label}</text>
       <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">${b.count}</text>`;
   }).join("");
+  const descParts = buckets.map(b => `${b.label}: ${b.count}`).join(", ");
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="Delivery latency histogram: ${totalSamples} samples, peak bucket ${peak.label} with ${peak.count} entries">
+    <title>Delivery latency histogram - ${totalSamples} samples</title>
+    <desc>${escapeHtml(descParts)}</desc>
     <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     ${bars}
@@ -2709,7 +2712,10 @@ function svgLineChart(values, opts = {}) {
   }).join("");
   const lastVal = values[values.length - 1];
   const lbl = opts.label ? `${opts.label}: current ${lastVal != null ? lastVal.toFixed(1) : "--"}` : "chart";
+  const descText = opts.label ? `${opts.label} over ${n} samples, current value ${lastVal != null ? lastVal.toFixed(1) : "--"}` : `${n} data points`;
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(lbl)}">
+    <title>${escapeHtml(lbl)}</title>
+    <desc>${escapeHtml(descText)}</desc>
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${color}" stop-opacity="0.3"/>
       <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
@@ -3875,7 +3881,7 @@ async function renderLicenses(content, actions) {
   const total = data ? data.total_users : 0;
   const totalEAs = licenseState.rows.reduce((n, u) => n + (u.stats && u.stats.connected_eas || 0), 0);
   content.innerHTML = `
-    ${staleBannerHtml}
+    <div id="lic-stale-banner">${staleBannerHtml}</div>
     <div class="panel-toolbar">
       <input class="input search-input" id="lic-search" placeholder="Search by key, name, or email" value="${escapeHtml(licenseState.search)}" aria-label="Search licenses">
       <button class="filter-clear" id="lic-clear" type="button">Clear</button>
@@ -4264,24 +4270,24 @@ function renderSecurityContent(content) {
   const blockedRows = blocked.length === 0
     ? `<tr><td colspan="5" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
     : blocked.map(b => `<tr>
-        <td class="td-key">${escapeHtml(b.ip)}</td>
+        <td class="td-key" scope="row">${escapeHtml(b.ip)}</td>
         <td>${escapeHtml(relativeTime(null))}</td>
         <td>Rate limit exceeded</td>
         <td class="td-num">${b.remaining_seconds || 0}s</td>
-        <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}">Unblock</button></td>
+        <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}" aria-label="Unblock IP ${escapeHtml(b.ip)}">Unblock</button></td>
       </tr>`).join("");
 
   content.innerHTML = `
-    <div class="stat-grid-4">
-      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}">
+    <div class="stat-grid-4" role="group" aria-label="Security stats">
+      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${blockedCount}">
         <div class="value">${blockedCount}</div>
         <div class="label">Blocked IPs</div>
       </div>
-      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}">
+      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${failed24h}">
         <div class="value">${failed24h}</div>
         <div class="label">Failed Attempts</div>
       </div>
-      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}">
+      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${rateHits}">
         <div class="value">${rateHits}</div>
         <div class="label">Rate Limit Hits</div>
       </div>

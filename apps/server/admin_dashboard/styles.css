@@ -16,15 +16,18 @@
   --dim: #52525b;
   --green: #4cb782;
   --green-bg: rgba(76,183,130,0.1);
-  --green-glow: var(--green-glow);
+  --green-glow: rgba(76,183,130,0.15);
+  --green-shadow: rgba(76,183,130,0.3);
   --red: #eb5757;
   --red-bg: rgba(235,87,87,0.1);
-  --red-glow: var(--red-glow);
+  --red-glow: rgba(235,87,87,0.15);
+  --red-shadow: rgba(235,87,87,0.3);
   --amber: #f2994a;
   --amber-bg: rgba(242,153,74,0.1);
   --blue: #5e6ad2;
   --blue-bg: rgba(94,106,210,0.1);
-  --blue-glow: var(--blue-glow);
+  --blue-glow: rgba(94,106,210,0.15);
+  --blue-shadow: rgba(94,106,210,0.3);
   --blue-btn: #5e6ad2;
   --blue-dark: #4a54b8;
   --green-btn: #2d8659;
@@ -45,6 +48,12 @@
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
+
+.txt-green { color: var(--green); }
+.txt-muted2 { color: var(--muted-2); }
+.txt-red { color: var(--red); }
+.txt-amber { color: var(--amber); }
+.txt-blue { color: var(--blue); }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 * { -webkit-tap-highlight-color: transparent; }
@@ -318,9 +327,9 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .btn:hover { opacity: 0.9; }
 .btn:active { transform: scale(0.98); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn.primary { background: linear-gradient(135deg, var(--blue) 0%, var(--blue-dark) 100%); color: white; box-shadow: 0 1px 2px var(--blue), 0 0 12px var(--blue-glow); }
-.btn.green { background: var(--green-btn); color: white; box-shadow: 0 1px 2px var(--green); }
-.btn.red { background: var(--red-btn); color: white; box-shadow: 0 1px 2px var(--red); }
+.btn.primary { background: linear-gradient(135deg, var(--blue) 0%, var(--blue-dark) 100%); color: white; box-shadow: 0 1px 2px var(--blue-shadow), 0 0 12px var(--blue-glow); }
+.btn.green { background: var(--green-btn); color: white; box-shadow: 0 1px 2px var(--green-shadow); }
+.btn.red { background: var(--red-btn); color: white; box-shadow: 0 1px 2px var(--red-shadow); }
 .btn.outline { background: transparent; border: 1px solid var(--border-strong); color: var(--text); }
 .btn.outline:hover { background: var(--card-2); border-color: var(--border-strong); }
 .btn.ghost { background: transparent; color: var(--muted); }
@@ -558,12 +567,6 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .inline-error { margin-top: 12px; padding: 10px 14px; background: var(--red-bg); color: var(--red); border-radius: var(--radius-sm); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .inline-error svg { width: 14px; height: 14px; flex-shrink: 0; }
 .retry-link { color: inherit; text-decoration: underline; font-weight: 600; }
-.field-error { margin-top: 6px; padding: 6px 10px; background: var(--red-bg); color: var(--red); border-radius: var(--radius-sm); font-size: 12px; display: flex; align-items: center; gap: 6px; }
-.field-error svg { width: 14px; height: 14px; flex-shrink: 0; }
-.field-error[role="alert"] { }
-.input[aria-invalid="true"] { border-color: var(--red) !important; }
-.req { color: var(--red); margin-left: 2px; font-weight: 700; }
-.btn.btn-error { background: var(--red) !important; color: white !important; border-color: var(--red) !important; }
 
 .stat-hint {
   margin-top: 8px;
@@ -602,7 +605,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 
 .webhook-card {
-  border-color: var(--blue);
+  border-color: var(--blue-shadow);
   background: linear-gradient(180deg, var(--blue-bg), var(--card));
 }
 .webhook-display {
@@ -804,7 +807,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   background: var(--amber-bg);
   border-bottom: 1px solid var(--amber);
   color: var(--amber);
-  animation: conn-slide-down var(--t-default) ease-out;
+  animation: conn-slide-down var(--t-default) var(--ease-default);
 }
 .conn-banner-inner {
   max-width: 1200px;
@@ -979,7 +982,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 .gauge-value { font-size: 18px; font-weight: 700; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .gauge-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; font-family: var(--mono); }
-.gauge-arc { transition: stroke-dasharray 0.6s ease, stroke 0.3s ease; }
+.gauge-arc { transition: stroke-dasharray var(--t-slow) var(--ease-default), stroke var(--t-slow) var(--ease-default); }
 .stat-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
