@@ -468,38 +468,66 @@ def _fetch_zones_from_api(api_token: str, zone_id: str) -> list:
 
 
 def _create_tunnel(hostname: str) -> str:
-    try:
+    CF_CERT_DIR.mkdir(exist_ok=True)
+    tunnel_name = "pinetunnel"
+    tunnel_id = None
+
+    proc_list = subprocess.run(
+        ["cloudflared", "tunnel", "list"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if proc_list.returncode == 0:
+        for line in proc_list.stdout.splitlines():
+            if tunnel_name in line:
+                m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", line)
+                if m:
+                    tunnel_id = m.group(1)
+                    print(f"  -> Reusing existing tunnel: {tunnel_id}")
+                    break
+
+    if not tunnel_id:
         proc = subprocess.run(
-            ["cloudflared", "tunnel", "create", "pinetunnel"],
+            ["cloudflared", "tunnel", "create", tunnel_name],
             capture_output=True, text=True, timeout=30,
         )
         output = proc.stdout + proc.stderr
+        if proc.returncode != 0:
+            print(f"  ! cloudflared tunnel create failed:")
+            print(f"  {output.strip()[:300]}")
+            return ""
         m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", output)
         if not m:
+            print(f"  ! Could not find tunnel ID in output:")
+            print(f"  {output.strip()[:300]}")
             return ""
         tunnel_id = m.group(1)
 
-        proc2 = subprocess.run(
-            ["cloudflared", "tunnel", "route", "dns", tunnel_id, hostname],
-            capture_output=True, text=True, timeout=30,
-        )
-        if proc2.returncode != 0 and "already exists" not in proc2.stderr.lower():
+    proc2 = subprocess.run(
+        ["cloudflared", "tunnel", "route", "dns", tunnel_id, hostname],
+        capture_output=True, text=True, timeout=30,
+    )
+    if proc2.returncode != 0:
+        err = (proc2.stderr + proc2.stdout).strip()
+        if "already exists" in err.lower():
+            print(f"  -> DNS record already exists for {hostname}")
+        else:
+            print(f"  ! cloudflared tunnel route dns failed:")
+            print(f"  {err[:300]}")
             return ""
 
-        config_path = CF_CERT_DIR / "config.yml"
-        CF_CERT_DIR.mkdir(exist_ok=True)
-        config_path.write_text(f"""tunnel: {tunnel_id}
-credentials-file: {CF_CERT_DIR / f"{tunnel_id}.json"}
-
-ingress:
-  - hostname: {hostname}
-    service: http://localhost:8000
-  - service: http_status:404
-""")
-        return tunnel_id
-    except Exception as e:
-        print(f"  ! Error: {e}")
-        return ""
+    cred_file = CF_CERT_DIR / f"{tunnel_id}.json"
+    config_path = CF_CERT_DIR / "config.yml"
+    cred_path_str = str(cred_file).replace("\\", "/")
+    config_path.write_text(
+        f"tunnel: {tunnel_id}\n"
+        f"credentials-file: {cred_path_str}\n"
+        f"\n"
+        f"ingress:\n"
+        f"  - hostname: {hostname}\n"
+        f"    service: http://localhost:8000\n"
+        f"  - service: http_status:404\n"
+    )
+    return tunnel_id
 
 
 def _step3_webhook(env_path: Path) -> None:
