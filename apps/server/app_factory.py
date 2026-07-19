@@ -17,9 +17,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from apps.server.auth.session import setup_session_middleware
-from apps.server.auth.telegram_auth import TelegramAuthStore
-
 # Backward-compatible re-exports for tests and external importers.
 # These are None at import time; actual instances are created by
 # _init_services() during lifespan startup.
@@ -76,10 +73,6 @@ app.add_middleware(
         else []
     ),
 )
-
-_session_secret = os.getenv("SESSION_SECRET", "")
-if _session_secret:
-    setup_session_middleware(app, secret_key=_session_secret)
 
 _TELEGRAM_BOT_URL = os.getenv("TELEGRAM_BOT_URL", "")
 
@@ -171,22 +164,6 @@ try:
     logger.info("Trade Analytics API loaded")
 except ImportError as e:
     logger.warning("Trade Analytics API not loaded: %s", e)
-
-# ---------------------------------------------------------------------------
-# Dashboard API router (/api/dashboard/*)
-# Registered BEFORE the /admin SPA mount so it can never be shadowed.
-# TelegramAuthStore is a singleton on apps.server.state so Task 10 can pass
-# the same instance to the Telegram bot.
-# ---------------------------------------------------------------------------
-from apps.server import state
-
-if not hasattr(state, "_auth_store") or state._auth_store is None:
-    state._auth_store = TelegramAuthStore()
-
-_admin_ids_str = os.getenv("TELEGRAM_ADMIN_IDS", "")
-_admin_ids = [int(x.strip()) for x in _admin_ids_str.split(",") if x.strip().isdigit()]
-
-_env_path = _Path(__file__).resolve().parents[2] / ".env"
 
 
 # ---------------------------------------------------------------------------
