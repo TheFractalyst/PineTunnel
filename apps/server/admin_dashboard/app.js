@@ -1406,32 +1406,26 @@ async function renderOverview(content, actions) {
     </div>` : "";
 
   const setupBlock = !allDone ? `
-    <div class="card">
+    <div class="card onboarding-card">
       <h2 class="card-title">Get Started</h2>
       <div class="card-desc">3 quick steps to start receiving TradingView signals</div>
-      <div class="steps">
-        <div class="step ${tg ? "done" : ""}">
-          <div class="num">${tg ? ICONS.check : "1"}</div>
-          <div class="body">
-            <div class="t">Connect your Telegram bot</div>
-            <div class="d">${tg ? "Done" : "Used for login and trade alerts"}</div>
-            <div class="action"><button class="btn outline sm" data-action="goto-setup">Go to Setup</button></div>
-          </div>
+      <div class="onboarding-steps">
+        <div class="onboarding-step ${tg ? "done" : ""}">
+          <div class="step-icon">${tg ? ICONS.check : ICONS.bot}</div>
+          <div class="step-title">Connect Telegram</div>
+          <div class="step-desc">${tg ? "Connected" : "For login and alerts"}</div>
+          <button class="btn outline sm step-btn" data-action="goto-setup">Configure</button>
         </div>
-        <div class="step ${cf ? "done" : ""}">
-          <div class="num">${cf ? ICONS.check : "2"}</div>
-          <div class="body">
-            <div class="t">Link your domain</div>
-            <div class="d">${cf ? "Done" : "Gives you a public URL for TradingView"}</div>
-            <div class="action"><button class="btn outline sm" data-action="goto-setup">Go to Setup</button></div>
-          </div>
+        <div class="onboarding-step ${cf ? "done" : ""}">
+          <div class="step-icon">${cf ? ICONS.check : ICONS.external}</div>
+          <div class="step-title">Link Domain</div>
+          <div class="step-desc">${cf ? "Connected" : "Public URL for TradingView"}</div>
+          <button class="btn outline sm step-btn" data-action="goto-setup">Configure</button>
         </div>
-        <div class="step ${init ? "done" : ""}">
-          <div class="num">${init ? ICONS.check : "3"}</div>
-          <div class="body">
-            <div class="t">Copy your webhook URL</div>
-            <div class="d">${init ? "Done" : "Paste into TradingView after step 2"}</div>
-          </div>
+        <div class="onboarding-step ${init ? "done" : ""}">
+          <div class="step-icon">${init ? ICONS.check : ICONS.copy}</div>
+          <div class="step-title">Copy Webhook URL</div>
+          <div class="step-desc">${init ? "Done" : "Paste into TradingView"}</div>
         </div>
       </div>
     </div>` : "";

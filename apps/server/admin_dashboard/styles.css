@@ -414,7 +414,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 .step.done .num { background: var(--green); border-color: var(--green); color: white; }
 .step .body { flex: 1; min-width: 0; }
-.step .body .t { font-size: var(--text-md); font-weight: var(--fw-semibold); margin-bottom: 2px; }
+.step .body .t { font-size: var(--text-md); font-weight: var(--fw-semibold); margin-bottom: 4px; }
 .step .body .d { font-size: var(--text-sm); color: var(--muted); }
 .step .body .d code {
   background: var(--card-2);
@@ -424,6 +424,110 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   font-size: var(--text-xs);
 }
 .step .action { margin-top: 8px; }
+
+.onboarding-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-3);
+  position: relative;
+}
+.onboarding-steps::before {
+  content: "";
+  position: absolute;
+  top: 36px;
+  left: 16.66%;
+  right: 16.66%;
+  height: 1px;
+  background: var(--border);
+  z-index: 0;
+}
+.onboarding-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--sp-4);
+  position: relative;
+  z-index: 1;
+}
+.onboarding-step .step-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--sp-3);
+  color: var(--muted);
+  transition: all var(--t-default);
+}
+.onboarding-step .step-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.onboarding-step .step-title {
+  font-size: var(--text-md);
+  font-weight: var(--fw-semibold);
+  margin-bottom: 4px;
+  color: var(--text);
+}
+.onboarding-step .step-desc {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin-bottom: var(--sp-3);
+  line-height: var(--lh-normal);
+}
+.onboarding-step .step-btn {
+  width: 100%;
+}
+.onboarding-step.done .step-icon {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+.onboarding-step.done .step-desc {
+  color: var(--green);
+}
+.onboarding-step.done .step-btn {
+  display: none;
+}
+@media (max-width: 768px) {
+  .onboarding-steps {
+    grid-template-columns: 1fr;
+    gap: var(--sp-2);
+  }
+  .onboarding-steps::before { display: none; }
+  .onboarding-step {
+    flex-direction: row;
+    text-align: left;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .onboarding-step .step-icon {
+    margin-bottom: 0;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+  }
+  .onboarding-step .step-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+  .onboarding-step .step-title {
+    margin-bottom: 2px;
+  }
+  .onboarding-step .step-desc {
+    margin-bottom: 0;
+  }
+  .onboarding-step .step-btn {
+    width: auto;
+    margin-left: auto;
+  }
+}
 
 .btn {
   display: inline-flex;
