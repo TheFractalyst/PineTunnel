@@ -67,6 +67,14 @@ const ICONS = {
   metrics: '<svg' + SVG_ATTRS + '><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
   diag: '<svg' + SVG_ATTRS + '><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
   bot: '<svg' + SVG_ATTRS + '><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>',
+  license: '<svg' + SVG_ATTRS + '><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+  security: '<svg' + SVG_ATTRS + '><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  audit: '<svg' + SVG_ATTRS + '><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/><line x1="16" y1="9" x2="20" y2="9"/></svg>',
+  trash: '<svg' + SVG_ATTRS + '><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  ban: '<svg' + SVG_ATTRS + '><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>',
+  power: '<svg' + SVG_ATTRS + '><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>',
+  edit: '<svg' + SVG_ATTRS + '><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+  plus: '<svg' + SVG_ATTRS + '><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
 };
 
 const cache = {};
@@ -413,6 +421,9 @@ function render() {
   const manageNav = [
     { id: "setup", label: "Setup", icon: ICONS.setup },
     { id: "settings", label: "Settings", icon: ICONS.settings },
+    { id: "licenses", label: "Licenses", icon: ICONS.license },
+    { id: "security", label: "Security", icon: ICONS.security },
+    { id: "audit", label: "Audit Log", icon: ICONS.audit },
   ];
   const systemNav = [
     { id: "sys-health", label: "System Health", icon: ICONS.health },
@@ -504,6 +515,9 @@ function route(id) {
       "sys-metrics": "Performance Metrics",
       "sys-diag": "Diagnostics",
       "sys-bot": "Telegram Bot Status",
+      licenses: "License Manager",
+      security: "Security Center",
+      audit: "Audit Log Timeline",
     };
     document.getElementById("page-title").textContent = titles[id] || id;
     const content = domCache.content || document.getElementById("content");
@@ -532,6 +546,9 @@ function route(id) {
     else if (id === "sys-metrics") renderMetrics(content);
     else if (id === "sys-diag") renderDiagnostics(content);
     else if (id === "sys-bot") renderBotStatus(content);
+    else if (id === "licenses") renderLicenses(content, actions);
+    else if (id === "security") renderSecurity(content, actions);
+    else if (id === "audit") renderAuditTimeline(content, actions);
     if (content) content.focus({ preventScroll: true });
   }, 100);
 }
@@ -2559,6 +2576,474 @@ async function sendBotTestMessage() {
   }
   btn.disabled = false;
   btn.innerHTML = original;
+}
+
+let licenseState = { rows: [], search: "" };
+
+async function renderLicenses(content, actions) {
+  content.innerHTML = skeletonCard(1);
+  actions.innerHTML = `<button class="btn primary sm" id="add-license-btn" data-action="add-license">${ICONS.plus}Add License</button>`;
+  const addBtn = actions.querySelector("[data-action='add-license']");
+  if (addBtn) addBtn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
+  const { data, error, stale } = await useFetch(`${API}/users`);
+  if (error && !data) {
+    content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load licenses</div><div class="sub">${escapeHtml(error)}</div><button class="btn outline sm mt" data-action="retry-licenses">Retry</button></div>`;
+    bindRetry(content, "retry-licenses", () => route("licenses"));
+    return;
+  }
+  licenseState.rows = data ? data.users : [];
+  const staleBannerHtml = stale ? staleBanner() : "";
+  const total = data ? data.total_users : 0;
+  const totalEAs = licenseState.rows.reduce((n, u) => n + (u.stats && u.stats.connected_eas || 0), 0);
+  content.innerHTML = `
+    ${staleBannerHtml}
+    <div class="panel-toolbar">
+      <input class="input search-input" id="lic-search" placeholder="Search by key, name, or email" value="${escapeHtml(licenseState.search)}" aria-label="Search licenses">
+      <span class="badge info">${total} users</span>
+      <span class="badge ok">${totalEAs} EAs connected</span>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table class="data-table mgr-table">
+          <thead>
+            <tr>
+              <th>License Key</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Secret</th>
+              <th>Expires</th>
+              <th class="td-num">EAs</th>
+              <th class="td-num">Trades</th>
+              <th>Last Activity</th>
+              <th class="td-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="lic-body"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  const searchEl = content.querySelector("#lic-search");
+  if (searchEl) searchEl.addEventListener("input", () => {
+    licenseState.search = searchEl.value.trim().toLowerCase();
+    renderLicenseRows();
+  });
+  renderLicenseRows();
+  pollLicenses();
+  const t = setInterval(pollLicenses, 15000);
+  pollTimers.push(t);
+}
+
+function pollLicenses() {
+  if (currentRoute !== "licenses" || !visibilityPolling) return;
+  useFetch(`${API}/users`).then(({ data }) => {
+    if (!data) return;
+    licenseState.rows = data.users;
+    renderLicenseRows();
+  });
+}
+
+function renderLicenseRows() {
+  const body = document.getElementById("lic-body");
+  if (!body) return;
+  const q = licenseState.search;
+  let rows = licenseState.rows;
+  if (q) {
+    rows = rows.filter(u => {
+      const hay = `${u.email || ""} ${u.name || ""} ` + (u.licenses || []).map(l => l.license_key || "").join(" ");
+      return hay.toLowerCase().includes(q);
+    });
+  }
+  if (rows.length === 0) {
+    body.innerHTML = `<tr><td colspan="10" class="empty small"><div class="msg">${licenseState.rows.length === 0 ? "No licenses yet" : "No matches"}</div></td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map(u => {
+    const lic = (u.licenses && u.licenses[0]) || {};
+    const stats = u.stats || {};
+    const status = lic.status || "active";
+    const enabled = lic.enabled !== false;
+    let pillCls = "ok";
+    let pillLabel = "Active";
+    if (!enabled || status === "disabled") { pillCls = "bad"; pillLabel = "Disabled"; }
+    else if (status === "expired") { pillCls = "warn"; pillLabel = "Expired"; }
+    const expires = lic.expires_at ? new Date(lic.expires_at).toLocaleDateString() : "--";
+    const lastAct = lic.last_activity ? relativeTime(lic.last_activity) : (stats.total_trades > 0 ? "prior" : "never");
+    return `<tr>
+      <td class="td-key" title="${escapeHtml(lic.license_key || "")}">${escapeHtml(maskKey(lic.license_key))}</td>
+      <td>${escapeHtml(u.name || "--")}</td>
+      <td class="td-email" title="${escapeHtml(u.email || "")}">${escapeHtml(u.email || "--")}</td>
+      <td><span class="status-pill ${pillCls}"><span class="dot"></span>${pillLabel}</span></td>
+      <td class="secret-cell">****</td>
+      <td>${escapeHtml(expires)}</td>
+      <td class="td-num">${stats.connected_eas || 0}</td>
+      <td class="td-num">${stats.total_trades || 0}</td>
+      <td>${escapeHtml(lastAct)}</td>
+      <td class="td-actions">
+        <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(lic.license_key || "")}" title="Edit">${ICONS.edit}</button>
+        <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(lic.license_key || "")}" title="Extend +30d">+30d</button>
+        <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(lic.license_key || "")}" data-enabled="${enabled ? "1" : "0"}" title="${enabled ? "Disable" : "Enable"}">${enabled ? ICONS.ban : ICONS.power}</button>
+        <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(lic.license_key || "")}" title="Force disconnect">${ICONS.power}</button>
+        <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(lic.license_key || "")}" data-name="${escapeHtml(u.email || u.name || "")}" title="Delete">${ICONS.trash}</button>
+      </td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("[data-action='lic-edit']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("License editing"); }));
+  body.querySelectorAll("[data-action='lic-extend']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("License extension"); }));
+  body.querySelectorAll("[data-action='lic-toggle']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("Enable/disable license"); }));
+  body.querySelectorAll("[data-action='lic-disconnect']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("Force disconnect"); }));
+  body.querySelectorAll("[data-action='lic-delete']").forEach(b => b.addEventListener("click", e => {
+    e.preventDefault();
+    const key = b.dataset.key;
+    const name = b.dataset.name;
+    openConfirmModal("Delete license", `Delete license for ${escapeHtml(name)}?`, () => comingSoon("License deletion"));
+  }));
+}
+
+function comingSoon(feature) {
+  toast(`${feature} - coming soon (Phase 3)`, "bad");
+}
+
+function genKey(prefix) {
+  const seg = () => Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${prefix}-${seg()}-${seg()}-${seg()}-${seg()}`;
+}
+
+function openLicenseModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card">
+    <button class="modal-close" data-action="modal-close" aria-label="Close">${ICONS.x}</button>
+    <div class="modal-title">Add License</div>
+    <div class="modal-desc">Create a new license key. CRUD endpoints arrive in Phase 3.</div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="lic-modal-key">License Key</label>
+        <div class="gen-row">
+          <input class="input" id="lic-modal-key" value="${genKey("PT")}" readonly>
+          <button class="btn outline sm" data-action="regen-key">${ICONS.refresh}Regenerate</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="lic-modal-name">Name</label>
+        <input class="input" id="lic-modal-name" placeholder="Client name">
+      </div>
+      <div class="field">
+        <label for="lic-modal-email">Email</label>
+        <input class="input" id="lic-modal-email" type="email" placeholder="client@example.com">
+      </div>
+      <div class="field">
+        <label for="lic-modal-secret">Secret</label>
+        <div class="gen-row">
+          <input class="input" id="lic-modal-secret" value="${genKey("SEC")}" readonly>
+          <button class="btn outline sm" data-action="regen-secret">${ICONS.refresh}Regenerate</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="lic-modal-expires">Expires At</label>
+        <input class="input" id="lic-modal-expires" type="date">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn outline" data-action="modal-cancel">Cancel</button>
+      <button class="btn primary" data-action="modal-save">${ICONS.check}Create (Phase 3)</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
+  overlay.querySelector("[data-action='modal-close']").addEventListener("click", close);
+  overlay.querySelector("[data-action='modal-cancel']").addEventListener("click", close);
+  overlay.querySelector("[data-action='regen-key']").addEventListener("click", e => { e.preventDefault(); overlay.querySelector("#lic-modal-key").value = genKey("PT"); });
+  overlay.querySelector("[data-action='regen-secret']").addEventListener("click", e => { e.preventDefault(); overlay.querySelector("#lic-modal-secret").value = genKey("SEC"); });
+  overlay.querySelector("[data-action='modal-save']").addEventListener("click", e => {
+    e.preventDefault();
+    close();
+    comingSoon("License creation");
+  });
+}
+
+function openConfirmModal(title, msg, onConfirm) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card">
+    <div class="modal-title">${escapeHtml(title)}</div>
+    <div class="modal-desc">${msg}</div>
+    <div class="modal-footer">
+      <button class="btn outline" data-action="confirm-cancel">Cancel</button>
+      <button class="btn red" data-action="confirm-ok">${ICONS.trash}Delete</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
+  overlay.querySelector("[data-action='confirm-cancel']").addEventListener("click", close);
+  overlay.querySelector("[data-action='confirm-ok']").addEventListener("click", e => { e.preventDefault(); close(); onConfirm(); });
+}
+
+let securityState = { data: null, headers: null };
+
+async function renderSecurity(content, actions) {
+  content.innerHTML = skeletonCard(2);
+  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
+  const [rlRes, hdrRes] = await Promise.all([
+    useFetch(`${API}/rate-limits`),
+    useFetch(`${API}/security-headers`),
+  ]);
+  if (rlRes.error && !rlRes.data) {
+    content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load security data</div><div class="sub">${escapeHtml(rlRes.error)}</div><button class="btn outline sm mt" data-action="retry-security">Retry</button></div>`;
+    bindRetry(content, "retry-security", () => route("security"));
+    return;
+  }
+  securityState.data = rlRes.data;
+  securityState.headers = hdrRes.data;
+  renderSecurityContent(content);
+  pollSecurity();
+  const t = setInterval(pollSecurity, 10000);
+  pollTimers.push(t);
+}
+
+function pollSecurity() {
+  if (currentRoute !== "security" || !visibilityPolling) return;
+  Promise.all([useFetch(`${API}/rate-limits`), useFetch(`${API}/security-headers`)]).then(([rl, hdr]) => {
+    if (rl.data) securityState.data = rl.data;
+    if (hdr.data) securityState.headers = hdr.data;
+    const content = domCache.content || document.getElementById("content");
+    if (content && currentRoute === "security") renderSecurityContent(content);
+  });
+}
+
+function renderSecurityContent(content) {
+  const d = securityState.data || {};
+  const hdr = securityState.headers || {};
+  const blocked = d.blocked_ips || [];
+  const blockedCount = blocked.length;
+  const failed24h = d.blocked_requests || 0;
+  const rateHits = d.rate_limited_requests || 0;
+  const headersActive = hdr.headers ? Object.keys(hdr.headers).length : 0;
+  const totalHeaders = 5;
+  const headersCls = headersActive >= totalHeaders ? "ok" : headersActive > 0 ? "warn" : "bad";
+
+  const headers = hdr.headers || {};
+  const headerList = [
+    { name: "X-Frame-Options", val: headers.x_frame_options },
+    { name: "Content-Security-Policy", val: headers.content_security_policy },
+    { name: "X-Content-Type-Options", val: headers.x_content_type_options },
+    { name: "Referrer-Policy", val: headers.referrer_policy },
+    { name: "Strict-Transport-Security", val: headers.hsts },
+  ];
+
+  const tvAllow = hdr.tradingview_ip_allowlist;
+  const tvIps = hdr.tradingview_ips || [];
+
+  const blockedRows = blocked.length === 0
+    ? `<tr><td colspan="4" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
+    : blocked.map(b => `<tr>
+        <td class="td-key">${escapeHtml(b.ip)}</td>
+        <td>${escapeHtml(relativeTime(null))}</td>
+        <td>Rate limit exceeded</td>
+        <td class="td-num">${b.remaining_seconds || 0}s</td>
+        <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}">Unblock</button></td>
+      </tr>`).join("");
+
+  content.innerHTML = `
+    <div class="stat-grid-4">
+      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}">
+        <div class="value">${blockedCount}</div>
+        <div class="label">Blocked IPs</div>
+      </div>
+      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}">
+        <div class="value">${failed24h}</div>
+        <div class="label">Failed Attempts</div>
+      </div>
+      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}">
+        <div class="value">${rateHits}</div>
+        <div class="label">Rate Limit Hits</div>
+      </div>
+      <div class="sec-stat ${headersCls}">
+        <div class="value">${headersActive}/${totalHeaders}</div>
+        <div class="label">Security Headers</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Blocked IPs</div>
+      <div class="card-desc">Currently blocked by rate limiter</div>
+      <div class="table-wrap">
+        <table class="data-table mgr-table">
+          <thead><tr><th>IP</th><th>Blocked At</th><th>Reason</th><th class="td-num">Remaining</th><th class="td-actions">Action</th></tr></thead>
+          <tbody>${blockedRows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Security Headers</div>
+      <div class="card-desc">HTTP security response headers</div>
+      <div class="headers-checklist">
+        ${headerList.map(h => {
+          const ok = !!h.val;
+          return `<div class="header-item">
+            <span class="header-mark ${ok ? "ok" : "bad"}">${ok ? ICONS.check : ICONS.x}</span>
+            <span class="h-name">${escapeHtml(h.name)}</span>
+            <span class="h-val" title="${escapeHtml(h.val || "")}">${escapeHtml(h.val || "missing")}</span>
+          </div>`;
+        }).join("")}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">TradingView IP Allowlist</div>
+      <div class="card-desc">Webhook requests restricted to known TradingView egress IPs</div>
+      <div class="allowlist-status">
+        <div>
+          <div class="label">Status: <strong style="color:${tvAllow ? "var(--green)" : "var(--muted-2)"}">${tvAllow ? "Enabled" : "Disabled"}</strong></div>
+          ${tvIps.length > 0 ? `<div class="ips">${tvIps.map(escapeHtml).join(", ")}</div>` : ""}
+        </div>
+        <span class="status-pill ${tvAllow ? "ok" : "muted"}"><span class="dot"></span>${tvAllow ? "ON" : "OFF"}</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Recent 401/403 Responses</div>
+      <div class="card-desc">Authentication and authorization failures</div>
+      <div class="empty small"><div class="msg">Requires audit log filtering by action - available when audit endpoints support status filtering</div></div>
+    </div>
+  `;
+  content.querySelectorAll("[data-action='unblock-ip']").forEach(b => b.addEventListener("click", async e => {
+    e.preventDefault();
+    const ip = b.dataset.ip;
+    comingSoon("IP unblock (Phase 3)");
+  }));
+}
+
+let auditState = { rows: [], filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "", loading: false, hasMore: true, limit: 50 };
+
+async function renderAuditTimeline(content, actions) {
+  content.innerHTML = skeletonCard(1);
+  actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
+  auditState = { rows: [], filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "", loading: false, hasMore: true, limit: 50 };
+  await loadAuditPage(true);
+  renderAuditContent(content);
+  pollAudit();
+  const t = setInterval(pollAudit, 10000);
+  pollTimers.push(t);
+}
+
+async function loadAuditPage(isInitial) {
+  if (auditState.loading) return;
+  auditState.loading = true;
+  const { data, error } = await useFetch(`${API}/audit-actions?limit=${auditState.limit}`);
+  auditState.loading = false;
+  if (error && !data) return;
+  if (!data || !data.actions) return;
+  auditState.rows = data.actions;
+  auditState.hasMore = data.actions.length >= auditState.limit;
+}
+
+function pollAudit() {
+  if (currentRoute !== "audit" || !visibilityPolling) return;
+  loadAuditPage(false).then(() => {
+    const content = domCache.content || document.getElementById("content");
+    if (content && currentRoute === "audit") renderAuditContent(content);
+  });
+}
+
+function auditSeverityClass(action) {
+  const a = (action || "").toLowerCase();
+  if (a.includes("delete") || a.includes("disable") || a.includes("force") || a.includes("restart") || a.includes("revoke")) return "bad";
+  if (a.includes("edit") || a.includes("update") || a.includes("config") || a.includes("extend")) return "warn";
+  if (a.includes("add") || a.includes("create") || a.includes("enable") || a.includes("login") || a.includes("success")) return "ok";
+  return "info";
+}
+
+function sourceBadge(user) {
+  const u = (user || "").toLowerCase();
+  if (u.includes("telegram") || u.startsWith("tg")) return '<span class="src-badge tg">Telegram</span>';
+  if (u.includes("dashboard") || u.includes("admin")) return '<span class="src-badge dash">Dashboard</span>';
+  if (u.includes("api")) return '<span class="src-badge api">API</span>';
+  return "";
+}
+
+function renderAuditContent(content) {
+  const actions = new Set();
+  const admins = new Set();
+  for (const a of auditState.rows) {
+    if (a.action) actions.add(a.action);
+    if (a.user) admins.add(a.user);
+  }
+  let filtered = auditState.rows;
+  if (auditState.filterAction) filtered = filtered.filter(a => a.action === auditState.filterAction);
+  if (auditState.filterAdmin) filtered = filtered.filter(a => a.user === auditState.filterAdmin);
+  if (auditState.filterFrom) {
+    const from = new Date(auditState.filterFrom).getTime();
+    filtered = filtered.filter(a => new Date(a.timestamp).getTime() >= from);
+  }
+  if (auditState.filterTo) {
+    const to = new Date(auditState.filterTo).getTime();
+    filtered = filtered.filter(a => new Date(a.timestamp).getTime() <= to);
+  }
+  if (auditState.search) {
+    const q = auditState.search.toLowerCase();
+    filtered = filtered.filter(a => {
+      const hay = `${a.action || ""} ${a.user || ""} ${a.ip_address || ""} ${a.details || ""}`;
+      return hay.toLowerCase().includes(q);
+    });
+  }
+
+  content.innerHTML = `
+    <div class="panel-toolbar">
+      <select class="input filter-sel" id="audit-filter-action" aria-label="Filter by action">
+        <option value="">All actions</option>
+        ${Array.from(actions).sort().map(a => `<option value="${escapeHtml(a)}" ${auditState.filterAction === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+      </select>
+      <select class="input filter-sel" id="audit-filter-admin" aria-label="Filter by admin">
+        <option value="">All admins</option>
+        ${Array.from(admins).sort().map(a => `<option value="${escapeHtml(a)}" ${auditState.filterAdmin === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+      </select>
+      <input class="input filter-input" id="audit-filter-from" type="date" value="${escapeHtml(auditState.filterFrom)}" aria-label="From date">
+      <input class="input filter-input" id="audit-filter-to" type="date" value="${escapeHtml(auditState.filterTo)}" aria-label="To date">
+      <input class="input search-input" id="audit-search" placeholder="Search details" value="${escapeHtml(auditState.search)}" aria-label="Search">
+    </div>
+    <div class="card">
+      <div class="card-title">Admin Activity Timeline</div>
+      <div class="card-desc">${filtered.length} entries - polling every 10s</div>
+      <div class="timeline" id="audit-timeline"></div>
+      ${auditState.hasMore ? `<div class="load-more-row" id="audit-load-more">Showing ${auditState.rows.length} - increase limit for more history</div>` : `<div class="load-more-row">End of log</div>`}
+    </div>
+  `;
+  const tl = content.querySelector("#audit-timeline");
+  if (filtered.length === 0) {
+    tl.innerHTML = `<div class="empty small"><div class="msg">${auditState.rows.length === 0 ? "No audit entries" : "No matches"}</div></div>`;
+  } else {
+    tl.innerHTML = filtered.map(a => {
+      const sev = auditSeverityClass(a.action);
+      const ts = a.timestamp ? new Date(a.timestamp).toLocaleString() : "--";
+      const user = a.user || "unknown";
+      const src = sourceBadge(a.user);
+      const details = a.details ? (typeof a.details === "string" ? a.details : JSON.stringify(a.details, null, 2)) : "";
+      const target = a.ip_address || "";
+      return `<div class="tl-entry ${sev}">
+        <div class="tl-head">
+          <span class="tl-action">${escapeHtml(a.action || "--")}</span>
+          <span class="tl-time">${escapeHtml(ts)}</span>
+          ${src}
+        </div>
+        <div class="tl-meta">
+          <span class="tl-user">by ${escapeHtml(user)}</span>
+          ${target ? `<span class="tl-target">IP: ${escapeHtml(target)}</span>` : ""}
+        </div>
+        ${details ? `<div class="tl-details">${escapeHtml(details)}</div>` : ""}
+      </div>`;
+    }).join("");
+  }
+  const actionSel = content.querySelector("#audit-filter-action");
+  const adminSel = content.querySelector("#audit-filter-admin");
+  const fromEl = content.querySelector("#audit-filter-from");
+  const toEl = content.querySelector("#audit-filter-to");
+  const searchEl = content.querySelector("#audit-search");
+  if (actionSel) actionSel.addEventListener("change", () => { auditState.filterAction = actionSel.value; renderAuditContent(content); });
+  if (adminSel) adminSel.addEventListener("change", () => { auditState.filterAdmin = adminSel.value; renderAuditContent(content); });
+  if (fromEl) fromEl.addEventListener("change", () => { auditState.filterFrom = fromEl.value; renderAuditContent(content); });
+  if (toEl) toEl.addEventListener("change", () => { auditState.filterTo = toEl.value; renderAuditContent(content); });
+  if (searchEl) searchEl.addEventListener("input", () => { auditState.search = searchEl.value.trim(); renderAuditContent(content); });
 }
 
 window.route = route;
