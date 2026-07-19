@@ -840,6 +840,7 @@ function eaColor(n) {
 
 function getEaConnectionCount(c) {
   if (!c) return 0;
+  if (c.total_unique_licenses != null) return c.total_unique_licenses;
   const httpCount = c.http_polling_connections || 0;
   const ws = (c.websocket && c.websocket.websocket_connections) || 0;
   return httpCount + ws;
@@ -944,8 +945,8 @@ function updateHealthCard() {
   const cpu = h.system ? h.system.cpu_percent : null;
   const mem = h.system ? h.system.memory_percent : null;
   let diskPct = null;
-  if (h.system && h.system.disk_percent != null) diskPct = h.system.disk_percent;
-  else if (h.disk && h.disk.used_percent != null) diskPct = h.disk.used_percent;
+  if (st && st.disk && st.disk.percent != null) diskPct = st.disk.percent;
+  else if (st && st.disk && st.disk.used_percent != null) diskPct = st.disk.used_percent;
   let eaCount = 0;
   if (c) {
     eaCount = getEaConnectionCount(c);
@@ -1272,6 +1273,9 @@ function route(id) {
         content.classList.remove("panel-fade-in");
         void content.offsetWidth;
         content.classList.add("panel-fade-in");
+        const tok = (content._cardsTok = (content._cardsTok || 0) + 1);
+        content.classList.add("cards-enter");
+        setTimeout(() => { if (content._cardsTok === tok) content.classList.remove("cards-enter"); }, 900);
       }
       const pageTitle = document.getElementById("page-title");
       if (pageTitle) {
@@ -2603,6 +2607,7 @@ async function pollTradeAnalytics() {
 function drawBarChart(daily, dash) {
   const wrap = document.getElementById("bar-chart-wrap");
   if (!wrap) return;
+  if (!daily || !Array.isArray(daily)) return;
   const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
   const now = new Date();
   const todayTrades = (dash && dash.recent_activity) || [];
@@ -2668,7 +2673,7 @@ function drawLineChart(daily) {
     if (i % 2 !== 0) return "";
     const d = p.date ? new Date(p.date) : null;
     const lbl = d ? `${d.getMonth() + 1}/${d.getDate()}` : "";
-    return `<text x="${coords[i].x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${lbl}</text>`;
+    return `<text x="${coords[i].x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10" class="axis-label">${lbl}</text>`;
   }).join("");
   const gid = "lineGrad-" + Math.random().toString(36).slice(2, 8);
   const avgRate = points.reduce((s, p) => s + p.rate, 0) / points.length;
@@ -2842,7 +2847,7 @@ async function pollPipeline() {
   if (queueWrap) {
     const qd = queueDepth || 0;
     const qPct = Math.min(100, (qd / 50) * 100);
-    updateGauge(queueWrap, qPct, "Queue", { size: 120, diskMode: false });
+    updateGauge(queueWrap, qPct, "Queue", { diskMode: false });
     const valEl = queueWrap.querySelector(".gauge-value");
     if (valEl) valEl.textContent = formatNumber(qd);
   }
@@ -2894,8 +2899,8 @@ function drawHistogram() {
     const y = H - pad - bh;
     const color = i === 0 ? PALETTE.green : i === 1 ? PALETTE.green : i === 2 ? PALETTE.amber : i === 3 ? PALETTE.amber : PALETTE.red;
     return `<rect x="${x + 8}" y="${y}" width="${Math.max(0, barW - 16)}" height="${Math.max(2, bh)}" fill="${color}" rx="3"><title>${b.label}: ${formatNumber(b.count)}</title></rect>
-      <text x="${x + barW / 2}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${b.label}</text>
-      <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">${formatNumber(b.count)}</text>`;
+      <text x="${x + barW / 2}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10" class="axis-label hist-label">${b.label}</text>
+      <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10" class="value-label">${formatNumber(b.count)}</text>`;
   }).join("");
   const descParts = buckets.map(b => `${b.label}: ${b.count}`).join(", ");
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="Delivery latency histogram: ${totalSamples} samples, peak bucket ${peak.label} with ${peak.count} entries">
@@ -3115,10 +3120,31 @@ function updateSystemHealthUI() {
   setTile("sh-mem-val", memVal != null ? formatPct(memVal) : "--", loadColor(memVal));
   setTile("sh-threads", h.process ? formatNumber(h.process.threads) : "--", "info");
   setTile("sh-proc-mem", h.process ? formatBytes(h.process.memory_mb * 1048576) : "--", "info");
+  setTile("sh-proc-cpu", h.process ? formatPct(h.process.cpu_percent) : "--", loadColor(h.process ? h.process.cpu_percent : null));
+  setTile("sh-mem-avail", h.system && h.system.memory_available_gb != null ? (h.system.memory_available_gb.toFixed(1) + " GB") : "--", "info");
+  setTile("sh-uptime", h.uptime_seconds != null ? formatDuration(h.uptime_seconds) : "--", "ok");
+  const procCpu = h.process ? h.process.cpu_percent : null;
+  if (procCpu != null) {
+    sysHealthState.procCpu = sysHealthState.procCpu || [];
+    sysHealthState.procCpu.push(procCpu);
+    if (sysHealthState.procCpu.length > 60) sysHealthState.procCpu.shift();
+  }
   const diskWrap = document.getElementById("sh-disk-gauge");
   if (diskWrap && s) {
     const diskPct = s.disk ? s.disk.percent : null;
     updateGauge(diskWrap, diskPct, "Disk", { size: 140, diskMode: true });
+  }
+  if (s && s.disk) {
+    setTile("sh-disk-free", s.disk.free_mb != null ? formatBytes(s.disk.free_mb * 1048576) : (s.disk.free_gb != null ? (s.disk.free_gb.toFixed(2) + " GB") : "--"), "info");
+    setTile("sh-disk-path", s.disk.path ? escapeHtml(s.disk.path) : "--", "info");
+  } else {
+    setTile("sh-disk-free", "--", "info");
+    setTile("sh-disk-path", "--", "info");
+  }
+  if (h.services) {
+    const dbOk = h.services.database === "healthy";
+    const redisOk = h.services.redis === "healthy" || h.services.redis === "not_configured";
+    setTile("sh-services", "DB:" + (h.services.database || "?") + " Redis:" + (h.services.redis || "?"), dbOk && redisOk ? "ok" : "warn");
   }
   const netEl = document.getElementById("sh-net");
   if (netEl && s && s.network) {
@@ -3211,6 +3237,16 @@ function renderSystemHealth(content) {
       </div>
       <div class="stat" id="sh-threads"><div class="value skeleton line" aria-live="polite"></div><div class="label">Thread Count</div></div>
       <div class="stat" id="sh-proc-mem"><div class="value skeleton line" aria-live="polite"></div><div class="label">Process Memory</div></div>
+    </div>
+    <div class="grid grid-3">
+      <div class="stat" id="sh-proc-cpu"><div class="value skeleton line" aria-live="polite"></div><div class="label">Process CPU</div></div>
+      <div class="stat" id="sh-mem-avail"><div class="value skeleton line" aria-live="polite"></div><div class="label">System RAM Free</div></div>
+      <div class="stat" id="sh-disk-free"><div class="value skeleton line" aria-live="polite"></div><div class="label">Disk Free</div></div>
+    </div>
+    <div class="grid grid-3">
+      <div class="stat" id="sh-uptime"><div class="value skeleton line" aria-live="polite"></div><div class="label">Uptime</div></div>
+      <div class="stat" id="sh-disk-path"><div class="value skeleton line" aria-live="polite"></div><div class="label">Disk Path</div></div>
+      <div class="stat" id="sh-services"><div class="value skeleton line" aria-live="polite"></div><div class="label">Services</div></div>
     </div>
   `;
   startPoll(pollSystemHealth, 5000);
@@ -4557,10 +4593,6 @@ function renderSecurityContent(content) {
   const blockedCount = blocked.length;
   const failed24h = d.blocked_requests || 0;
   const rateHits = d.rate_limited_requests || 0;
-  const headersActive = hdr.headers ? Object.keys(hdr.headers).length : 0;
-  const totalHeaders = 5;
-  const headersCls = headersActive >= totalHeaders ? "ok" : headersActive > 0 ? "warn" : "bad";
-
   const headers = hdr.headers || {};
   const headerList = [
     { name: "X-Frame-Options", val: headers.x_frame_options },
@@ -4569,6 +4601,9 @@ function renderSecurityContent(content) {
     { name: "Referrer-Policy", val: headers.referrer_policy },
     { name: "Strict-Transport-Security", val: headers.hsts },
   ];
+  const totalHeaders = headerList.length;
+  const headersActive = headerList.filter(h => !!h.val).length;
+  const headersCls = headersActive >= totalHeaders ? "ok" : headersActive > 0 ? "warn" : "bad";
 
   const tvAllow = hdr.tradingview_ip_allowlist;
   const tvIps = hdr.tradingview_ips || [];
