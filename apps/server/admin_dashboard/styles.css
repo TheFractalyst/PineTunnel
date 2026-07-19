@@ -100,6 +100,9 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 * { -webkit-tap-highlight-color: transparent; }
 
+svg { max-width: 100%; height: auto; }
+.chart-svg, .donut-svg, .gauge-svg, .sparkline-svg { max-width: none; }
+
 html, body { height: 100%; overscroll-behavior: none; }
 body {
   background: var(--bg);
@@ -689,6 +692,15 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   color: var(--muted);
 }
 .empty .icon { font-size: 32px; margin-bottom: var(--sp-3); opacity: 0.4; }
+.empty .icon svg { width: 32px; height: 32px; flex-shrink: 0; }
+.empty.error-state .icon svg { width: 40px; height: 40px; }
+.empty.empty-illustrated .icon svg { width: 40px; height: 40px; }
+.error-panel .icon svg { width: 48px; height: 48px; }
+.card-title svg { width: 16px; height: 16px; flex-shrink: 0; }
+.stat-hint svg, .hint svg { width: 12px; height: 12px; flex-shrink: 0; }
+.badge svg { width: 12px; height: 12px; flex-shrink: 0; }
+.conn-banner svg { width: 16px; height: 16px; flex-shrink: 0; }
+.gauge-label svg, .gauge svg { max-width: 100%; height: auto; }
 .empty .msg { font-size: var(--text-md); }
 .empty .sub { font-size: var(--text-sm); color: var(--muted-2); margin-top: var(--sp-1); }
 
