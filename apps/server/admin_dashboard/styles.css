@@ -355,15 +355,26 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 @media (max-width: 1024px) {
   .stat { padding: 18px; }
   .stat .value { font-size: var(--text-xl); }
+  .card-title { font-size: var(--text-md); }
 }
 @media (max-width: 768px) {
   .stat { padding: var(--sp-4); }
   .stat .value { font-size: 18px; }
+  .card-title { font-size: var(--text-md); }
 }
 @media (max-width: 480px) {
   .stat { padding: 14px; }
+  .stat .value { font-size: 18px; }
+}
+@media (max-width: 375px) {
+  .stat .value { font-size: 18px; }
+  .card-title { font-size: var(--text-base); }
+}
+@media (max-width: 320px) {
+  .stat { padding: 12px; }
   .stat .value { font-size: 16px; }
   .stat .label { font-size: 10px; }
+  .card-title { font-size: var(--text-base); }
 }
 
 .welcome {
@@ -730,6 +741,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   text-align: center;
   line-height: 1.4;
 }
+.prog-label .lab-short { display: none; }
 
 .setup-card { padding: var(--sp-4) var(--sp-5); }
 .setup-instructions { margin-bottom: 18px; }
@@ -946,10 +958,16 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   .row { flex-wrap: wrap; gap: 4px 8px; }
   .row .k { min-width: 0; word-break: break-all; overflow-wrap: anywhere; }
   .row .v { min-width: 0; word-break: break-all; overflow-wrap: anywhere; text-align: right; flex: 1; }
-  .prog-header { flex-direction: column; align-items: flex-start; gap: 10px; }
-  .prog-dots { width: 100%; justify-content: center; }
+  .prog-bar { height: 3px; }
+  .prog-label { font-size: var(--text-xs); }
+  .setup-form { max-width: 100%; }
+  .cf-options { flex-direction: column; }
+  .cf-skip-row { justify-content: stretch; }
+  .cf-skip-link { display: block; width: 100%; text-align: center; padding: 10px; }
   .webhook-display { flex-direction: column; }
   .webhook-display .btn { width: 100%; }
+  .webhook-url { font-size: var(--text-md); }
+  .step3-actions { flex-direction: column; }
   .panel-toolbar { flex-direction: column; align-items: stretch; gap: var(--sp-2); }
   .panel-toolbar .search-input { max-width: 100%; }
   .panel-toolbar .badge { justify-content: center; }
@@ -991,6 +1009,10 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   .header .title { font-size: var(--text-md); }
   .badge { font-size: var(--text-xs); padding: var(--sp-1) var(--sp-2); }
   .btn.full-sm { width: 100%; }
+  .prog-label .lab-full { display: none; }
+  .prog-label .lab-short { display: inline; font-weight: var(--fw-bold); }
+  .instr-list li { font-size: var(--text-sm); }
+  .instr-text { font-size: var(--text-sm); }
 }
 
 @media (max-width: 413px) {
@@ -1005,8 +1027,6 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   .card { padding: var(--sp-3); }
   .card-title { font-size: var(--text-base); }
   .card-desc { font-size: var(--text-xs); }
-  .prog-dot { width: 24px; height: 24px; font-size: var(--text-xs); }
-  .prog-line { width: 16px; }
   .webhook-url { font-size: var(--text-base); word-break: break-all; }
   .header .title { font-size: var(--text-base); }
   .step { padding: var(--sp-3); gap: 10px; }
@@ -1728,7 +1748,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   background: var(--bg);
   margin-bottom: var(--sp-3);
 }
-.stacked-bar .seg { height: 100%; }
+.stacked-bar .seg { height: 100%; width: var(--seg-w, 0); }
 .stacked-bar .seg.ok { background: var(--green); }
 .stacked-bar .seg.info { background: var(--blue); }
 .stacked-bar .seg.warn { background: var(--amber); }

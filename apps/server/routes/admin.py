@@ -466,19 +466,78 @@ async def get_statistics(days: int = 30, _username: str = Depends(_require_auth)
 
     stats, daily, symbols, alerts = await asyncio.gather(
         asyncio.to_thread(db_manager.get_trade_statistics, days),
-        asyncio.to_thread(db_manager.get_daily_summary),
+        asyncio.to_thread(_get_daily_summary_7d, db_manager),
         asyncio.to_thread(db_manager.get_symbol_performance),
         asyncio.to_thread(db_manager.get_alert_statistics, 24),
     )
     rate_stats = rate_limiter.get_statistics()
 
+    overall = dict(stats) if stats else {}
+    overall.setdefault("success_rate", _get_success_rate_7d(db_manager))
+
     return {
-        "overall": stats,
+        "overall": overall,
         "daily": daily,
         "symbol_performance": symbols,
         "alerts": alerts,
         "rate_limiting": rate_stats,
     }
+
+
+def _get_success_rate_7d(db_manager) -> float:
+    """Compute 7-day success rate (successful executions / total) from trades table."""
+    try:
+        week_ago_expr = db_manager.sql_interval_days(7)
+        rows = db_manager.execute_query(
+            f"SELECT "
+            f"COUNT(*) AS total, "
+            f"COUNT(CASE WHEN status = 'success' THEN 1 END) AS ok "
+            f"FROM trades WHERE timestamp >= {week_ago_expr}"
+        )
+        row = rows[0] if rows else {}
+        total = row.get("total", 0) or 0
+        ok = row.get("ok", 0) or 0
+        return round((ok / total * 100), 1) if total > 0 else 0.0
+    except Exception as e:
+        logger.debug("Failed to compute 7d success rate: %s", e)
+        return 0.0
+
+
+def _get_daily_summary_7d(db_manager) -> list:
+    """Return a 7-element array of daily summaries (oldest first) from the trades table."""
+    from datetime import datetime as _dt, timedelta as _td
+
+    out = []
+    today = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        for i in range(6, -1, -1):
+            day = today - _td(days=i)
+            day_str = day.strftime("%Y-%m-%d")
+            next_day = (day + _td(days=1)).strftime("%Y-%m-%d")
+            rows = db_manager.execute_query(
+                "SELECT "
+                "COUNT(*) AS total_trades, "
+                "COUNT(CASE WHEN status = 'success' THEN 1 END) AS successful_trades, "
+                "COUNT(CASE WHEN profit > 0 THEN 1 END) AS winning_trades "
+                "FROM trades WHERE timestamp >= :start AND timestamp < :end",
+                {"start": day_str + " 00:00:00", "end": next_day + " 00:00:00"},
+            )
+            r = rows[0] if rows else {}
+            total = r.get("total_trades", 0) or 0
+            ok = r.get("successful_trades", 0) or 0
+            wins = r.get("winning_trades", 0) or 0
+            out.append({
+                "date": day_str,
+                "total_trades": total,
+                "successful_trades": ok,
+                "winning_trades": wins,
+                "success_rate": round((ok / total * 100), 1) if total > 0 else 0.0,
+                "win_rate": round((wins / total * 100), 1) if total > 0 else 0.0,
+            })
+    except Exception as e:
+        logger.debug("Failed to compute 7d daily summary: %s", e)
+        return []
+    return out
 
 
 @router.get("/api/risk-status")

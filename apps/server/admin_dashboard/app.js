@@ -3322,7 +3322,7 @@ function updateSystemHealthUI() {
       </div>`;
     poolEl.querySelectorAll(".seg[data-w]").forEach(seg => {
       const w = parseFloat(seg.dataset.w);
-      if (!isNaN(w)) seg.style.width = w + "%";
+      if (!isNaN(w)) seg.style.setProperty("--seg-w", w + "%");
     });
   }
   const redisEl = document.getElementById("sh-redis");
@@ -3649,7 +3649,7 @@ function renderWebhookTable() {
   if (prevBtn) prevBtn.disabled = webhookLogState.page === 0;
   if (nextBtn) nextBtn.disabled = end >= rows.length;
   const loadMore = document.querySelector("[data-action='wl-load-more']");
-  if (loadMore) loadMore.style.display = end >= rows.length ? "none" : "";
+  if (loadMore) loadMore.classList.toggle("hidden", end >= rows.length);
 }
 
 function toggleWebhookRow(tr) {
@@ -4097,7 +4097,7 @@ function updateMetricsUI() {
     </div>`;
   }).join("");
   grid.querySelectorAll(".metric-value[data-color]").forEach(el => {
-    el.style.color = el.dataset.color;
+    el.style.setProperty("--metric-color", el.dataset.color);
   });
 }
 

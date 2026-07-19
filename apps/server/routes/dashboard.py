@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import secrets
@@ -18,6 +19,8 @@ from pydantic import BaseModel
 from apps.lib.env_manager import generate_secret, read_env, redact_value, write_env_updates
 from apps.server.auth.session import require_auth
 from apps.server.auth.telegram_auth import TelegramAuthStore
+
+logger = logging.getLogger(__name__)
 
 _TELEGRAM_RELOAD_KEYS = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_IDS"}
 
@@ -550,7 +553,6 @@ def create_dashboard_router(
 
     @router.delete("/rate-limits/{ip}")
     async def dashboard_unblock_ip(ip: str, _=Depends(require_auth), _c=Depends(require_csrf)):
-        import asyncio
         from apps.server.middleware.main import failed_attempt_tracker
         from apps.server.state import rate_limiter
 
