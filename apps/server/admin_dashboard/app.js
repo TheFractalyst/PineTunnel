@@ -906,6 +906,7 @@ function setTile(id, value, cls) {
   tile.className = `stat ${cls}`;
   const v = tile.querySelector(".value");
   if (v) {
+    v.classList.remove("skeleton", "line", "short");
     v.textContent = value;
     v.setAttribute("aria-live", "polite");
     v.classList.toggle("empty", value === "--" || value === "N/A" || value == null);
