@@ -59,126 +59,6 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
-const REQ_MARK = ' <span class="req" aria-hidden="true">*</span>';
-
-function validateTgToken(v) {
-  if (!v) return "Bot token is required";
-  if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(v)) return "Token must match 123456:ABC... (30+ chars after colon)";
-  return "";
-}
-
-function validateTgUid(v) {
-  if (!v) return "Telegram user ID is required";
-  if (!/^\d+$/.test(v)) return "User ID must be numeric";
-  if (parseInt(v, 10) <= 0) return "User ID must be positive";
-  return "";
-}
-
-function validateSymbol(v) {
-  if (!v) return "Symbol is required";
-  if (!/^[A-Za-z0-9]{1,12}$/.test(v)) return "Symbol: alphanumeric, max 12 chars";
-  return "";
-}
-
-function validateLots(v) {
-  if (v === "" || v == null) return "Lots is required";
-  const n = parseFloat(v);
-  if (isNaN(n)) return "Lots must be a number";
-  if (n <= 0) return "Lots must be greater than 0";
-  if (n > 1000) return "Lots must be 1000 or less";
-  return "";
-}
-
-function validateDays(v) {
-  if (v === "" || v == null) return "Days is required";
-  const n = parseInt(v, 10);
-  if (isNaN(n) || String(n) !== String(v).trim()) return "Days must be an integer";
-  if (n < 1 || n > 365) return "Days must be between 1 and 365";
-  return "";
-}
-
-function validateUrl(v) {
-  if (!v) return "URL is required";
-  if (!/^https:\/\//i.test(v)) return "URL must start with https://";
-  return "";
-}
-
-function validateEmail(v) {
-  if (!v) return "Email is required";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "Enter a valid email address";
-  return "";
-}
-
-function validateLoginCode(v) {
-  if (!v) return "Login code is required";
-  return "";
-}
-
-function showFieldError(inputId, msg) {
-  const input = document.getElementById(inputId);
-  if (!input) return;
-  let err = input.parentNode.querySelector(".field-error");
-  if (msg) {
-    if (!err) {
-      err = document.createElement("div");
-      err.className = "field-error";
-      err.setAttribute("role", "alert");
-      input.parentNode.insertBefore(err, input.nextSibling);
-    }
-    err.innerHTML = ICONS.alert + escapeHtml(msg);
-    input.setAttribute("aria-invalid", "true");
-  } else {
-    if (err) err.remove();
-    input.removeAttribute("aria-invalid");
-  }
-}
-
-function clearFieldError(inputId) {
-  showFieldError(inputId, "");
-}
-
-function clearFormErrors(scope) {
-  scope.querySelectorAll(".field-error").forEach(e => e.remove());
-  scope.querySelectorAll("[aria-invalid]").forEach(e => e.removeAttribute("aria-invalid"));
-}
-
-function setBtnLoading(btn, label) {
-  if (!btn) return;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spin"></span>' + escapeHtml(label);
-}
-
-function setBtnSuccess(btn, label, icon) {
-  if (!btn) return;
-  btn.disabled = true;
-  btn.innerHTML = (icon || ICONS.check) + escapeHtml(label);
-  btn.classList.add("btn-success");
-}
-
-function setBtnError(btn, label, icon) {
-  if (!btn) return;
-  btn.disabled = false;
-  btn.innerHTML = (icon || ICONS.x) + escapeHtml(label);
-  btn.classList.add("btn-error");
-  btn.classList.remove("btn-success");
-}
-
-function setBtnIdle(btn, html) {
-  if (!btn) return;
-  btn.disabled = false;
-  btn.innerHTML = html;
-  btn.classList.remove("btn-success", "btn-error");
-}
-
-let setupDirty = false;
-window.addEventListener("beforeunload", e => {
-  if (setupDirty) {
-    e.preventDefault();
-    e.returnValue = "You have unsaved changes in the Setup Wizard.";
-    return e.returnValue;
-  }
-});
-
 const VALIDATORS = {
   tgToken: (v) => {
     if (!v) return "Bot token is required";
@@ -399,7 +279,7 @@ const PALETTE = {
   green: "#4cb782",
   red: "#eb5757",
   amber: "#f2994a",
-  blue: "#7a86dc",
+  blue: "#5e6ad2",
   text: "#e4e4e7",
   muted: "#9a9aa3",
   muted2: "#82828b",
@@ -407,6 +287,7 @@ const PALETTE = {
   grid: "rgba(255,255,255,0.08)",
   gridFaint: "rgba(255,255,255,0.05)",
   gridTrack: "rgba(255,255,255,0.06)",
+  amberBg: "rgba(242,153,74,0.1)",
 };
 
 function emptyState(icon, msg, actionLabel, actionName) {
@@ -1218,7 +1099,11 @@ function route(id) {
     else if (id === "licenses") renderLicenses(content, actions);
     else if (id === "security") renderSecurity(content, actions);
     else if (id === "audit") renderAuditTimeline(content, actions);
-    if (content) content.focus({ preventScroll: true });
+    const pageTitle = document.getElementById("page-title");
+    if (pageTitle) {
+      pageTitle.setAttribute("tabindex", "-1");
+      pageTitle.focus({ preventScroll: true });
+    }
   }, 100);
 }
 
@@ -1245,16 +1130,18 @@ function startOverviewPoll() {
       if (content && actions) renderOverview(content, actions);
     }
   }, POLL_INTERVAL);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function renderOverview(content, actions) {
+  const tk = renderToken;
   content.innerHTML = `
     <div class="card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
     <div class="card"><div class="card-title"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
     <div class="card"><div class="card-title"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
   `;
   const { data, error, stale } = await useFetch(`${API}/setup-status`);
+  if (staleRender(tk)) return;
   if (error && !data) {
     content.innerHTML = errorPanel("overview", error, "retry-overview");
     bindRetryToScope("retry-overview", () => route("overview"));
@@ -1275,7 +1162,7 @@ async function renderOverview(content, actions) {
 
   const webhookBlock = allDone ? `
     <div class="card webhook-card">
-      <div class="card-title">Your TradingView Webhook URL</div>
+      <h2 class="card-title">Your TradingView Webhook URL</h2>
       <div class="card-desc">Paste this into TradingView: Alert -> Notifications -> Webhook URL</div>
       <div class="webhook-display">
         <code class="webhook-url">${escapeHtml(data.server_url || "http://127.0.0.1:8000")}</code>
@@ -1287,11 +1174,12 @@ async function renderOverview(content, actions) {
         <div id="ov-test-form" class="webhook-test-form hidden">
           <div class="grid grid-3">
             <div class="field">
-              <label for="ov-test-symbol">Symbol</label>
-              <input class="input" id="ov-test-symbol" value="EURUSD" placeholder="EURUSD" maxlength="12">
+              <label for="ov-test-symbol">Symbol <span class="req">*</span></label>
+              <input class="input" id="ov-test-symbol" value="EURUSD" placeholder="EURUSD" maxlength="12" inputmode="text" spellcheck="false" autocomplete="off">
+              <div class="hint">Uppercase letters, e.g. EURUSD</div>
             </div>
             <div class="field">
-              <label for="ov-test-action">Action</label>
+              <label for="ov-test-action">Action <span class="req">*</span></label>
               <select class="input" id="ov-test-action">
                 <option value="buy">buy</option>
                 <option value="sell">sell</option>
@@ -1301,18 +1189,19 @@ async function renderOverview(content, actions) {
               </select>
             </div>
             <div class="field">
-              <label for="ov-test-lots">Lots</label>
-              <input class="input" id="ov-test-lots" value="0.10" placeholder="0.10" type="number" min="0.01" step="0.01">
+              <label for="ov-test-lots">Lots <span class="req">*</span></label>
+              <input class="input" id="ov-test-lots" value="0.10" placeholder="0.10" type="number" min="0.01" step="0.01" inputmode="decimal">
+              <div class="hint">Positive number, e.g. 0.10</div>
             </div>
           </div>
           <div class="grid grid-2">
             <div class="field">
-              <label for="ov-test-sl">Stop Loss (optional)</label>
-              <input class="input" id="ov-test-sl" placeholder="e.g. 1.0850" type="number" min="0" step="0.00001">
+              <label for="ov-test-sl">Stop Loss <span class="opt">(optional)</span></label>
+              <input class="input" id="ov-test-sl" placeholder="e.g. 1.0850" type="number" min="0" step="0.00001" inputmode="decimal">
             </div>
             <div class="field">
-              <label for="ov-test-tp">Take Profit (optional)</label>
-              <input class="input" id="ov-test-tp" placeholder="e.g. 1.0950" type="number" min="0" step="0.00001">
+              <label for="ov-test-tp">Take Profit <span class="opt">(optional)</span></label>
+              <input class="input" id="ov-test-tp" placeholder="e.g. 1.0950" type="number" min="0" step="0.00001" inputmode="decimal">
             </div>
           </div>
           <div class="webhook-test-actions">
@@ -1711,7 +1600,7 @@ async function sendTestWebhook() {
       } else {
         toast("Webhook returned error", "bad");
       }
-      result.innerHTML = `<div class="inline-${ok ? "ok" : "error"}">${ok ? ICONS.check : ICONS.x}HTTP ${data.response_code} - ${ok ? "Signal delivered" : "Webhook returned error"} (${serverLat}ms)</div>
+      result.innerHTML = `<div class="inline-${ok ? "ok" : "error"}">${ok ? ICONS.check : ICONS.x}HTTP ${escapeHtml(String(data.response_code))} - ${ok ? "Signal delivered" : "Webhook returned error"} (${escapeHtml(String(serverLat))}ms)</div>
         <div class="hint mt">Response: ${escapeHtml(data.response_body || "")}</div>
         ${ok ? `<div class="mt"><button class="btn outline sm" data-action="view-feed">${ICONS.feed}View in Signal Feed</button></div>` : ""}`;
       const vfBtn = result.querySelector("[data-action='view-feed']");
@@ -1778,7 +1667,7 @@ async function pollEaVerify() {
       }
     } else {
       const remaining = Math.max(0, Math.round((EA_VERIFY_DURATION - (Date.now() - eaVerifyStart)) / 1000));
-      statusEl.innerHTML = `<div class="inline-error" style="background:var(--amber-bg,rgba(242,153,74,0.1));color:${PALETTE.amber}">${ICONS.alert}<span>No EA connected - waiting (${remaining}s left)</span></div>
+      statusEl.innerHTML = `<div class="inline-error" style="background:var(--amber-bg,${PALETTE.amberBg});color:${PALETTE.amber}">${ICONS.alert}<span>No EA connected - waiting (${remaining}s left)</span></div>
         <div class="hint mt">1. Download the EA from the Setup panel<br>2. Attach it to a chart in MetaTrader<br>3. Enter your license key and server URL in the EA inputs<br>4. Enable DLL imports in MetaTrader settings</div>`;
     }
   } catch (e) {
@@ -1914,7 +1803,7 @@ function renderSignalFeed(content, actions) {
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
   pollSignalFeed();
   const t = setInterval(pollSignalFeed, 5000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function pollSignalFeed() {
@@ -2030,7 +1919,7 @@ function renderEaMap(content, actions) {
   content.innerHTML = `
     <div id="ea-stale-banner"></div>
     <div class="card">
-      <div class="card-title">EA Connections</div>
+      <h2 class="card-title">EA Connections</h2>
       <div class="card-desc">Connected EAs with live telemetry - polling every 10s</div>
       <div class="ea-grid" id="ea-grid">
         ${skeletonEaCards(3)}
@@ -2041,7 +1930,7 @@ function renderEaMap(content, actions) {
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
   pollEaMap();
   const t = setInterval(pollEaMap, 10000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function pollEaMap() {
@@ -2167,15 +2056,16 @@ async function loadEaTrades(key, container) {
     const data = await r.json();
     const trades = data.deals || data.trades || [];
     if (trades.length === 0) {
-      container.innerHTML = `<div class="card"><div class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</div>${emptyState("No trade history", "Closed positions from this EA will appear here", "analytics")}</div>`;
+      container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>${emptyState("No trade history", "Closed positions from this EA will appear here", "analytics")}</div>`;
       return;
     }
     container.innerHTML = `<div class="card">
       <h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>
       <div class="card-desc">${trades.length} recent trades</div>
       <div class="feed-scroll">
-        <table class="feed-table">
-          <thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Lots</th><th>Ticket</th><th>Profit</th></tr></thead>
+        <table class="feed-table" aria-label="Recent trades for ${escapeHtml(maskKey(key))}">
+          <caption class="sr-only">Recent trades</caption>
+          <thead><tr><th scope="col">Time</th><th scope="col">Symbol</th><th scope="col">Type</th><th scope="col">Lots</th><th scope="col">Ticket</th><th scope="col">Profit</th></tr></thead>
           <tbody>
             ${trades.map(t => {
               const ts = t.close_time || t.open_time || t.timestamp;
@@ -2202,7 +2092,7 @@ function renderTradeAnalytics(content, actions) {
   content.innerHTML = `
     <div id="analytics-stale-banner"></div>
     <div class="card">
-      <div class="card-title">Trade Analytics</div>
+      <h2 class="card-title">Trade Analytics</h2>
       <div class="card-desc">Performance overview - polling every 15s</div>
       <div class="grid grid-4" id="analytics-stats">
         <div class="stat" id="stat-total"><div class="value skeleton line"></div><div class="label">Total Trades</div></div>
@@ -2212,17 +2102,17 @@ function renderTradeAnalytics(content, actions) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Trades by Hour (last 24h)</div>
+      <h2 class="card-title">Trades by Hour (last 24h)</h2>
       <div class="card-desc">Hourly trade volume distribution</div>
       <div id="bar-chart-wrap" class="chart-wrap"></div>
     </div>
     <div class="card">
-      <div class="card-title">7-Day Success Rate Trend</div>
+      <h2 class="card-title">7-Day Success Rate Trend</h2>
       <div class="card-desc">Daily success rate over the past week</div>
       <div id="line-chart-wrap" class="chart-wrap"></div>
     </div>
     <div class="card">
-      <div class="card-title">Top Symbols by Volume</div>
+      <h2 class="card-title">Top Symbols by Volume</h2>
       <div class="card-desc">Top 5 symbols by trade volume</div>
       <div id="donut-chart-wrap" class="chart-wrap"></div>
     </div>
@@ -2230,7 +2120,7 @@ function renderTradeAnalytics(content, actions) {
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 15s</span>`;
   pollTradeAnalytics();
   const t = setInterval(pollTradeAnalytics, 15000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function pollTradeAnalytics() {
@@ -2420,7 +2310,7 @@ function renderPipelineMonitor(content, actions) {
   content.innerHTML = `
     <div id="pipeline-stale-banner"></div>
     <div class="card">
-      <div class="card-title">Signal Pipeline</div>
+      <h2 class="card-title">Signal Pipeline</h2>
       <div class="card-desc">5-stage signal processing pipeline - polling every 5s</div>
       <div class="pipeline-viz" id="pipeline-viz">
         ${stages.map((s, i) => {
@@ -2431,18 +2321,18 @@ function renderPipelineMonitor(content, actions) {
     </div>
     <div class="grid grid-2">
       <div class="card">
-        <div class="card-title">Queue Depth</div>
+        <h2 class="card-title">Queue Depth</h2>
         <div class="card-desc">Current pending signals in queue</div>
         <div id="queue-gauge-wrap" class="gauge-center"></div>
       </div>
       <div class="card">
-        <div class="card-title">Throughput</div>
+        <h2 class="card-title">Throughput</h2>
         <div class="card-desc">Signals per minute (rolling 60s)</div>
         <div class="stat big-stat" id="throughput-stat"><div class="value">--</div><div class="label">signals/min</div></div>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Delivery Latency Histogram</div>
+      <h2 class="card-title">Delivery Latency Histogram</h2>
       <div class="card-desc">Latency distribution across buckets</div>
       <div id="histogram-wrap" class="chart-wrap"></div>
     </div>
@@ -2456,7 +2346,7 @@ function renderPipelineMonitor(content, actions) {
   pipelineState.lastDelivered = 0;
   pollPipeline();
   const t = setInterval(pollPipeline, 5000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 let pipelineState = {
@@ -2513,7 +2403,7 @@ async function pollPipeline() {
   if (queueWrap) {
     const qd = queueDepth || 0;
     const qPct = Math.min(100, (qd / 50) * 100);
-    queueWrap.innerHTML = svgGauge(qPct, "Queue", { size: 120, diskMode: false });
+    updateGauge(queueWrap, qPct, "Queue", { size: 120, diskMode: false });
     const valEl = queueWrap.querySelector(".gauge-value");
     if (valEl) valEl.textContent = String(qd);
   }
@@ -2733,7 +2623,7 @@ function updateSystemHealthUI() {
   const diskWrap = document.getElementById("sh-disk-gauge");
   if (diskWrap && s) {
     const diskPct = s.disk ? s.disk.percent : null;
-    diskWrap.innerHTML = svgGauge(diskPct, "Disk", { size: 140, diskMode: true });
+    updateGauge(diskWrap, diskPct, "Disk", { size: 140, diskMode: true });
   }
   const netEl = document.getElementById("sh-net");
   if (netEl && s && s.network) {
@@ -2825,7 +2715,7 @@ function renderSystemHealth(content) {
   `;
   pollSystemHealth();
   const t = setInterval(pollSystemHealth, 5000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 let webhookLogState = { rows: [], page: 0, stats: null, loaded: false, sort: { key: "timestamp", dir: "desc" }, filter: { range: "today", status: "", symbol: "", license: "" } };
@@ -2905,7 +2795,7 @@ function renderWebhookLogs(content) {
       <div class="stat" id="wl-stat-rate"><div class="value skeleton line"></div><div class="label">Success Rate</div></div>
     </div>
     <div class="card">
-      <div class="card-title">Webhook Logs</div>
+      <h2 class="card-title">Webhook Logs</h2>
       <div class="card-desc">Recent webhook requests - polling every 10s</div>
       <div class="filter-bar">
         <select class="input filter-sel" id="wl-range">
@@ -2982,7 +2872,7 @@ function renderWebhookLogs(content) {
   applySort(content.querySelector("#wl-table"), webhookLogState.sort);
   pollWebhookLogs();
   const t = setInterval(pollWebhookLogs, 10000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 function filteredWebhookRows() {
@@ -3051,7 +2941,13 @@ function renderWebhookTable() {
       const payload = tr.dataset.payload || "(no payload)";
       const exp = document.createElement("tr");
       exp.className = "row-expanded";
-      exp.innerHTML = `<td colspan="8"><pre class="payload-pre">${payload}</pre></td>`;
+      const td = document.createElement("td");
+      td.colSpan = 8;
+      const pre = document.createElement("pre");
+      pre.className = "payload-pre";
+      pre.textContent = payload;
+      td.appendChild(pre);
+      exp.appendChild(td);
       tr.after(exp);
       tr.classList.add("expanded");
     });
@@ -3135,7 +3031,7 @@ function renderRiskMonitor(content) {
   `;
   pollRiskMonitor();
   const t = setInterval(pollRiskMonitor, 10000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 let errorLogState = { entries: [], paused: false, filter: "ALL", search: "" };
@@ -3190,7 +3086,10 @@ function renderErrorLogList() {
       const full = el.dataset.full || "";
       const exp = document.createElement("div");
       exp.className = "log-expanded";
-      exp.innerHTML = `<pre class="payload-pre">${full}</pre>`;
+      const pre = document.createElement("pre");
+      pre.className = "payload-pre";
+      pre.textContent = full;
+      exp.appendChild(pre);
       el.after(exp);
       el.classList.add("expanded");
     });
@@ -3242,7 +3141,7 @@ function renderErrorLogs(content) {
   }
   pollErrorLogs();
   const t = setInterval(pollErrorLogs, 10000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function pollDatabaseManager() {
@@ -3306,7 +3205,7 @@ function renderDatabaseManager(content) {
   if (btn) btn.addEventListener("click", e => { e.preventDefault(); runDbCleanup(); });
   pollDatabaseManager();
   const t = setInterval(pollDatabaseManager, 30000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function runDbCleanup() {
@@ -3413,7 +3312,7 @@ function renderMetrics(content) {
   `;
   pollMetrics();
   const t = setInterval(pollMetrics, 10000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function pollDiagnostics() {
@@ -3473,7 +3372,7 @@ function renderDiagnostics(content) {
   `;
   pollDiagnostics();
   const t = setInterval(pollDiagnostics, 15000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function pollBotStatus() {
@@ -3570,7 +3469,7 @@ function renderBotStatus(content) {
   if (testBtn) testBtn.addEventListener("click", e => { e.preventDefault(); sendBotTestMessage(); });
   pollBotStatus();
   const t = setInterval(pollBotStatus, 15000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function sendBotTestMessage() {
@@ -3673,7 +3572,7 @@ async function renderLicenses(content, actions) {
   renderLicenseRows();
   pollLicenses();
   const t = setInterval(pollLicenses, 15000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 function filteredLicenseRows() {
@@ -3851,7 +3750,7 @@ function openConfirmModal(title, msg, onConfirm, confirmLabel = "Delete") {
   overlay.className = "modal-overlay";
   overlay.innerHTML = `<div class="modal-card">
     <h2 class="modal-title">${escapeHtml(title)}</h2>
-    <div class="modal-desc">${msg}</div>
+    <div class="modal-desc">${escapeHtml(msg)}</div>
     <div class="modal-footer">
       <button class="btn outline" data-action="confirm-cancel">Cancel</button>
       <button class="btn red" data-action="confirm-ok">${ICONS.trash}${escapeHtml(confirmLabel)}</button>
@@ -3883,7 +3782,7 @@ async function renderSecurity(content, actions) {
   renderSecurityContent(content);
   pollSecurity();
   const t = setInterval(pollSecurity, 10000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 function pollSecurity() {
@@ -4006,7 +3905,7 @@ async function renderAuditTimeline(content, actions) {
   renderAuditContent(content);
   pollAudit();
   const t = setInterval(pollAudit, 10000);
-  pollTimers.push(t);
+  addPoll(t);
 }
 
 async function loadAuditPage(isInitial) {
