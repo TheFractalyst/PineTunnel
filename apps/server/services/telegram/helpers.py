@@ -10,7 +10,8 @@ from dateutil import parser as date_parser
 
 from telegram.helpers import escape_markdown as _escape_md
 
-CONNECTED_CLIENT_THRESHOLD_SEC = 10
+from apps.server.ws.connection import HTTP_POLLING_TIMEOUT as CONNECTED_CLIENT_THRESHOLD_SEC
+
 LICENSE_PAGE_SIZE = 8
 SIGNAL_PAGE_SIZE = 5
 

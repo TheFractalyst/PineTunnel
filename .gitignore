@@ -16,6 +16,8 @@ env/
 .env
 # Database
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 # Logs

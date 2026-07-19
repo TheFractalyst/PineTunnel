@@ -13,6 +13,35 @@ from apps.lib.env_manager import read_env, redact_value, write_env_updates
 from apps.server.auth.session import require_auth
 from apps.server.auth.telegram_auth import TelegramAuthStore
 
+_TELEGRAM_RELOAD_KEYS = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_IDS"}
+
+
+def _parse_admin_ids(raw: str) -> list[int]:
+    return [int(s.strip()) for s in raw.split(",") if s.strip().isdigit()]
+
+
+async def _reload_telegram_bot(env_path: Path) -> bool:
+    from apps.server import state
+
+    bot = getattr(state, "telegram_bot", None)
+    env = read_env(env_path)
+    new_token = env.get("TELEGRAM_BOT_TOKEN", "").strip()
+    new_admin_ids = _parse_admin_ids(env.get("TELEGRAM_ADMIN_IDS", ""))
+    if not new_token or not new_admin_ids:
+        return False
+    os.environ["TELEGRAM_BOT_TOKEN"] = new_token
+    os.environ["TELEGRAM_ADMIN_IDS"] = env.get("TELEGRAM_ADMIN_IDS", "")
+    if bot is None:
+        return False
+    try:
+        bot.token = new_token
+        bot.admin_ids = new_admin_ids
+        await bot.stop()
+        await bot.start()
+        return bot._started
+    except Exception:
+        return False
+
 
 class LoginRequest(BaseModel):
     code: str
