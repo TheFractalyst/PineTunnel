@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PineTunnel Dashboard</title>
+<link rel="stylesheet" href="/admin/styles.css">
+</head>
+<body>
+<div id="app">
+  <div id="login-screen" class="screen">
+    <div class="login-card">
+      <h1>PineTunnel</h1>
+      <p>Send <code>/login</code> to your Telegram bot, then paste the code:</p>
+      <input type="text" id="login-code" placeholder="Login code" autocomplete="off">
+      <input type="number" id="login-user-id" placeholder="Your Telegram user ID">
+      <button id="login-btn">Log In</button>
+      <div id="login-error" class="error"></div>
+    </div>
+  </div>
+  <div id="main-screen" class="screen hidden">
+    <nav id="sidebar">
+      <div class="logo">PineTunnel</div>
+      <a href="#overview" class="nav-link active">Overview</a>
+      <a href="#settings" class="nav-link">Settings</a>
+      <a href="#setup" class="nav-link">Setup Wizard</a>
+      <div class="nav-spacer"></div>
+      <button id="logout-btn">Log Out</button>
+    </nav>
+    <main id="content"></main>
+  </div>
+</div>
+<script src="/admin/app.js"></script>
+</body>
+</html>
