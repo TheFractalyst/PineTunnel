@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,12 @@ class ConfigUpdateRequest(BaseModel):
 class ValidateTelegramRequest(BaseModel):
     token: str
     user_id: str
+
+
+class TestWebhookRequest(BaseModel):
+    symbol: str = "EURUSD"
+    action: str = "buy"
+    lots: str = "0.10"
 
 
 def create_dashboard_router(
@@ -92,5 +99,56 @@ def create_dashboard_router(
             "bot_username": f"@{bot_username}" if bot_username else "",
             "bot_name": bot_name,
         }
+
+    @router.get("/webhook-url")
+    async def webhook_url():
+        env = read_env(env_path)
+        base = env.get("SERVER_BASE_URL", "")
+        ready = base.startswith("https://")
+        url = base + "/" if base and not base.endswith("/") else base
+        message = None if ready else "Complete Cloudflare setup first"
+        return {"url": url, "ready": ready, "message": message}
+
+    @router.post("/test-webhook")
+    async def test_webhook(req: TestWebhookRequest, _=Depends(require_auth)):
+        env = read_env(env_path)
+        webhook_secret = env.get("WEBHOOK_SECRET", "")
+        port = env.get("PORT", "8000")
+
+        from apps.server.state import client_manager
+
+        license_key = "TEST"
+        license_secret = webhook_secret
+        if client_manager and client_manager.clients:
+            first_key = next(iter(client_manager.clients))
+            client = client_manager.clients[first_key]
+            license_key = first_key
+            license_secret = client.get("secret_key", webhook_secret)
+
+        action = req.action.strip() or "buy"
+        symbol = (req.symbol or "EURUSD").strip().upper()
+        lots = (req.lots or "0.10").strip()
+        payload = f"{license_key},{action},{symbol},lots={lots},secret={license_secret}"
+
+        target = f"http://127.0.0.1:{port}/"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    target,
+                    content=payload.encode("utf-8"),
+                    headers={"Content-Type": "text/plain"},
+                )
+                body = resp.text
+            return {
+                "status": "sent",
+                "response_code": resp.status_code,
+                "response_body": body[:500],
+            }
+        except httpx.ConnectError:
+            return {"status": "error", "message": f"Cannot connect to local webhook at {target}"}
+        except httpx.TimeoutException:
+            return {"status": "error", "message": "Local webhook timed out"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     return router

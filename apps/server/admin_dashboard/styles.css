@@ -48,12 +48,14 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   padding: 16px 12px;
 }
 .sidebar .brand {
-  padding: 8px 12px 20px;
+  padding: 10px 12px 20px;
+  color: var(--text);
 }
 .sidebar .brand-logo {
-  width: 100%;
+  width: 160px;
   height: auto;
   display: block;
+  color: var(--text);
 }
 .nav-item {
   display: flex;

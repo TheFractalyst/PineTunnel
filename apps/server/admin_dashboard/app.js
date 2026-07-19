@@ -257,6 +257,32 @@ async function renderOverview(content, actions) {
         <button class="btn primary lg" id="copy-webhook" onclick="copyWebhook()">${ICONS.copy}Copy URL</button>
       </div>
       <div class="hint mt">Only ports 80 and 443 are accepted by TradingView. Use the Cloudflare tunnel URL.</div>
+      <div class="webhook-test-section mt">
+        <button class="btn outline" id="ov-test-toggle" onclick="toggleTestForm()">${ICONS.external}Test Webhook</button>
+        <div id="ov-test-form" class="webhook-test-form" style="display:none">
+          <div class="grid grid-3">
+            <div class="field">
+              <label>Symbol</label>
+              <input class="input" id="ov-test-symbol" value="EURUSD" placeholder="EURUSD">
+            </div>
+            <div class="field">
+              <label>Action</label>
+              <select class="input" id="ov-test-action">
+                <option value="buy">buy</option>
+                <option value="sell">sell</option>
+                <option value="close">close</option>
+                <option value="close_all">close_all</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Lots</label>
+              <input class="input" id="ov-test-lots" value="0.10" placeholder="0.10">
+            </div>
+          </div>
+          <button class="btn primary" id="ov-test-send" onclick="sendTestWebhook()">${ICONS.check}Send Test Signal</button>
+          <div id="ov-test-result"></div>
+        </div>
+      </div>
     </div>` : "";
 
   const setupBlock = !allDone ? `
@@ -428,21 +454,31 @@ function renderStep2(body, data) {
   `;
 }
 
-function renderStep3(body, data) {
+async function renderStep3(body, data) {
   const cf = data?.cloudflare_configured;
-  const url = cf ? (data?.server_url || "") : "";
   body.innerHTML = `
     <div class="card">
       <div class="card-title">TradingView Webhook</div>
       <div class="card-desc">Copy this URL and paste it into TradingView</div>
       <div class="webhook-display">
-        <code class="webhook-url">${url || "Complete Step 2 first"}</code>
+        <code class="webhook-url" id="step3-webhook-url">${cf ? "Loading..." : "Complete Step 2 first"}</code>
         <button class="btn primary lg" id="copy-step3" onclick="copyWebhookStep3()" ${cf ? "" : "disabled"}>${ICONS.copy}Copy URL</button>
       </div>
       <div class="hint mt">In TradingView: Chart -> Alert -> Notifications -> Webhook URL</div>
     </div>
     <button class="btn outline" onclick="route('overview')">${ICONS.check}Back to Overview</button>
   `;
+  if (!cf) return;
+  try {
+    const r = await fetch(`${API}/webhook-url`, { headers: { "Content-Type": "application/json" } });
+    if (!r.ok) throw new Error(r.status);
+    const info = await r.json();
+    const urlEl = document.getElementById("step3-webhook-url");
+    if (urlEl) urlEl.textContent = info.url || "";
+  } catch (e) {
+    const urlEl = document.getElementById("step3-webhook-url");
+    if (urlEl) urlEl.textContent = data?.server_url || "";
+  }
 }
 
 async function advanceStep(step) {
@@ -518,6 +554,43 @@ function copyWebhookStep3() {
   });
 }
 
+function toggleTestForm() {
+  const form = document.getElementById("ov-test-form");
+  if (!form) return;
+  form.style.display = form.style.display === "none" ? "block" : "none";
+}
+
+async function sendTestWebhook() {
+  const btn = document.getElementById("ov-test-send");
+  const result = document.getElementById("ov-test-result");
+  if (!btn || !result) return;
+  const symbol = document.getElementById("ov-test-symbol").value.trim() || "EURUSD";
+  const action = document.getElementById("ov-test-action").value;
+  const lots = document.getElementById("ov-test-lots").value.trim() || "0.10";
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.innerHTML = `<span class="spin"></span>Sending...`;
+  result.innerHTML = "";
+  try {
+    const r = await fetch(`${API}/test-webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, action, lots }),
+    });
+    const data = await r.json();
+    if (data.status === "sent") {
+      const ok = data.response_code >= 200 && data.response_code < 300;
+      result.innerHTML = `<div class="inline-${ok ? "ok" : "error"}">${ok ? ICONS.check : ICONS.x}HTTP ${data.response_code} - ${ok ? "Signal delivered" : "Webhook returned error"}</div><div class="hint mt">Response: ${data.response_body || ""}</div>`;
+    } else {
+      result.innerHTML = `<div class="inline-error">${ICONS.x}${data.message || "Test failed"}</div>`;
+    }
+  } catch (e) {
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${e.message}</div>`;
+  }
+  btn.disabled = false;
+  btn.innerHTML = original;
+}
+
 async function renderSettings(content) {
   content.innerHTML = skeletonCard(1);
   const { data, error } = await useFetch(`${API}/config`);
@@ -541,6 +614,8 @@ window.copy = copy;
 window.copyWebhook = copyWebhook;
 window.copyWebhookStep3 = copyWebhookStep3;
 window.advanceStep = advanceStep;
+window.toggleTestForm = toggleTestForm;
+window.sendTestWebhook = sendTestWebhook;
 
 (async function init() {
   await useFetch(`${API}/setup-status`);
