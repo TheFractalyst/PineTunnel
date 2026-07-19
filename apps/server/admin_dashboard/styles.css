@@ -355,10 +355,10 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .input:focus { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-glow), 0 0 12px var(--blue-glow); }
 .input:disabled { color: var(--dim); background: var(--hover-faint); cursor: not-allowed; }
 .input::placeholder { color: var(--dim); }
-.input.input-error { border-color: var(--red); box-shadow: 0 0 0 2px rgba(235,87,87,0.15); }
-.input.input-error:focus { border-color: var(--red); box-shadow: 0 0 0 2px rgba(235,87,87,0.2), 0 0 12px rgba(235,87,87,0.15); }
+.input.input-error { border-color: var(--red); box-shadow: 0 0 0 2px var(--red-glow); }
+.input.input-error:focus { border-color: var(--red); box-shadow: 0 0 0 2px var(--red-glow), 0 0 12px var(--red-glow); }
 .input.input-ok { border-color: var(--green); }
-.input.input-ok:focus { box-shadow: 0 0 0 2px rgba(76,183,130,0.15); }
+.input.input-ok:focus { box-shadow: 0 0 0 2px var(--green-glow); }
 .field-error {
   margin-top: 4px;
   font-size: 11px;

@@ -47,6 +47,11 @@ function addPoll(timer) {
   s.pollTimer = timer;
   pollTimers.push(timer);
 }
+function startPoll(fn, ms) {
+  if (!visibilityPolling) return;
+  fn();
+  addPoll(setInterval(fn, ms));
+}
 function staleRender(token) { return token !== renderToken; }
 
 const CSRF_HEADER = "X-Admin-CSRF";
@@ -536,12 +541,12 @@ function showLogin(sessionExpired) {
       <div class="login-form" id="login-form">
         <div class="field">
           <label for="login-code">Login code <span class="req">*</span></label>
-          <input class="input" id="login-code" placeholder="Login code" autocomplete="one-time-code" spellcheck="false" inputmode="numeric">
+          <input class="input" id="login-code" placeholder="Login code" autocomplete="one-time-code" spellcheck="false" inputmode="numeric" aria-required="true">
           <div class="hint">One-time code from your Telegram bot</div>
         </div>
         <div class="field">
           <label for="login-uid">Telegram user ID <span class="req">*</span></label>
-          <input class="input" id="login-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric">
+          <input class="input" id="login-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric" aria-required="true">
           <div class="hint">Message @userinfobot to get your ID</div>
         </div>
         <button class="btn primary lg" id="login-submit" data-action="do-login">Login</button>
@@ -733,6 +738,24 @@ function svgGauge(value, label, opts = {}) {
   </div>`;
 }
 
+function updateGauge(cell, value, label, opts = {}) {
+  if (!cell) return;
+  const arc = cell.querySelector(".gauge-arc");
+  if (!arc) { cell.innerHTML = svgGauge(value, label, opts); return; }
+  const size = Math.max(2, opts.size || 120);
+  const stroke = Math.max(1, opts.stroke || 8);
+  const r = Math.max(1, (size - stroke) / 2);
+  const circumference = 2 * Math.PI * r;
+  const pct = (value != null && !isNaN(value)) ? Math.max(0, Math.min(100, value)) : null;
+  const color = loadColorHex(pct, !!opts.diskMode);
+  const display = (pct != null) ? `${pct.toFixed(0)}%` : "--";
+  const dash = (pct != null) ? (pct / 100) * circumference : 0;
+  arc.setAttribute("stroke-dasharray", `${dash} ${circumference}`);
+  arc.setAttribute("stroke", color);
+  const valEl = cell.querySelector(".gauge-value");
+  if (valEl) { valEl.textContent = display; valEl.setAttribute("fill", color); }
+}
+
 function eaColor(n) {
   return n > 0 ? "ok" : "warn";
 }
@@ -751,11 +774,16 @@ async function fetchHealth() {
     const health = await hRes.json();
     let connections = null;
     let connError = null;
+    let stats = null;
     try {
       const cRes = await http("/api/connections");
       connections = await cRes.json();
     } catch (ce) { connError = friendlyMsg(ce); }
-    healthState = { data: { health, connections }, error: null, stale: false, connError };
+    try {
+      const sRes = await http("/api/system/stats");
+      stats = await sRes.json();
+    } catch (se) {}
+    healthState = { data: { health, connections, stats }, error: null, stale: false, connError };
     hideConnectionLost();
   } catch (e) {
     healthState = { data: prev, error: friendlyMsg(e), stale: true };
@@ -785,7 +813,10 @@ function setTile(id, value, cls) {
   if (!tile) return;
   tile.className = `stat ${cls}`;
   const v = tile.querySelector(".value");
-  if (v) v.textContent = value;
+  if (v) {
+    v.textContent = value;
+    v.setAttribute("aria-live", "polite");
+  }
 }
 
 function updateHealthCard() {
@@ -832,6 +863,7 @@ function updateHealthCard() {
   }
   const h = data.health;
   const c = data.connections;
+  const st = data.stats;
   const uptimeSec = h.uptime_seconds;
   const cpu = h.system ? h.system.cpu_percent : null;
   const mem = h.system ? h.system.memory_percent : null;
@@ -840,24 +872,23 @@ function updateHealthCard() {
   else if (h.disk && h.disk.used_percent != null) diskPct = h.disk.used_percent;
   let eaCount = 0;
   if (c) {
-    const httpCount = c.http_polling_connections || 0;
-    const ws = (c.websocket && c.websocket.websocket_connections) || 0;
-    eaCount = httpCount + ws;
+    eaCount = getEaConnectionCount(c);
   } else if (h.connections) {
     eaCount = h.connections.total_clients || 0;
   }
   const cpuCell = document.getElementById("gauge-cpu");
   const memCell = document.getElementById("gauge-mem");
   const diskCell = document.getElementById("gauge-disk");
-  if (cpuCell) cpuCell.innerHTML = svgGauge(cpu, "CPU");
-  if (memCell) memCell.innerHTML = svgGauge(mem, "RAM");
-  if (diskCell) diskCell.innerHTML = svgGauge(diskPct, "Disk", { diskMode: true });
+  updateGauge(cpuCell, cpu, "CPU");
+  updateGauge(memCell, mem, "RAM");
+  updateGauge(diskCell, diskPct, "Disk", { diskMode: true });
   setTile("tile-uptime", formatUptime(uptimeSec), "ok");
   setTile("tile-ea", String(eaCount), eaColor(eaCount));
-  const sig = h.signals_today != null ? h.signals_today : (data.signalsToday != null ? data.signalsToday : null);
-  const fill = h.fill_rate != null ? h.fill_rate : (data.fillRate != null ? data.fillRate : null);
+  const trades = (st && st.trades) || {};
+  const sig = trades.today != null ? trades.today : null;
+  const fill = trades.success_rate_7d != null ? trades.success_rate_7d : null;
   setTile("tile-signals", sig != null ? String(sig) : "--", sig != null && sig > 0 ? "ok" : "info");
-  setTile("tile-fill", fill != null ? `${fill.toFixed(1)}%` : "--", fill != null ? (fill >= 80 ? "ok" : fill >= 50 ? "warn" : "bad") : "info");
+  setTile("tile-fill", fill != null ? `${Number(fill).toFixed(1)}%` : "--", fill != null ? (fill >= 80 ? "ok" : fill >= 50 ? "warn" : "bad") : "info");
 }
 
 function clearPolls() {
@@ -906,7 +937,7 @@ function dismissToast(t) {
   if (!t || !t.parentNode) return;
   if (t._timer) { clearTimeout(t._timer); t._timer = null; }
   t.classList.add("toast-out");
-  setTimeout(() => { if (t.parentNode) t.remove(); }, 200);
+  setTimeout(() => { if (t.parentNode) t.remove(); }, 250);
   const i = toastStack.indexOf(t);
   if (i >= 0) toastStack.splice(i, 1);
 }
@@ -1006,9 +1037,6 @@ function render() {
       </div>
     </div>
   `;
-  domCache.content = document.getElementById("content");
-  domCache.actions = document.getElementById("header-actions");
-  domCache.sidebar = document.querySelector(".sidebar");
   const skipLink = document.querySelector(".skip-link");
   if (skipLink) {
     skipLink.addEventListener("click", e => {
@@ -1158,8 +1186,8 @@ function startOverviewPoll() {
     const sig = JSON.stringify(data);
     if (sig !== lastSetupStatus) {
       lastSetupStatus = sig;
-      const content = domCache.content || document.getElementById("content");
-      const actions = domCache.actions || document.getElementById("header-actions");
+      const content = document.getElementById("content");
+      const actions = document.getElementById("header-actions");
       if (content && actions) renderOverview(content, actions);
     }
   }, POLL_INTERVAL);
@@ -1208,12 +1236,12 @@ async function renderOverview(content, actions) {
           <div class="grid grid-3">
             <div class="field">
               <label for="ov-test-symbol">Symbol <span class="req">*</span></label>
-              <input class="input" id="ov-test-symbol" value="EURUSD" placeholder="EURUSD" maxlength="12" inputmode="text" spellcheck="false" autocomplete="off">
+              <input class="input" id="ov-test-symbol" value="EURUSD" placeholder="EURUSD" maxlength="12" inputmode="text" spellcheck="false" autocomplete="off" aria-required="true">
               <div class="hint">Uppercase letters, e.g. EURUSD</div>
             </div>
             <div class="field">
               <label for="ov-test-action">Action <span class="req">*</span></label>
-              <select class="input" id="ov-test-action">
+              <select class="input" id="ov-test-action" aria-required="true">
                 <option value="buy">buy</option>
                 <option value="sell">sell</option>
                 <option value="close_long">close_long</option>
@@ -1223,7 +1251,7 @@ async function renderOverview(content, actions) {
             </div>
             <div class="field">
               <label for="ov-test-lots">Lots <span class="req">*</span></label>
-              <input class="input" id="ov-test-lots" value="0.10" placeholder="0.10" type="number" min="0.01" step="0.01" inputmode="decimal">
+              <input class="input" id="ov-test-lots" value="0.10" placeholder="0.10" type="number" min="0.01" step="0.01" inputmode="decimal" aria-required="true">
               <div class="hint">Positive number, e.g. 0.10</div>
             </div>
           </div>
@@ -1289,12 +1317,12 @@ async function renderOverview(content, actions) {
       <div class="card-desc">Current configuration state</div>
       <div class="grid grid-3">
         <div class="stat ${tg ? "ok" : "info"} clickable" data-action="goto-setup" tabindex="0" role="button" aria-label="Telegram Bot status - go to Setup">
-          <div class="value">${tg ? "Connected" : "Pending"}</div>
+          <div class="value">${tg ? "Configured" : "Pending"}</div>
           <div class="label">Telegram Bot</div>
           ${tgHint}
         </div>
         <div class="stat ${cf ? "ok" : "info"} clickable" data-action="goto-setup" tabindex="0" role="button" aria-label="Cloudflare Tunnel status - go to Setup">
-          <div class="value">${cf ? "Active" : "Pending"}</div>
+          <div class="value">${cf ? "Connected" : "Pending"}</div>
           <div class="label">Cloudflare Tunnel</div>
           ${cfHint}
         </div>
@@ -1313,10 +1341,10 @@ async function renderOverview(content, actions) {
         <div class="gauge-cell" id="gauge-mem">${svgGauge(null, "RAM")}</div>
         <div class="gauge-cell" id="gauge-disk">${svgGauge(null, "Disk", { diskMode: true })}</div>
         <div class="stat-pair" role="group" aria-label="Server health stats">
-          <div class="stat" id="tile-uptime" role="group" aria-label="Uptime"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Uptime</div></div>
-          <div class="stat" id="tile-ea" role="group" aria-label="EA Connections"><div class="value skeleton line" aria-hidden="true"></div><div class="label">EA Connections</div></div>
-          <div class="stat" id="tile-signals" role="group" aria-label="Signals Today"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Signals Today</div></div>
-          <div class="stat" id="tile-fill" role="group" aria-label="Fill Rate"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Fill Rate</div></div>
+          <div class="stat" id="tile-uptime" role="group" aria-label="Uptime"><div class="value skeleton line" aria-live="polite"></div><div class="label">Uptime</div></div>
+          <div class="stat" id="tile-ea" role="group" aria-label="EA Connections"><div class="value skeleton line" aria-live="polite"></div><div class="label">EA Connections</div></div>
+          <div class="stat" id="tile-signals" role="group" aria-label="Signals Today"><div class="value skeleton line" aria-live="polite"></div><div class="label">Signals Today</div></div>
+          <div class="stat" id="tile-fill" role="group" aria-label="Fill Rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Fill Rate</div></div>
         </div>
       </div>
     </div>
@@ -1419,12 +1447,12 @@ function renderStep1(body, data) {
         </div>
         <div class="field">
           <label for="tg-token">2. Paste bot token <span class="req">*</span></label>
-          <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" spellcheck="false">
+          <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" spellcheck="false" aria-required="true">
           <div class="hint">From @BotFather - format: 123456789:AA... (35 char secret)</div>
         </div>
         <div class="field">
           <label for="tg-uid">3. Get your Telegram user ID <span class="req">*</span></label>
-          <input class="input" id="tg-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric">
+          <input class="input" id="tg-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric" aria-required="true">
           <div class="hint">Message @userinfobot on Telegram, it replies with your numeric ID</div>
         </div>
         <button class="btn primary full-sm" id="save-tg" data-action="save-telegram">${ICONS.check}Save and Verify</button>
@@ -1551,6 +1579,8 @@ async function saveTelegram() {
     });
     setBtnSuccess(btn, "Saved", 2000);
     setupDirty = false;
+    invalidateCache(`${API}/setup-status`);
+    invalidateCache(`${API}/config`);
     if (r.needs_restart) {
       result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Restart the server for the bot to pick up the new token.</div>`;
       toast("Telegram saved - restart required", "ok");
@@ -1709,9 +1739,7 @@ async function pollEaVerify() {
   try {
     const r = await http("/api/connections");
     const c = await r.json();
-    const ws = (c && c.websocket && c.websocket.websocket_connections) || 0;
-    const httpCount = (c && c.http_polling_connections) || 0;
-    const total = ws + httpCount;
+    const total = getEaConnectionCount(c);
     const elapsed = Math.round((Date.now() - eaVerifyStart) / 1000);
     if (total > 0) {
       statusEl.innerHTML = `<div class="inline-ok">${ICONS.check}<span>EA Connected (${total} connection${total > 1 ? "s" : ""})</span></div>`;
@@ -1722,7 +1750,7 @@ async function pollEaVerify() {
       }
     } else {
       const remaining = Math.max(0, Math.round((EA_VERIFY_DURATION - (Date.now() - eaVerifyStart)) / 1000));
-      statusEl.innerHTML = `<div class="inline-error" style="background:var(--amber-bg,${PALETTE.amberBg});color:${PALETTE.amber}">${ICONS.alert}<span>No EA connected - waiting (${remaining}s left)</span></div>
+      statusEl.innerHTML = `<div class="inline-error">${ICONS.alert}<span>No EA connected - waiting (${remaining}s left)</span></div>
         <div class="hint mt">1. Download the EA from the Setup panel<br>2. Attach it to a chart in MetaTrader<br>3. Enter your license key and server URL in the EA inputs<br>4. Enable DLL imports in MetaTrader settings</div>`;
     }
   } catch (e) {
@@ -1768,6 +1796,10 @@ function relativeTime(iso) {
   if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
   return `${Math.round(diff / 86400)}d ago`;
+}
+
+function formatTime(iso) {
+  return relativeTime(iso);
 }
 
 function statusClassFor(status) {
@@ -1861,9 +1893,7 @@ function renderSignalFeed(content, actions) {
     if (pauseBtn.innerHTML.indexOf("Resume") === -1) signalFeedState.paused = false;
   });
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
-  pollSignalFeed();
-  const t = setInterval(pollSignalFeed, 5000);
-  addPoll(t);
+  startPoll(pollSignalFeed, 5000);
 }
 
 async function pollSignalFeed() {
@@ -1953,7 +1983,7 @@ function feedRowHtml(r) {
   const lat = r.execution_time_ms != null ? `${r.execution_time_ms}ms` : "--";
   const actionCls = action === "buy" ? "act-buy" : action === "sell" ? "act-sell" : action === "close" || action === "close_all" ? "act-close" : "act-other";
   return `<tr class="row-${cls}">
-    <td class="td-time">${escapeHtml(ts)}</td>
+    <td class="td-time" scope="row">${escapeHtml(ts)}</td>
     <td class="td-key">${escapeHtml(lk)}</td>
     <td><span class="action-tag ${actionCls}">${escapeHtml(action)}</span></td>
     <td>${escapeHtml(sym)}</td>
@@ -1985,7 +2015,11 @@ function renderFeedRows() {
   if (countEl) countEl.textContent = `${filtered.length} signals`;
   if (filtered.length === 0) {
     const isEmpty = rows.length === 0;
-    body.innerHTML = `<tr><td colspan="7" class="feed-empty">${isEmpty ? emptyState("No signals yet", "Incoming TradingView webhooks will appear here in real time", "signals") : "No signals match filters"}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="feed-empty">${isEmpty ? emptyState(ICONS.signals, "No signals received yet. Send a test webhook to see it here.", "Send test webhook", "empty-test-webhook") : "No signals match filters"}</td></tr>`;
+    if (isEmpty) {
+      const btn = body.querySelector("[data-action='empty-test-webhook']");
+      if (btn) btn.addEventListener("click", e => { e.preventDefault(); route("overview"); });
+    }
     return;
   }
   body.innerHTML = filtered.map(feedRowHtml).join("");
@@ -2010,9 +2044,7 @@ function renderEaMap(content, actions) {
     <div id="ea-expand-container"></div>
   `;
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
-  pollEaMap();
-  const t = setInterval(pollEaMap, 10000);
-  addPoll(t);
+  startPoll(pollEaMap, 10000);
 }
 
 async function pollEaMap() {
@@ -2077,7 +2109,9 @@ async function pollEaMap() {
     seen.add(maskedKey);
   }
   if (merged.length === 0) {
-    grid.innerHTML = emptyState("No EA connections", "Connected MT4/MT5 EAs will appear here once they link up via WebSocket or HTTP polling", "map");
+    grid.innerHTML = emptyState(ICONS.map, "No EAs connected. Install the EA on your MetaTrader to get started.", "Go to Setup", "empty-goto-setup");
+    const btn = grid.querySelector("[data-action='empty-goto-setup']");
+    if (btn) btn.addEventListener("click", e => { e.preventDefault(); route("setup"); });
     return;
   }
   const now = Date.now();
@@ -2138,7 +2172,7 @@ async function loadEaTrades(key, container) {
     const data = await r.json();
     const trades = data.deals || data.trades || [];
     if (trades.length === 0) {
-      container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>${emptyState("No trade history", "Closed positions from this EA will appear here", "analytics")}</div>`;
+      container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}</div>`;
       return;
     }
     container.innerHTML = `<div class="card">
@@ -2177,10 +2211,10 @@ function renderTradeAnalytics(content, actions) {
       <h2 class="card-title">Trade Analytics</h2>
       <div class="card-desc">Performance overview - polling every 15s</div>
       <div class="grid grid-4" id="analytics-stats" role="group" aria-label="Trade analytics stats">
-        <div class="stat" id="stat-total" role="group" aria-label="Total Trades"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Total Trades</div></div>
-        <div class="stat" id="stat-winrate" role="group" aria-label="Win Rate"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Win Rate</div></div>
-        <div class="stat" id="stat-latency" role="group" aria-label="Avg Latency"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Avg Latency</div></div>
-        <div class="stat" id="stat-pf" role="group" aria-label="Profit Factor"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Profit Factor</div></div>
+        <div class="stat" id="stat-total" role="group" aria-label="Total Trades"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total Trades</div></div>
+        <div class="stat" id="stat-winrate" role="group" aria-label="Win Rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Win Rate</div></div>
+        <div class="stat" id="stat-latency" role="group" aria-label="Avg Latency"><div class="value skeleton line" aria-live="polite"></div><div class="label">Avg Latency</div></div>
+        <div class="stat" id="stat-pf" role="group" aria-label="Profit Factor"><div class="value skeleton line" aria-live="polite"></div><div class="label">Profit Factor</div></div>
       </div>
     </div>
     <div class="card">
@@ -2227,7 +2261,7 @@ async function pollTradeAnalytics() {
     }
   }
   if (!stats && !dash) {
-    const content = domCache.content || document.getElementById("content");
+    const content = document.getElementById("content");
     if (content) {
       content.innerHTML = errorPanel("analytics", "Statistics and dashboard endpoints unavailable", "retry-analytics");
       bindRetryToScope("retry-analytics", () => route("analytics"));
@@ -2243,7 +2277,7 @@ async function pollTradeAnalytics() {
   const avgLatency = alerts.avg_response_time != null ? alerts.avg_response_time : (overall.avg_latency != null ? overall.avg_latency : null);
   const profitFactor = overall.profit_factor != null ? overall.profit_factor : null;
   if (totalTrades === 0 && !stats) {
-    const content = domCache.content || document.getElementById("content");
+    const content = document.getElementById("content");
     if (content) {
       const staleHtml = (statsRes.stale || dashRes.stale) ? staleBanner() : "";
       content.innerHTML = `${staleHtml}${emptyState("No trade data yet", "Executed signals from connected EAs will populate analytics here", "analytics")}`;
@@ -2419,7 +2453,7 @@ function renderPipelineMonitor(content, actions) {
       <div class="card">
         <h2 class="card-title">Throughput</h2>
         <div class="card-desc">Signals per minute (rolling 60s)</div>
-        <div class="stat big-stat" id="throughput-stat"><div class="value">--</div><div class="label">signals/min</div></div>
+        <div class="stat big-stat" id="throughput-stat" role="group" aria-label="Throughput"><div class="value" aria-live="polite">--</div><div class="label">signals/min</div></div>
       </div>
     </div>
     <div class="card">
@@ -2428,8 +2462,8 @@ function renderPipelineMonitor(content, actions) {
       <div id="histogram-wrap" class="chart-wrap"></div>
     </div>
     <div class="grid grid-2">
-      <div class="stat" id="stat-dupes"><div class="value skeleton line"></div><div class="label">Duplicate Rejections</div></div>
-      <div class="stat" id="stat-retries"><div class="value skeleton line"></div><div class="label">Retries</div></div>
+      <div class="stat" id="stat-dupes"><div class="value skeleton line" aria-live="polite"></div><div class="label">Duplicate Rejections</div></div>
+      <div class="stat" id="stat-retries"><div class="value skeleton line" aria-live="polite"></div><div class="label">Retries</div></div>
     </div>
   `;
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
@@ -2467,7 +2501,7 @@ async function pollPipeline() {
     }
   }
   if (!status && !m) {
-    const content = domCache.content || document.getElementById("content");
+    const content = document.getElementById("content");
     if (content) {
       content.innerHTML = errorPanel("pipeline", "Status and metrics endpoints unavailable", "retry-pipeline");
       bindRetryToScope("retry-pipeline", () => route("pipeline"));
@@ -2704,11 +2738,32 @@ let sysHealthState = { cpu: [], mem: [], disk: null, lastHealth: null, lastStats
 async function pollSystemHealth() {
   if (currentRoute !== "sys-health" || !visibilityPolling) return;
   const [hRes, sRes] = await Promise.all([
-    useFetch("/api/system/health").catch(() => ({ data: null })),
-    useFetch("/api/system/stats").catch(() => ({ data: null })),
+    useFetch("/api/system/health").catch(() => ({ data: null, error: "health", stale: false })),
+    useFetch("/api/system/stats").catch(() => ({ data: null, error: "stats", stale: false })),
   ]);
   const h = hRes.data;
   const s = sRes.data;
+  const staleEl = document.getElementById("sh-stale-banner");
+  if (staleEl) {
+    const partials = [];
+    if (hRes.error && !h) partials.push("health");
+    if (sRes.error && !s) partials.push("stats");
+    if ((hRes.stale || sRes.stale) && (h || s)) {
+      staleEl.innerHTML = staleBanner();
+    } else if (partials.length > 0 && (h || s)) {
+      staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
+  if (!h && !s) {
+    const content = domCache.content || document.getElementById("content");
+    if (content) {
+      content.innerHTML = errorPanel("system health", "Health and stats endpoints unavailable", "retry-sys-health");
+      bindRetryToScope("retry-sys-health", () => route("sys-health"));
+    }
+    return;
+  }
   if (h) {
     const cpu = h.system ? h.system.cpu_percent : null;
     const mem = h.system ? h.system.memory_percent : null;
@@ -2747,10 +2802,10 @@ function updateSystemHealthUI() {
   const netEl = document.getElementById("sh-net");
   if (netEl && s && s.network) {
     netEl.innerHTML = `
-      <div class="row"><span class="k">Bytes sent</span><span class="v">${fmtBytes(s.network.bytes_sent)}</span></div>
-      <div class="row"><span class="k">Bytes recv</span><span class="v">${fmtBytes(s.network.bytes_recv)}</span></div>
-      <div class="row"><span class="k">Packets sent</span><span class="v">${(s.network.packets_sent || 0).toLocaleString()}</span></div>
-      <div class="row"><span class="k">Packets recv</span><span class="v">${(s.network.packets_recv || 0).toLocaleString()}</span></div>`;
+      <div class="row"><span class="k">Bytes sent</span><span class="v">${escapeHtml(fmtBytes(s.network.bytes_sent))}</span></div>
+      <div class="row"><span class="k">Bytes recv</span><span class="v">${escapeHtml(fmtBytes(s.network.bytes_recv))}</span></div>
+      <div class="row"><span class="k">Packets sent</span><span class="v">${escapeHtml(String((s.network.packets_sent || 0).toLocaleString()))}</span></div>
+      <div class="row"><span class="k">Packets recv</span><span class="v">${escapeHtml(String((s.network.packets_recv || 0).toLocaleString()))}</span></div>`;
   }
   const poolEl = document.getElementById("sh-db-pool");
   if (poolEl && h.db_pool) {
@@ -2799,13 +2854,13 @@ function renderSystemHealth(content) {
       <div class="card">
         <h2 class="card-title">CPU Usage</h2>
         <div class="card-desc">60s rolling - updates every 5s</div>
-        <div class="stat" id="sh-cpu-val"><div class="value skeleton line"></div><div class="label">Current</div></div>
+        <div class="stat" id="sh-cpu-val"><div class="value skeleton line" aria-live="polite"></div><div class="label">Current</div></div>
         <div class="chart-wrap" id="sh-cpu-chart"></div>
       </div>
       <div class="card">
         <h2 class="card-title">Memory Usage</h2>
         <div class="card-desc">60s rolling - updates every 5s</div>
-        <div class="stat" id="sh-mem-val"><div class="value skeleton line"></div><div class="label">Current</div></div>
+        <div class="stat" id="sh-mem-val"><div class="value skeleton line" aria-live="polite"></div><div class="label">Current</div></div>
         <div class="chart-wrap" id="sh-mem-chart"></div>
       </div>
     </div>
@@ -2832,8 +2887,8 @@ function renderSystemHealth(content) {
         <div class="card-desc">Cache server stats</div>
         <div id="sh-redis"></div>
       </div>
-      <div class="stat" id="sh-threads"><div class="value skeleton line"></div><div class="label">Thread Count</div></div>
-      <div class="stat" id="sh-proc-mem"><div class="value skeleton line"></div><div class="label">Process Memory</div></div>
+      <div class="stat" id="sh-threads"><div class="value skeleton line" aria-live="polite"></div><div class="label">Thread Count</div></div>
+      <div class="stat" id="sh-proc-mem"><div class="value skeleton line" aria-live="polite"></div><div class="label">Process Memory</div></div>
     </div>
   `;
   pollSystemHealth();
@@ -2912,10 +2967,10 @@ function renderWebhookLogs(content) {
   webhookLogState.page = 0;
   content.innerHTML = `
     <div class="grid grid-4">
-      <div class="stat" id="wl-stat-total"><div class="value skeleton line"></div><div class="label">Total (7d)</div></div>
-      <div class="stat" id="wl-stat-success"><div class="value skeleton line"></div><div class="label">Successful</div></div>
-      <div class="stat" id="wl-stat-failed"><div class="value skeleton line"></div><div class="label">Failed</div></div>
-      <div class="stat" id="wl-stat-rate"><div class="value skeleton line"></div><div class="label">Success Rate</div></div>
+      <div class="stat" id="wl-stat-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total (7d)</div></div>
+      <div class="stat" id="wl-stat-success"><div class="value skeleton line" aria-live="polite"></div><div class="label">Successful</div></div>
+      <div class="stat" id="wl-stat-failed"><div class="value skeleton line" aria-live="polite"></div><div class="label">Failed</div></div>
+      <div class="stat" id="wl-stat-rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Success Rate</div></div>
     </div>
     <div class="card">
       <h2 class="card-title">Webhook Logs</h2>
@@ -3031,13 +3086,13 @@ function renderWebhookTable() {
       const cls = statusColor(r.response_code);
       const preview = r.payload ? String(r.payload).slice(0, 60) : "";
       const payloadStr = r.payload ? escapeHtml(JSON.stringify(r.payload)) : "";
-      return `<tr class="row-expandable" data-payload="${payloadStr}">
-        <td class="mono">${escapeHtml(String(r.timestamp || "").slice(0, 19))}</td>
+      return `<tr class="row-expandable" data-payload="${payloadStr}" tabindex="0" role="button" aria-expanded="false" aria-label="Webhook log at ${escapeHtml(String(r.timestamp || "").slice(0, 19))}, status ${r.response_code || "--"}">
+        <td class="mono" scope="row">${escapeHtml(String(r.timestamp || "").slice(0, 19))}</td>
         <td class="mono">${escapeHtml(r.ip_address || "--")}</td>
         <td>${escapeHtml(r.action || "--")}</td>
         <td class="mono">${escapeHtml(r.symbol || "--")}</td>
         <td class="mono">${escapeHtml(String(r.volume || "--"))}</td>
-        <td><span class="badge ${cls}"><span class="dot"></span>${r.response_code || "--"}</span></td>
+        <td><span class="badge ${cls}"><span class="dot" aria-hidden="true"></span>${r.response_code || "--"}</span></td>
         <td class="mono">${escapeHtml(String(r.execution_time_ms || "--"))}</td>
         <td class="mono trunc" title="${escapeHtml(preview)}">${escapeHtml(preview)}</td>
       </tr>`;
@@ -3129,23 +3184,23 @@ function renderRiskMonitor(content) {
     <div class="card">
       <h2 class="card-title">Trading Status</h2>
       <div class="card-desc">Current risk gate - polling every 10s</div>
-      <div class="stat big-stat" id="risk-status-card"><div class="value skeleton line"></div><div class="label">Loading...</div></div>
+      <div class="stat big-stat" id="risk-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
     </div>
     <div class="card">
       <h2 class="card-title">Risk Metrics</h2>
       <div class="grid grid-4">
-        <div class="stat" id="risk-daily-pnl"><div class="value skeleton line"></div><div class="label">Daily P&L</div></div>
-        <div class="stat" id="risk-max-dd"><div class="value skeleton line"></div><div class="label">Max Drawdown</div></div>
-        <div class="stat" id="risk-mode"><div class="value skeleton line"></div><div class="label">Position Sizing</div></div>
-        <div class="stat" id="risk-pct"><div class="value skeleton line"></div><div class="label">Risk / Trade</div></div>
+        <div class="stat" id="risk-daily-pnl"><div class="value skeleton line" aria-live="polite"></div><div class="label">Daily P&L</div></div>
+        <div class="stat" id="risk-max-dd"><div class="value skeleton line" aria-live="polite"></div><div class="label">Max Drawdown</div></div>
+        <div class="stat" id="risk-mode"><div class="value skeleton line" aria-live="polite"></div><div class="label">Position Sizing</div></div>
+        <div class="stat" id="risk-pct"><div class="value skeleton line" aria-live="polite"></div><div class="label">Risk / Trade</div></div>
       </div>
     </div>
     <div class="card">
       <h2 class="card-title">Account</h2>
       <div class="grid grid-3">
-        <div class="stat" id="risk-balance"><div class="value skeleton line"></div><div class="label">Balance</div></div>
-        <div class="stat" id="risk-equity"><div class="value skeleton line"></div><div class="label">Equity</div></div>
-        <div class="stat" id="risk-margin"><div class="value skeleton line"></div><div class="label">Margin Level</div></div>
+        <div class="stat" id="risk-balance"><div class="value skeleton line" aria-live="polite"></div><div class="label">Balance</div></div>
+        <div class="stat" id="risk-equity"><div class="value skeleton line" aria-live="polite"></div><div class="label">Equity</div></div>
+        <div class="stat" id="risk-margin"><div class="value skeleton line" aria-live="polite"></div><div class="label">Margin Level</div></div>
       </div>
     </div>
     <div class="card">
@@ -3299,9 +3354,9 @@ function updateDatabaseUI(data) {
 function renderDatabaseManager(content) {
   content.innerHTML = `
     <div class="grid grid-3">
-      <div class="stat" id="db-size"><div class="value skeleton line"></div><div class="label">DB Size</div></div>
-      <div class="stat" id="db-total"><div class="value skeleton line"></div><div class="label">Total Records</div></div>
-      <div class="stat" id="db-type"><div class="value skeleton line"></div><div class="label">DB Type</div></div>
+      <div class="stat" id="db-size"><div class="value skeleton line" aria-live="polite"></div><div class="label">DB Size</div></div>
+      <div class="stat" id="db-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total Records</div></div>
+      <div class="stat" id="db-type"><div class="value skeleton line" aria-live="polite"></div><div class="label">DB Type</div></div>
     </div>
     <div class="card">
       <h2 class="card-title">Table Row Counts</h2>
@@ -3313,7 +3368,7 @@ function renderDatabaseManager(content) {
       <div class="card-desc">Remove old records to free space</div>
       <div class="cleanup-row">
         <label for="db-days">Days to keep <span class="req">*</span></label>
-        <input class="input days-input" id="db-days" type="number" value="90" min="1" max="3650" inputmode="numeric">
+        <input class="input days-input" id="db-days" type="number" value="90" min="1" max="3650" inputmode="numeric" aria-required="true">
         <span>days</span>
         <button class="btn red sm" id="db-cleanup" data-action="db-cleanup">Delete</button>
       </div>
@@ -3354,6 +3409,7 @@ async function doDbCleanup(days) {
     result.innerHTML = `<div class="inline-ok">${ICONS.check}Cleanup complete: ${escapeHtml(JSON.stringify(data.result || data))}</div>`;
     toast("Database cleanup complete", "ok");
     setBtnSuccess(btn, "Done", 2000);
+    invalidateCache("/api/database/stats");
     pollDatabaseManager();
   } catch (e) {
     result.innerHTML = `<div class="inline-error">${ICONS.x}Cleanup failed: ${escapeHtml(e.message)}</div>`;
@@ -3490,7 +3546,7 @@ function renderDiagnostics(content) {
   content.innerHTML = `
     <div class="card">
       <h2 class="card-title">Overall Status</h2>
-      <div class="stat big-stat" id="diag-overall"><div class="value skeleton line"></div><div class="label">Running diagnostics...</div></div>
+      <div class="stat big-stat" id="diag-overall"><div class="value skeleton line" aria-live="polite"></div><div class="label">Running diagnostics...</div></div>
     </div>
     <div class="grid grid-4" id="diag-grid">
       ${Array(8).fill('<div class="card probe-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}
@@ -3559,21 +3615,21 @@ function renderBotStatus(content) {
       <div class="card">
         <h2 class="card-title">Bot Status</h2>
         <div class="card-desc">Telegram bot health - polling every 15s</div>
-        <div class="stat big-stat" id="bot-status-card"><div class="value skeleton line"></div><div class="label">Loading...</div></div>
+        <div class="stat big-stat" id="bot-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
       </div>
       <div class="card">
         <h2 class="card-title">Bot Info</h2>
-        <div class="stat" id="bot-username"><div class="value skeleton line"></div><div class="label">Username</div></div>
-        <div class="stat" id="bot-handlers"><div class="value skeleton line"></div><div class="label">Handler Count</div></div>
+        <div class="stat" id="bot-username"><div class="value skeleton line" aria-live="polite"></div><div class="label">Username</div></div>
+        <div class="stat" id="bot-handlers"><div class="value skeleton line" aria-live="polite"></div><div class="label">Handler Count</div></div>
       </div>
     </div>
     <div class="card">
       <h2 class="card-title">Status Flags</h2>
       <div class="grid grid-4">
-        <div class="stat" id="bot-started"><div class="value skeleton line"></div><div class="label">Started</div></div>
-        <div class="stat" id="bot-app"><div class="value skeleton line"></div><div class="label">App Exists</div></div>
-        <div class="stat" id="bot-token"><div class="value skeleton line"></div><div class="label">Token</div></div>
-        <div class="stat" id="bot-updater"><div class="value skeleton line"></div><div class="label">Updater</div></div>
+        <div class="stat" id="bot-started"><div class="value skeleton line" aria-live="polite"></div><div class="label">Started</div></div>
+        <div class="stat" id="bot-app"><div class="value skeleton line" aria-live="polite"></div><div class="label">App Exists</div></div>
+        <div class="stat" id="bot-token"><div class="value skeleton line" aria-live="polite"></div><div class="label">Token</div></div>
+        <div class="stat" id="bot-updater"><div class="value skeleton line" aria-live="polite"></div><div class="label">Updater</div></div>
       </div>
     </div>
     <div class="card">
@@ -3802,7 +3858,11 @@ function renderLicenseRows() {
   body.querySelectorAll("[data-action='lic-edit']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("License editing"); }));
   body.querySelectorAll("[data-action='lic-extend']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("License extension"); }));
   body.querySelectorAll("[data-action='lic-toggle']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("Enable/disable license"); }));
-  body.querySelectorAll("[data-action='lic-disconnect']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("Force disconnect"); }));
+  body.querySelectorAll("[data-action='lic-disconnect']").forEach(b => b.addEventListener("click", e => {
+    e.preventDefault(); e.stopPropagation();
+    const key = b.dataset.key;
+    openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${maskKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
+  }));
   body.querySelectorAll("[data-action='lic-delete']").forEach(b => b.addEventListener("click", e => {
     e.preventDefault(); e.stopPropagation();
     const key = b.dataset.key;
@@ -3947,9 +4007,11 @@ function openConfirmModal(title, msg, onConfirm, confirmLabel = "Delete") {
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-label", escapeHtml(title));
-  overlay.innerHTML = `<div class="modal-card">
-    <h2 class="modal-title">${escapeHtml(title)}</h2>
-    <div class="modal-desc">${escapeHtml(msg)}</div>
+  overlay.innerHTML = `<div class="modal-card confirm">
+    <div class="confirm-icon">${ICONS.alert}</div>
+    <h2 class="confirm-heading">Are you sure?</h2>
+    <div class="confirm-context">${escapeHtml(title)}</div>
+    <div class="confirm-desc">${escapeHtml(msg)}</div>
     <div class="modal-footer">
       <button class="btn outline" data-action="confirm-cancel">Cancel</button>
       <button class="btn red" data-action="confirm-ok">${ICONS.trash}${escapeHtml(confirmLabel)}</button>
@@ -3989,7 +4051,7 @@ function pollSecurity() {
   Promise.all([useFetch(`${API}/rate-limits`), useFetch(`${API}/security-headers`)]).then(([rl, hdr]) => {
     if (rl.data) securityState.data = rl.data;
     if (hdr.data) securityState.headers = hdr.data;
-    const content = domCache.content || document.getElementById("content");
+    const content = document.getElementById("content");
     if (content && currentRoute === "security") renderSecurityContent(content);
   });
 }
@@ -4050,8 +4112,9 @@ function renderSecurityContent(content) {
       <h2 class="card-title">Blocked IPs</h2>
       <div class="card-desc">Currently blocked by rate limiter</div>
       <div class="table-wrap">
-        <table class="data-table mgr-table">
-          <thead><tr><th>IP</th><th>Blocked At</th><th>Reason</th><th class="td-num">Remaining</th><th class="td-actions">Action</th></tr></thead>
+        <table class="data-table mgr-table" aria-label="Blocked IPs">
+          <caption class="sr-only">IPs currently blocked by rate limiter</caption>
+          <thead><tr><th scope="col">IP</th><th scope="col">Blocked At</th><th scope="col">Reason</th><th scope="col" class="td-num">Remaining</th><th scope="col" class="td-actions">Action</th></tr></thead>
           <tbody>${blockedRows}</tbody>
         </table>
       </div>
@@ -4128,7 +4191,7 @@ async function loadAuditPage(isInitial) {
 function pollAudit() {
   if (currentRoute !== "audit" || !visibilityPolling) return;
   loadAuditPage(false).then(() => {
-    const content = domCache.content || document.getElementById("content");
+    const content = document.getElementById("content");
     if (content && currentRoute === "audit") renderAuditContent(content);
   });
 }
@@ -4187,7 +4250,7 @@ function renderAuditContent(content) {
       </select>
       <input class="input filter-input" id="audit-filter-from" type="date" value="${escapeHtml(auditState.filterFrom)}" aria-label="From date">
       <input class="input filter-input" id="audit-filter-to" type="date" value="${escapeHtml(auditState.filterTo)}" aria-label="To date">
-      <input class="input search-input" id="audit-search" placeholder="Search details" value="${escapeHtml(auditState.search)}" aria-label="Search">
+      <input class="input search-input" id="audit-search" type="search" placeholder="Search details" value="${escapeHtml(auditState.search)}" aria-label="Search" autocomplete="off" spellcheck="false" inputmode="search">
       <button class="filter-clear" id="audit-clear" type="button">Clear filters</button>
     </div>
     <div class="card">
