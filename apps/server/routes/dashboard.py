@@ -62,6 +62,8 @@ class TestWebhookRequest(BaseModel):
     symbol: str = "EURUSD"
     action: str = "buy"
     lots: str = "0.10"
+    sl: str | None = None
+    tp: str | None = None
 
 
 async def require_csrf(x_admin_csrf: str | None = Header(default=None)) -> None:
@@ -171,9 +173,19 @@ def create_dashboard_router(
         action = req.action.strip() or "buy"
         symbol = (req.symbol or "EURUSD").strip().upper()
         lots = (req.lots or "0.10").strip()
-        payload = f"{license_key},{action},{symbol},lots={lots},secret={license_secret}"
+        parts = [license_key, action, symbol, f"lots={lots}"]
+        sl_val = (req.sl or "").strip()
+        tp_val = (req.tp or "").strip()
+        if sl_val:
+            parts.append(f"sl={sl_val}")
+        if tp_val:
+            parts.append(f"tp={tp_val}")
+        parts.append(f"secret={license_secret}")
+        payload = ",".join(parts)
 
         target = f"http://127.0.0.1:{port}/"
+        import time as _time
+        t0 = _time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
@@ -182,10 +194,12 @@ def create_dashboard_router(
                     headers={"Content-Type": "text/plain"},
                 )
                 body = resp.text
+            latency_ms = int((_time.perf_counter() - t0) * 1000)
             return {
                 "status": "sent",
                 "response_code": resp.status_code,
                 "response_body": body[:500],
+                "latency_ms": latency_ms,
             }
         except httpx.ConnectError:
             return {"status": "error", "message": f"Cannot connect to local webhook at {target}"}

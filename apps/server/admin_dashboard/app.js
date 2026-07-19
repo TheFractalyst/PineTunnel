@@ -61,6 +61,15 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
+let setupDirty = false;
+window.addEventListener("beforeunload", e => {
+  if (setupDirty) {
+    e.preventDefault();
+    e.returnValue = "You have unsaved changes in the Setup Wizard.";
+    return e.returnValue;
+  }
+});
+
 const VALIDATORS = {
   tgToken: (v) => {
     if (!v) return "Bot token is required";
@@ -131,9 +140,10 @@ function setFieldState(input, wrap, errMsg) {
     if (!msgEl) {
       msgEl = document.createElement("div");
       msgEl.className = "field-error";
+      msgEl.setAttribute("role", "alert");
       wrap.appendChild(msgEl);
     }
-    msgEl.textContent = errMsg;
+    msgEl.innerHTML = ICONS.alert + escapeHtml(errMsg);
     input.setAttribute("aria-describedby", msgEl.id || (msgEl.id = input.id + "-err"));
   } else {
     input.classList.remove("input-error");
@@ -293,9 +303,10 @@ const PALETTE = {
 };
 
 function emptyState(icon, msg, actionLabel, actionName) {
+  const iconHtml = typeof icon === "string" && icon.indexOf("<svg") === 0 ? icon : (ICONS[icon] || ICONS.check);
   const btn = actionLabel ? `<button class="btn outline sm mt" data-action="${escapeHtml(actionName || "empty-action")}">${escapeHtml(actionLabel)}</button>` : "";
   return `<div class="empty empty-illustrated">
-    <div class="icon">${icon}</div>
+    <div class="icon">${iconHtml}</div>
     <div class="msg">${escapeHtml(msg)}</div>
     ${btn}
   </div>`;
@@ -633,11 +644,6 @@ function errorPanel(name, msg, action) {
   return `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load ${escapeHtml(name)}</div><div class="sub">${escapeHtml(msg || "Server error or unreachable")}</div><button class="btn outline sm mt" data-action="${escapeHtml(action)}">${ICONS.refresh}Retry</button></div>`;
 }
 
-function emptyState(title, subtitle, iconKey) {
-  const icon = ICONS[iconKey] || ICONS.check;
-  return `<div class="empty"><div class="icon">${icon}</div><div class="msg">${escapeHtml(title)}</div><div class="sub">${escapeHtml(subtitle)}</div></div>`;
-}
-
 function partialWarning(label) {
   return `<div class="partial-warning">${ICONS.alert}<span>${escapeHtml(label)}</span></div>`;
 }
@@ -729,6 +735,13 @@ function svgGauge(value, label, opts = {}) {
 
 function eaColor(n) {
   return n > 0 ? "ok" : "warn";
+}
+
+function getEaConnectionCount(c) {
+  if (!c) return 0;
+  const httpCount = c.http_polling_connections || 0;
+  const ws = (c.websocket && c.websocket.websocket_connections) || 0;
+  return httpCount + ws;
 }
 
 async function fetchHealth() {
@@ -1031,14 +1044,21 @@ function render() {
   });
 }
 
+let _mobileSheetTrigger = null;
 function openMobileSheet() {
   const sheet = document.getElementById("mobile-sheet");
-  if (sheet) sheet.classList.remove("hidden");
+  if (!sheet) return;
+  _mobileSheetTrigger = document.activeElement;
+  sheet.classList.remove("hidden");
+  const closeBtn = sheet.querySelector("[data-action='close-sheet']");
+  if (closeBtn) closeBtn.focus();
 }
 
 function closeMobileSheet() {
   const sheet = document.getElementById("mobile-sheet");
-  if (sheet) sheet.classList.add("hidden");
+  if (!sheet) return;
+  sheet.classList.add("hidden");
+  if (_mobileSheetTrigger) { try { _mobileSheetTrigger.focus(); } catch {} _mobileSheetTrigger = null; }
 }
 
 document.addEventListener("visibilitychange", () => {
@@ -1421,8 +1441,12 @@ function renderStep1(body, data) {
   if (tokenInput) {
     attachValidator(tokenInput, "tgToken");
     addPasswordToggle(tokenInput);
+    tokenInput.addEventListener("input", () => { setupDirty = true; });
   }
-  if (uidInput) attachValidator(uidInput, "tgUid");
+  if (uidInput) {
+    attachValidator(uidInput, "tgUid");
+    uidInput.addEventListener("input", () => { setupDirty = true; });
+  }
   if (saveBtn) submitOnEnter(body.querySelector(".card"), saveTelegram);
   if (!tg) autofocusFirst(body);
 }
@@ -1502,6 +1526,7 @@ async function renderStep3(body, data) {
 async function advanceStep(step) {
   const content = document.getElementById("content");
   content.innerHTML = skeletonCard(1);
+  invalidateCache(`${API}/setup-status`);
   const { data } = await useFetch(`${API}/setup-status`);
   renderSetupStep(content, step, data);
 }
@@ -1525,6 +1550,7 @@ async function saveTelegram() {
       body: JSON.stringify({ updates: { TELEGRAM_BOT_TOKEN: token, TELEGRAM_ADMIN_IDS: uid } }),
     });
     setBtnSuccess(btn, "Saved", 2000);
+    setupDirty = false;
     if (r.needs_restart) {
       result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Restart the server for the bot to pick up the new token.</div>`;
       toast("Telegram saved - restart required", "ok");
@@ -1761,16 +1787,19 @@ let signalFeedState = {
   filterSymbol: "",
   filterStatus: "",
   seenIds: new Set(),
+  _renderedOnce: false,
 };
 
 function renderSignalFeed(content, actions) {
+  const ps = getPanelState("signals");
   signalFeedState = {
     rows: [],
     paused: false,
-    filterLicense: "",
-    filterSymbol: "",
-    filterStatus: "",
+    filterLicense: ps.filters.filterLicense || "",
+    filterSymbol: ps.filters.filterSymbol || "",
+    filterStatus: ps.filters.filterStatus || "",
     seenIds: new Set(),
+    _renderedOnce: false,
   };
   content.innerHTML = `
     <div class="card">
@@ -1779,13 +1808,13 @@ function renderSignalFeed(content, actions) {
       <div class="feed-toolbar">
         <div class="filter-bar">
           <select class="input filter-sel" id="feed-filter-license" aria-label="Filter by license"><option value="">All licenses</option></select>
-          <input class="input filter-txt" id="feed-filter-symbol" placeholder="Symbol filter" aria-label="Filter by symbol">
+          <input class="input filter-txt" id="feed-filter-symbol" placeholder="Symbol filter" aria-label="Filter by symbol" value="${escapeHtml(signalFeedState.filterSymbol)}">
           <select class="input filter-sel" id="feed-filter-status" aria-label="Filter by status">
             <option value="">All status</option>
-            <option value="success">Executed</option>
-            <option value="pending">Pending</option>
-            <option value="failed">Failed</option>
-            <option value="duplicate">Duplicate</option>
+            <option value="success" ${signalFeedState.filterStatus === "success" ? "selected" : ""}>Executed</option>
+            <option value="pending" ${signalFeedState.filterStatus === "pending" ? "selected" : ""}>Pending</option>
+            <option value="failed" ${signalFeedState.filterStatus === "failed" ? "selected" : ""}>Failed</option>
+            <option value="duplicate" ${signalFeedState.filterStatus === "duplicate" ? "selected" : ""}>Duplicate</option>
           </select>
         </div>
         <button class="btn outline sm" id="feed-pause-btn" data-action="feed-pause">${ICONS.pause}Pause</button>
@@ -1819,9 +1848,9 @@ function renderSignalFeed(content, actions) {
   const statusSel = content.querySelector("#feed-filter-status");
   const pauseBtn = content.querySelector("[data-action='feed-pause']");
   const scrollEl = content.querySelector("#feed-scroll");
-  licenseSel.addEventListener("change", () => { signalFeedState.filterLicense = licenseSel.value; renderFeedRows(); });
-  symbolInput.addEventListener("input", () => { signalFeedState.filterSymbol = symbolInput.value.trim().toUpperCase(); renderFeedRows(); });
-  statusSel.addEventListener("change", () => { signalFeedState.filterStatus = statusSel.value; renderFeedRows(); });
+  licenseSel.addEventListener("change", () => { signalFeedState.filterLicense = licenseSel.value; setPanelState("signals", { filters: { filterLicense: licenseSel.value } }); renderFeedRows(); });
+  symbolInput.addEventListener("input", () => { signalFeedState.filterSymbol = symbolInput.value.trim().toUpperCase(); setPanelState("signals", { filters: { filterSymbol: symbolInput.value.trim().toUpperCase() } }); renderFeedRows(); });
+  statusSel.addEventListener("change", () => { signalFeedState.filterStatus = statusSel.value; setPanelState("signals", { filters: { filterStatus: statusSel.value } }); renderFeedRows(); });
   pauseBtn.addEventListener("click", e => {
     e.preventDefault();
     signalFeedState.paused = !signalFeedState.paused;
@@ -1890,7 +1919,27 @@ async function pollSignalFeed() {
       licenseSel.value = cur;
     }
   }
-  renderFeedRows();
+  const hasFilters = signalFeedState.filterLicense || signalFeedState.filterSymbol || signalFeedState.filterStatus;
+  if (newRows.length > 0 && !hasFilters) {
+    const body = document.getElementById("feed-body");
+    if (body) {
+      const emptyRow = body.querySelector(".feed-empty");
+      if (emptyRow) emptyRow.closest("tr").remove();
+      const html = newRows.map(feedRowHtml).join("");
+      body.insertAdjacentHTML("afterbegin", html);
+      const countEl = document.getElementById("feed-count");
+      if (countEl) countEl.textContent = `${signalFeedState.rows.length} signals`;
+      if (!signalFeedState.paused) {
+        const scroll = document.getElementById("feed-scroll");
+        if (scroll) scroll.scrollTop = 0;
+      }
+      return;
+    }
+  }
+  if (newRows.length > 0 || !signalFeedState._renderedOnce) {
+    renderFeedRows();
+    signalFeedState._renderedOnce = true;
+  }
 }
 
 function feedRowHtml(r) {
@@ -2332,7 +2381,7 @@ function drawDonutChart(stats, dash) {
   }).join("");
   const legend = entries.map((e, i) => {
     const pct = ((e.vol / total) * 100).toFixed(1);
-    return `<div class="legend-item"><span class="legend-dot" style="background:${colors[i]}" aria-hidden="true"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</span></div>`;
+    return `<div class="legend-item"><span class="legend-dot c${i}" aria-hidden="true"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</span></div>`;
   }).join("");
   const topSym = entries[0] ? entries[0].name : "none";
   const topPct = entries[0] ? ((entries[0].vol / total) * 100).toFixed(1) : "0";
@@ -2556,7 +2605,7 @@ function svgLineChart(values, opts = {}) {
   const min = opts.min || 0;
   const range = max - min || 1;
   const n = values.length;
-  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet"></svg>`;
+  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${opts.label || "chart"}: no data"></svg>`;
   const pts = values.map((v, i) => {
     const x = pad + (i / Math.max(1, n - 1)) * (W - pad * 2);
     const norm = (v != null && !isNaN(v)) ? (v - min) / range : 0;
@@ -2570,7 +2619,9 @@ function svgLineChart(values, opts = {}) {
     const y = pad + g * (H - pad * 2);
     return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" stroke="${PALETTE.gridFaint}"/>`;
   }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${opts.label || "chart"}">
+  const lastVal = values[values.length - 1];
+  const lbl = opts.label ? `${opts.label}: current ${lastVal != null ? lastVal.toFixed(1) : "--"}` : "chart";
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(lbl)}">
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${color}" stop-opacity="0.3"/>
       <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
@@ -2609,7 +2660,7 @@ function svgSparkline(values, opts = {}) {
   const W = 60, H = 20;
   const color = opts.color || PALETTE.green;
   const n = values.length;
-  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="sparkline"></svg>`;
+  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="sparkline" aria-hidden="true" focusable="false"></svg>`;
   const max = Math.max(...values, 1);
   const min = Math.min(...values, 0);
   const range = max - min;
@@ -2619,7 +2670,7 @@ function svgSparkline(values, opts = {}) {
     const y = H - norm * H;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  return `<svg viewBox="0 0 ${W} ${H}" class="sparkline" preserveAspectRatio="none">
+  return `<svg viewBox="0 0 ${W} ${H}" class="sparkline" preserveAspectRatio="none" aria-hidden="true" focusable="false">
     <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`;
 }
@@ -2713,15 +2764,19 @@ function updateSystemHealthUI() {
     const oW = (overflow / total) * 100;
     poolEl.innerHTML = `
       <div class="stacked-bar">
-        <div class="seg ok" style="width:${iW}%" title="In use: ${inUse}"></div>
-        <div class="seg info" style="width:${aW}%" title="Available: ${avail}"></div>
-        <div class="seg warn" style="width:${oW}%" title="Overflow: ${overflow}"></div>
+        <div class="seg ok" data-w="${escapeHtml(String(iW))}" title="In use: ${escapeHtml(String(inUse))}"></div>
+        <div class="seg info" data-w="${escapeHtml(String(aW))}" title="Available: ${escapeHtml(String(avail))}"></div>
+        <div class="seg warn" data-w="${escapeHtml(String(oW))}" title="Overflow: ${escapeHtml(String(overflow))}"></div>
       </div>
       <div class="stacked-legend">
-        <span class="lg ok"><span class="dot"></span>In use ${inUse}</span>
-        <span class="lg info"><span class="dot"></span>Available ${avail}</span>
-        <span class="lg warn"><span class="dot"></span>Overflow ${overflow}</span>
+        <span class="lg ok"><span class="dot"></span>In use ${escapeHtml(String(inUse))}</span>
+        <span class="lg info"><span class="dot"></span>Available ${escapeHtml(String(avail))}</span>
+        <span class="lg warn"><span class="dot"></span>Overflow ${escapeHtml(String(overflow))}</span>
       </div>`;
+    poolEl.querySelectorAll(".seg[data-w]").forEach(seg => {
+      const w = parseFloat(seg.dataset.w);
+      if (!isNaN(w)) seg.style.width = w + "%";
+    });
   }
   const redisEl = document.getElementById("sh-redis");
   if (redisEl) {
@@ -2866,36 +2921,37 @@ function renderWebhookLogs(content) {
       <h2 class="card-title">Webhook Logs</h2>
       <div class="card-desc">Recent webhook requests - polling every 10s</div>
       <div class="filter-bar">
-        <select class="input filter-sel" id="wl-range">
+        <select class="input filter-sel" id="wl-range" aria-label="Filter by time range">
           <option value="today">Today</option>
           <option value="7d">7 days</option>
           <option value="30d">30 days</option>
         </select>
-        <select class="input filter-sel" id="wl-status">
+        <select class="input filter-sel" id="wl-status" aria-label="Filter by status code">
           <option value="">All status</option>
           <option value="200">200</option>
           <option value="202">202</option>
           <option value="400">400</option>
           <option value="401">401</option>
         </select>
-        <input class="input filter-input" id="wl-symbol" placeholder="Symbol filter">
-        <input class="input filter-input" id="wl-license" placeholder="License filter">
+        <input class="input filter-input" id="wl-symbol" placeholder="Symbol filter" aria-label="Filter by symbol">
+        <input class="input filter-input" id="wl-license" placeholder="License filter" aria-label="Filter by license">
         <button class="filter-clear" id="wl-clear" type="button">Clear filters</button>
       </div>
     </div>
     <div class="card">
       <div class="table-wrap">
-        <table class="data-table" id="wl-table">
+        <table class="data-table" id="wl-table" aria-label="Webhook logs">
+          <caption class="sr-only">Recent webhook requests</caption>
           <thead>
             <tr>
-              <th class="sortable" data-sort="timestamp">Timestamp</th>
-              <th class="sortable" data-sort="ip_address">Source IP</th>
-              <th class="sortable" data-sort="action">Action</th>
-              <th class="sortable" data-sort="symbol">Symbol</th>
-              <th class="sortable" data-sort="volume">Volume</th>
-              <th class="sortable" data-sort="response_code">Status</th>
-              <th class="sortable" data-sort="execution_time_ms">Resp ms</th>
-              <th>Payload</th>
+              <th scope="col" class="sortable" data-sort="timestamp">Timestamp</th>
+              <th scope="col" class="sortable" data-sort="ip_address">Source IP</th>
+              <th scope="col" class="sortable" data-sort="action">Action</th>
+              <th scope="col" class="sortable" data-sort="symbol">Symbol</th>
+              <th scope="col" class="sortable" data-sort="volume">Volume</th>
+              <th scope="col" class="sortable" data-sort="response_code">Status</th>
+              <th scope="col" class="sortable" data-sort="execution_time_ms">Resp ms</th>
+              <th scope="col">Payload</th>
             </tr>
           </thead>
           <tbody id="wl-body">${skeletonRowsHTML(8, 5)}</tbody>
@@ -2903,7 +2959,7 @@ function renderWebhookLogs(content) {
       </div>
       <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
       <div class="table-footer">
-        <span id="wl-count">0 rows</span>
+        <span id="wl-count" aria-live="polite">0 rows</span>
         <div class="pager">
           <button class="btn outline sm" id="wl-prev" type="button">Prev</button>
           <button class="btn outline sm" id="wl-next" type="button">Next</button>
@@ -3594,19 +3650,20 @@ async function renderLicenses(content, actions) {
     </div>
     <div class="card">
       <div class="table-wrap">
-        <table class="data-table mgr-table" id="lic-table">
+        <table class="data-table mgr-table" id="lic-table" aria-label="Licenses">
+          <caption class="sr-only">License manager</caption>
           <thead>
             <tr>
-              <th class="sortable" data-sort="license_key">License Key</th>
-              <th class="sortable" data-sort="name">Name</th>
-              <th class="sortable" data-sort="email">Email</th>
-              <th class="sortable" data-sort="status">Status</th>
-              <th>Secret</th>
-              <th class="sortable" data-sort="expires_at">Expires</th>
-              <th class="sortable th-num" data-sort="connected_eas">EAs</th>
-              <th class="sortable th-num" data-sort="total_trades">Trades</th>
-              <th class="sortable" data-sort="last_activity">Last Activity</th>
-              <th class="td-actions">Actions</th>
+              <th scope="col" class="sortable" data-sort="license_key">License Key</th>
+              <th scope="col" class="sortable" data-sort="name">Name</th>
+              <th scope="col" class="sortable" data-sort="email">Email</th>
+              <th scope="col" class="sortable" data-sort="status">Status</th>
+              <th scope="col">Secret</th>
+              <th scope="col" class="sortable" data-sort="expires_at">Expires</th>
+              <th scope="col" class="sortable th-num" data-sort="connected_eas">EAs</th>
+              <th scope="col" class="sortable th-num" data-sort="total_trades">Trades</th>
+              <th scope="col" class="sortable" data-sort="last_activity">Last Activity</th>
+              <th scope="col" class="td-actions">Actions</th>
             </tr>
           </thead>
           <tbody id="lic-body">${skeletonRowsHTML(10, 5)}</tbody>
@@ -3614,7 +3671,7 @@ async function renderLicenses(content, actions) {
       </div>
       <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
       <div class="table-footer">
-        <span id="lic-count">0 rows</span>
+        <span id="lic-count" aria-live="polite">0 rows</span>
         <div class="pager">
           <button class="btn outline sm" id="lic-prev" type="button">Prev</button>
           <button class="btn outline sm" id="lic-next" type="button">Next</button>
@@ -3822,35 +3879,40 @@ function closeModal(overlay) {
 function openLicenseModal() {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Add License");
   overlay.innerHTML = `<div class="modal-card">
     <button class="modal-close" data-action="modal-close" aria-label="Close">${ICONS.x}</button>
     <h2 class="modal-title">Add License</h2>
     <div class="modal-desc">Create a new license key. CRUD endpoints arrive in Phase 3.</div>
-    <div class="modal-body">
+    <div class="modal-body" id="lic-modal-form">
       <div class="field">
-        <label for="lic-modal-key">License Key</label>
+        <label for="lic-modal-key">License Key <span class="req">*</span></label>
         <div class="gen-row">
           <input class="input" id="lic-modal-key" value="${genKey("PT")}" readonly>
           <button class="btn outline sm" data-action="regen-key">${ICONS.refresh}Regenerate</button>
         </div>
+        <div class="hint">Auto-generated - click Regenerate for a new key</div>
       </div>
       <div class="field">
-        <label for="lic-modal-name">Name</label>
-        <input class="input" id="lic-modal-name" placeholder="Client name">
+        <label for="lic-modal-name">Name <span class="opt">(optional)</span></label>
+        <input class="input" id="lic-modal-name" placeholder="Client name" autocomplete="off" spellcheck="false">
       </div>
       <div class="field">
-        <label for="lic-modal-email">Email</label>
-        <input class="input" id="lic-modal-email" type="email" placeholder="client@example.com">
+        <label for="lic-modal-email">Email <span class="opt">(optional)</span></label>
+        <input class="input" id="lic-modal-email" type="email" placeholder="client@example.com" autocomplete="email" spellcheck="false" inputmode="email">
       </div>
       <div class="field">
-        <label for="lic-modal-secret">Secret</label>
+        <label for="lic-modal-secret">Secret <span class="req">*</span></label>
         <div class="gen-row">
           <input class="input" id="lic-modal-secret" value="${genKey("SEC")}" readonly>
           <button class="btn outline sm" data-action="regen-secret">${ICONS.refresh}Regenerate</button>
         </div>
+        <div class="hint">Auto-generated - click Regenerate for a new secret</div>
       </div>
       <div class="field">
-        <label for="lic-modal-expires">Expires At</label>
+        <label for="lic-modal-expires">Expires At <span class="opt">(optional)</span></label>
         <input class="input" id="lic-modal-expires" type="date">
       </div>
     </div>
@@ -3859,23 +3921,32 @@ function openLicenseModal() {
       <button class="btn primary" data-action="modal-save">${ICONS.check}Create (Phase 3)</button>
     </div>
   </div>`;
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
-  overlay.querySelector("[data-action='modal-close']").addEventListener("click", close);
-  overlay.querySelector("[data-action='modal-cancel']").addEventListener("click", close);
+  openModal(overlay);
+  overlay.querySelector("[data-action='modal-close']").addEventListener("click", () => closeModal(overlay));
+  overlay.querySelector("[data-action='modal-cancel']").addEventListener("click", () => closeModal(overlay));
   overlay.querySelector("[data-action='regen-key']").addEventListener("click", e => { e.preventDefault(); overlay.querySelector("#lic-modal-key").value = genKey("PT"); });
   overlay.querySelector("[data-action='regen-secret']").addEventListener("click", e => { e.preventDefault(); overlay.querySelector("#lic-modal-secret").value = genKey("SEC"); });
+  const emailEl = overlay.querySelector("#lic-modal-email");
+  if (emailEl) attachValidator(emailEl, "email");
+  submitOnEnter(overlay.querySelector("#lic-modal-form"), () => overlay.querySelector("[data-action='modal-save']").click());
   overlay.querySelector("[data-action='modal-save']").addEventListener("click", e => {
     e.preventDefault();
-    close();
-    comingSoon("License creation");
+    if (emailEl) {
+      const err = VALIDATORS.email(emailEl.value.trim());
+      if (err) { validateInput(emailEl, "email"); emailEl.focus(); return; }
+    }
+    setBtnLoading(overlay.querySelector("[data-action='modal-save']"), "Creating...");
+    setTimeout(() => { closeModal(overlay); comingSoon("License creation"); }, 600);
   });
+  autofocusFirst(overlay);
 }
 
 function openConfirmModal(title, msg, onConfirm, confirmLabel = "Delete") {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", escapeHtml(title));
   overlay.innerHTML = `<div class="modal-card">
     <h2 class="modal-title">${escapeHtml(title)}</h2>
     <div class="modal-desc">${escapeHtml(msg)}</div>
@@ -3884,11 +3955,9 @@ function openConfirmModal(title, msg, onConfirm, confirmLabel = "Delete") {
       <button class="btn red" data-action="confirm-ok">${ICONS.trash}${escapeHtml(confirmLabel)}</button>
     </div>
   </div>`;
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
-  overlay.querySelector("[data-action='confirm-cancel']").addEventListener("click", close);
-  overlay.querySelector("[data-action='confirm-ok']").addEventListener("click", e => { e.preventDefault(); close(); onConfirm(); });
+  openModal(overlay);
+  overlay.querySelector("[data-action='confirm-cancel']").addEventListener("click", () => closeModal(overlay));
+  overlay.querySelector("[data-action='confirm-ok']").addEventListener("click", e => { e.preventDefault(); closeModal(overlay); onConfirm(); });
 }
 
 let securityState = { data: null, headers: null };
@@ -4028,10 +4097,17 @@ function renderSecurityContent(content) {
 let auditState = { rows: [], filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "", loading: false, hasMore: true, limit: 50 };
 
 async function renderAuditTimeline(content, actions) {
+  const tk = renderToken;
+  const ps = getPanelState("audit");
   content.innerHTML = skeletonCard(1);
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
-  auditState = { rows: [], filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "", loading: false, hasMore: true, limit: 50 };
+  auditState = {
+    rows: [], filterAction: ps.filters.filterAction || "", filterAdmin: ps.filters.filterAdmin || "",
+    filterFrom: ps.filters.filterFrom || "", filterTo: ps.filters.filterTo || "",
+    search: ps.filters.search || "", loading: false, hasMore: true, limit: 50,
+  };
   await loadAuditPage(true);
+  if (staleRender(tk)) return;
   renderAuditContent(content);
   pollAudit();
   const t = setInterval(pollAudit, 10000);
@@ -4151,11 +4227,11 @@ function renderAuditContent(content) {
   const fromEl = content.querySelector("#audit-filter-from");
   const toEl = content.querySelector("#audit-filter-to");
   const searchEl = content.querySelector("#audit-search");
-  if (actionSel) actionSel.addEventListener("change", () => { auditState.filterAction = actionSel.value; renderAuditContent(content); });
-  if (adminSel) adminSel.addEventListener("change", () => { auditState.filterAdmin = adminSel.value; renderAuditContent(content); });
-  if (fromEl) fromEl.addEventListener("change", () => { auditState.filterFrom = fromEl.value; renderAuditContent(content); });
-  if (toEl) toEl.addEventListener("change", () => { auditState.filterTo = toEl.value; renderAuditContent(content); });
-  if (searchEl) searchEl.addEventListener("input", () => { auditState.search = searchEl.value.trim(); renderAuditContent(content); });
+  if (actionSel) actionSel.addEventListener("change", () => { auditState.filterAction = actionSel.value; setPanelState("audit", { filters: { filterAction: actionSel.value } }); renderAuditContent(content); });
+  if (adminSel) adminSel.addEventListener("change", () => { auditState.filterAdmin = adminSel.value; setPanelState("audit", { filters: { filterAdmin: adminSel.value } }); renderAuditContent(content); });
+  if (fromEl) fromEl.addEventListener("change", () => { auditState.filterFrom = fromEl.value; setPanelState("audit", { filters: { filterFrom: fromEl.value } }); renderAuditContent(content); });
+  if (toEl) toEl.addEventListener("change", () => { auditState.filterTo = toEl.value; setPanelState("audit", { filters: { filterTo: toEl.value } }); renderAuditContent(content); });
+  if (searchEl) searchEl.addEventListener("input", () => { auditState.search = searchEl.value.trim(); setPanelState("audit", { filters: { search: searchEl.value.trim() } }); renderAuditContent(content); });
   const clearEl = content.querySelector("#audit-clear");
   if (clearEl) clearEl.addEventListener("click", () => {
     auditState.filterAction = "";
@@ -4163,6 +4239,7 @@ function renderAuditContent(content) {
     auditState.filterFrom = "";
     auditState.filterTo = "";
     auditState.search = "";
+    setPanelState("audit", { filters: { filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "" } });
     if (actionSel) actionSel.value = "";
     if (adminSel) adminSel.value = "";
     if (fromEl) fromEl.value = "";
