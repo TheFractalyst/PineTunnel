@@ -293,15 +293,38 @@ def _step2_cloudflare(env_path: Path) -> bool:
     if CF_CERT_FILE.exists():
         print("  Already logged in to Cloudflare.")
     else:
-        print("  Opening Cloudflare in your browser...")
-        print("  Log in and select the domain you want to use.")
-        print()
+        print("  Starting Cloudflare login...")
         proc = subprocess.Popen(
             ["cloudflared", "tunnel", "login"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
-        input("  Press Enter after you complete the login in your browser...")
-        proc.wait()
+        login_url = None
+        import time as _time
+        _time.sleep(3)
+        stdout = proc.stdout
+        login_url = None
+        if stdout is not None:
+            while True:
+                line = stdout.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if "https://" in line and "dash.cloudflare.com" in line:
+                    login_url = line
+                    break
+        if login_url:
+            print()
+            print("  Open this URL in your browser to log in and select your domain:")
+            print()
+            print(f"  {login_url}")
+            print()
+            print("  After selecting your domain in Cloudflare, come back here.")
+            input("  Press Enter when done...")
+            proc.wait(timeout=120)
+        else:
+            print("  Waiting for login... (a browser may have opened)")
+            input("  Press Enter after you complete the login in your browser...")
+            proc.wait(timeout=120)
         if not CF_CERT_FILE.exists():
             print("  ! Login not completed.")
             print("  You can use option 2 (tunnel token) instead.")
@@ -388,11 +411,12 @@ def _list_cf_zones() -> list:
             capture_output=True, text=True, timeout=10,
         )
     except Exception:
-        pass
+        return []
     try:
         cert_content = CF_CERT_FILE.read_text()
         import json as _json
-        cert_json_str = cert_content.split("-----BEGIN CERTIFICATE-----")[0].strip()
+        parts = cert_content.split("-----BEGIN CERTIFICATE-----")
+        cert_json_str = parts[0].strip() if len(parts) > 1 else ""
         if cert_json_str:
             cert_json = _json.loads(cert_json_str)
             zones = [z.get("Name", "") for z in cert_json.get("Zones", []) if z.get("Name")]

@@ -1,5 +1,5 @@
 {
-  "version": "7.4.0",
+  "version": "7.4.1",
   "release_date": "2026-07-18",
   "changes": [
     "Cloudflare remotely-managed tunnel flow (Cloudflare-recommended)",
