@@ -210,18 +210,16 @@ async function fetchLicenseList() {
     const res = await http("/api/dashboard/users");
     const data = await res.json();
     const licenses = [];
-    if (data && typeof data === "object") {
-      for (const email of Object.keys(data)) {
-        const user = data[email];
-        if (user && Array.isArray(user.licenses)) {
-          for (const lic of user.licenses) {
-            licenses.push({
-              key: lic.license_key,
-              email: email,
-              name: user.name || email,
-              status: lic.status || "active",
-            });
-          }
+    const users = (data && Array.isArray(data.users)) ? data.users : [];
+    for (const user of users) {
+      if (user && Array.isArray(user.licenses)) {
+        for (const lic of user.licenses) {
+          licenses.push({
+            key: lic.license_key,
+            email: user.email || "",
+            name: user.name || user.email || "",
+            status: lic.status || "active",
+          });
         }
       }
     }
@@ -1532,9 +1530,9 @@ async function loadHomeActivityFeed() {
   const feedEl = document.getElementById("home-activity-feed");
   if (!feedEl) return;
   try {
-    const r = await http("/api/signals/recent?limit=5");
+    const r = await http("/api/trades/admin/dashboard");
     const data = await parseResponse(r);
-    const signals = (data && Array.isArray(data.signals)) ? data.signals : [];
+    const signals = (data && Array.isArray(data.recent_activity)) ? data.recent_activity : [];
     if (signals.length === 0) {
       feedEl.innerHTML = emptyState(ICONS.signals, "No signals yet. Send a test webhook to see it here.");
       return;
@@ -1544,7 +1542,7 @@ async function loadHomeActivityFeed() {
       const action = (s.action || "").toLowerCase();
       const sym = s.symbol || "--";
       const lots = s.volume != null ? s.volume : null;
-      const status = (s.execution_status || "pending").toLowerCase();
+      const status = (s.status || "pending").toLowerCase();
       const ok = status === "executed" || status === "success" || status === "ok";
       const icon = ok ? ICONS.check : status === "failed" || status === "error" ? ICONS.x : ICONS.alert;
       const cls = ok ? "ok" : status === "failed" ? "bad" : "warn";
@@ -2542,8 +2540,7 @@ function renderSignalFeed(content, actions) {
         <input class="input filter-txt" id="feed-filter-symbol" placeholder="Filter by symbol" aria-label="Filter by symbol" value="${escapeHtml(signalFeedState.filterSymbol)}">
         <select class="input filter-sel" id="feed-filter-status" aria-label="Filter by status">
           <option value="">All</option>
-          <option value="executed" ${signalFeedState.filterStatus === "executed" ? "selected" : ""}>Executed</option>
-          <option value="pending" ${signalFeedState.filterStatus === "pending" ? "selected" : ""}>Pending</option>
+          <option value="success" ${signalFeedState.filterStatus === "success" ? "selected" : ""}>Success</option>
           <option value="failed" ${signalFeedState.filterStatus === "failed" ? "selected" : ""}>Failed</option>
         </select>
       </div>
@@ -2570,7 +2567,7 @@ async function pollSignalFeed() {
   if (currentRouteId !== "signals" || !visibilityPolling) return;
   let result;
   try {
-    result = await useFetch("/api/signals/recent?limit=50");
+    result = await useFetch("/api/trades/admin/dashboard");
   } catch (e) {
     console.error("[dashboard] pollSignalFeed fetch error:", e);
     return;
@@ -2595,12 +2592,12 @@ async function pollSignalFeed() {
         card.parentNode.insertBefore(banner, card);
       }
     }
-    if (!data || !data.signals || !Array.isArray(data.signals)) return;
-    const incoming = data.signals;
+    if (!data) return;
+    const incoming = data.recent_activity || [];
     let newRows = [];
     for (const w of incoming) {
-      if (!w || w.id == null) continue;
-      const id = w.id;
+      if (!w) continue;
+      const id = w.id || w.timestamp || Math.random();
       if (signalFeedState.seenIds.has(id)) continue;
       newRows.push(w);
       signalFeedState.seenIds.add(id);
@@ -2610,7 +2607,7 @@ async function pollSignalFeed() {
     }
     if (signalFeedState.rows.length === 0 && incoming.length > 0) {
       signalFeedState.rows = incoming.slice(0, 20);
-      incoming.forEach(w => { if (w && w.id != null) signalFeedState.seenIds.add(w.id); });
+      incoming.forEach(w => { if (w) signalFeedState.seenIds.add(w.id || w.timestamp || Math.random()); });
     }
     renderFeedRows();
     signalFeedState._renderedOnce = true;
@@ -2624,7 +2621,7 @@ function tradeCardHtml(r) {
   const action = (r.action || "").toLowerCase();
   const sym = r.symbol || "--";
   const lots = r.volume != null ? r.volume : null;
-  const status = (r.execution_status || "pending").toLowerCase();
+  const status = (r.status || r.execution_status || "pending").toLowerCase();
   const ok = status === "executed" || status === "success" || status === "ok";
   const cls = ok ? "ok" : status === "failed" || status === "error" ? "bad" : status === "delivered" || status === "pending" ? "warn" : "info";
   const icon = ok ? ICONS.check : status === "failed" ? ICONS.x : ICONS.alert;
@@ -2648,7 +2645,7 @@ function renderFeedRows() {
   const { rows, filterSymbol, filterStatus } = signalFeedState;
   let filtered = rows;
   if (filterSymbol) filtered = filtered.filter(r => (r.symbol || "").toUpperCase().includes(filterSymbol));
-  if (filterStatus) filtered = filtered.filter(r => (r.execution_status || "pending") === filterStatus);
+  if (filterStatus) filtered = filtered.filter(r => (r.status || r.execution_status || "pending") === filterStatus);
   const countEl = document.getElementById("feed-count");
   if (countEl) countEl.textContent = pluralize(filtered.length, "trade");
   if (filtered.length === 0) {
