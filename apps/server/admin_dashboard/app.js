@@ -238,14 +238,6 @@ function autofocusFirst(scope) {
   if (el) setTimeout(() => el.focus(), 50);
 }
 
-function closeOnEscape(overlay, closeFn) {
-  if (!overlay) return;
-  const handler = e => {
-    if (e.key === "Escape") { e.preventDefault(); closeFn(); document.removeEventListener("keydown", handler); }
-  };
-  document.addEventListener("keydown", handler);
-}
-
 function submitOnEnter(scope, submitFn) {
   if (!scope) return;
   scope.addEventListener("keydown", e => {
@@ -349,7 +341,6 @@ function bindRetry(scope, action, fn) {
 }
 let routeTimer = null;
 let overviewRendered = false;
-let overviewSig = null;
 let overviewAllDone = null;
 let visibilityPolling = true;
 let domCache = { content: null, actions: null, sidebar: null };
@@ -674,25 +665,13 @@ function skeletonRow(cols) {
   return `<tr aria-hidden="true">${Array(cols).fill('<td><div class="skeleton line"></div></td>').join("")}</tr>`;
 }
 
-function skeletonTable(cols, rows) {
-  return `<div class="table-wrap"><table class="data-table" aria-busy="true"><tbody>${Array(rows).fill(skeletonRow(cols)).join("")}</tbody></table></div>`;
-}
-
 function skeletonEaCards(n) {
   return Array(n).fill('<div class="ea-card" aria-hidden="true"><div class="ea-card-head"><div class="skeleton line short"></div></div><div class="ea-card-body"><div class="skeleton line"></div><div class="skeleton line"></div><div class="skeleton line short"></div></div></div>').join("");
-}
-
-function skeletonTimeline(n) {
-  return Array(n).fill('<div class="tl-entry" aria-hidden="true"><div class="tl-head"><div class="skeleton line short"></div></div><div class="tl-meta"><div class="skeleton line"></div></div></div>').join("");
 }
 
 function bindRetryToScope(action, fn) {
   const el = document.querySelector(`[data-action="${action}"]`);
   if (el) el.addEventListener("click", e => { e.preventDefault(); fn(); });
-}
-
-function sigOf(obj) {
-  try { return JSON.stringify(obj); } catch { return ""; }
 }
 
 window.addEventListener("unhandledrejection", e => {
@@ -1182,7 +1161,7 @@ function route(id) {
       actions.innerHTML = "";
       if (id !== "overview") overviewRendered = false;
       if (id === "overview") {
-        if (overviewRendered && overviewSig === lastSetupStatus) {
+        if (overviewRendered) {
           startOverviewPoll();
           startHealthPolling();
           if (healthState.data || healthState.error) updateHealthCard();
@@ -1964,9 +1943,9 @@ function renderSignalFeed(content, actions) {
               <th scope="col">License</th>
               <th scope="col">Action</th>
               <th scope="col">Symbol</th>
-              <th scope="col">Lots</th>
-              <th scope="col">Status</th>
-              <th scope="col">Latency</th>
+              <th scope="col" class="th-num">Lots</th>
+              <th scope="col" class="td-status">Status</th>
+              <th scope="col" class="th-num">Latency</th>
             </tr>
           </thead>
           <tbody id="feed-body">
@@ -2097,8 +2076,8 @@ function feedRowHtml(r) {
     <td class="td-key">${escapeHtml(lk)}</td>
     <td><span class="action-tag ${actionCls}">${escapeHtml(action)}</span></td>
     <td>${escapeHtml(sym)}</td>
-    <td>${escapeHtml(String(lots))}</td>
-    <td><span class="status-tag ${cls}">${escapeHtml(status)}</span></td>
+    <td class="td-num">${escapeHtml(String(lots))}</td>
+    <td class="td-status"><span class="status-tag ${cls}">${escapeHtml(status)}</span></td>
     <td class="td-lat">${escapeHtml(lat)}</td>
   </tr>`;
 }
@@ -3174,9 +3153,9 @@ function renderWebhookLogs(content) {
               <th scope="col" class="sortable" data-sort="ip_address">Source IP</th>
               <th scope="col" class="sortable" data-sort="action">Action</th>
               <th scope="col" class="sortable" data-sort="symbol">Symbol</th>
-              <th scope="col" class="sortable" data-sort="volume">Volume</th>
-              <th scope="col" class="sortable" data-sort="response_code">Status</th>
-              <th scope="col" class="sortable" data-sort="execution_time_ms">Resp ms</th>
+              <th scope="col" class="sortable th-num" data-sort="volume">Volume</th>
+              <th scope="col" class="sortable td-status" data-sort="response_code">Status</th>
+              <th scope="col" class="sortable th-num" data-sort="execution_time_ms">Resp ms</th>
               <th scope="col">Payload</th>
             </tr>
           </thead>
@@ -3273,9 +3252,9 @@ function renderWebhookTable() {
         <td class="mono">${escapeHtml(r.ip_address || "--")}</td>
         <td>${escapeHtml(r.action || "--")}</td>
         <td class="mono">${escapeHtml(r.symbol || "--")}</td>
-        <td class="mono">${escapeHtml(String(r.volume || "--"))}</td>
-        <td><span class="badge ${cls}"><span class="dot" aria-hidden="true"></span>${escapeHtml(String(r.response_code || "--"))}</span></td>
-        <td class="mono">${escapeHtml(String(r.execution_time_ms || "--"))}</td>
+        <td class="mono td-num">${escapeHtml(String(r.volume || "--"))}</td>
+        <td class="td-status"><span class="badge ${cls}"><span class="dot" aria-hidden="true"></span>${escapeHtml(String(r.response_code || "--"))}</span></td>
+        <td class="mono td-num">${escapeHtml(String(r.execution_time_ms || "--"))}</td>
         <td class="mono trunc" title="${escapeHtml(preview)}">${escapeHtml(preview)}</td>
       </tr>`;
     }).join("");
