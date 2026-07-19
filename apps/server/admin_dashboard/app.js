@@ -391,10 +391,15 @@ const PALETTE = {
   muted: "#9a9aa3",
   muted2: "#82828b",
   card: "#131318",
-  grid: "rgba(255,255,255,0.08)",
-  gridFaint: "rgba(255,255,255,0.05)",
-  gridTrack: "rgba(255,255,255,0.06)",
+  card2: "#1a1a22",
+  bg: "#0a0a0f",
+  grid: "rgba(255,255,255,0.06)",
+  gridFaint: "rgba(255,255,255,0.03)",
+  gridTrack: "rgba(255,255,255,0.08)",
+  greenBg: "rgba(76,183,130,0.1)",
+  redBg: "rgba(235,87,87,0.1)",
   amberBg: "rgba(242,153,74,0.1)",
+  blueBg: "rgba(94,106,210,0.1)",
 };
 
 function emptyState(icon, msg, actionLabel, actionName) {
@@ -886,6 +891,7 @@ function setTile(id, value, cls) {
   if (v) {
     v.textContent = value;
     v.setAttribute("aria-live", "polite");
+    v.classList.toggle("empty", value === "--" || value === "N/A" || value == null);
   }
 }
 
@@ -2630,7 +2636,7 @@ function drawBarChart(daily, dash) {
   }).join("");
   const labels = hours.filter((_, i) => i % 3 === 0).map(h => {
     const x = pad + h.hour * barW + barW / 2;
-    return `<text x="${x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${h.hour}</text>`;
+    return `<text x="${x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10" class="axis-label">${h.hour}</text>`;
   }).join("");
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg${analyticsChartsAnimated ? "" : " chart-entrance"}" role="img" aria-label="Trades by hour: ${totalTrades} trades today, peak at ${peakHour.hour}:00 with ${peakHour.count} trades">
     <title>Trades by hour - ${totalTrades} total trades today</title>
@@ -3998,7 +4004,7 @@ function renderDiagnostics(content) {
       <h2 class="card-title">Overall Status</h2>
       <div class="stat big-stat" id="diag-overall"><div class="value skeleton line" aria-live="polite"></div><div class="label">Running diagnostics...</div></div>
     </div>
-    <div class="grid grid-4" id="diag-grid">
+    <div class="probe-grid" id="diag-grid">
       ${Array(8).fill('<div class="card probe-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}
     </div>
   `;
