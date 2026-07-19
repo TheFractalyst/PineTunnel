@@ -3,7 +3,12 @@ const POLL_INTERVAL = 10000;
 const FETCH_TIMEOUT = 10000;
 const RETRY_DELAY = 2000;
 const SKELETON_MIN_MS = 200;
+const CACHE_FRESH_MS = 5000;
+const CACHE_TTL_MS = 30000;
 let pollTimers = [];
+let requestGen = 0;
+let renderToken = 0;
+const inflight = new Map();
 let currentRoute = "overview";
 let pendingRouteAfterLogin = "overview";
 let lastSetupStatus = null;
@@ -13,6 +18,34 @@ let connBackoff = 5000;
 let connRetryTimer = null;
 let toastStack = [];
 const TOAST_MAX = 3;
+
+const panelStates = {};
+function getPanelState(id) {
+  if (!panelStates[id]) {
+    panelStates[id] = { data: null, error: null, loading: false, filters: {}, pollTimer: null, sig: null };
+  }
+  return panelStates[id];
+}
+function setPanelState(id, patch) {
+  const s = getPanelState(id);
+  if (patch && patch.filters) { Object.assign(s.filters, patch.filters); delete patch.filters; }
+  if (patch) Object.assign(s, patch);
+}
+function cleanupPanel(id) {
+  const s = panelStates[id];
+  if (s && s.pollTimer) { clearInterval(s.pollTimer); s.pollTimer = null; }
+}
+function resetPanelData(id) {
+  const s = getPanelState(id);
+  s.data = null; s.error = null; s.loading = false; s.sig = null;
+}
+function addPoll(timer) {
+  const s = getPanelState(currentRoute);
+  if (s.pollTimer) clearInterval(s.pollTimer);
+  s.pollTimer = timer;
+  pollTimers.push(timer);
+}
+function staleRender(token) { return token !== renderToken; }
 
 const CSRF_HEADER = "X-Admin-CSRF";
 
@@ -24,6 +57,292 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+const REQ_MARK = ' <span class="req" aria-hidden="true">*</span>';
+
+function validateTgToken(v) {
+  if (!v) return "Bot token is required";
+  if (!/^\d+:[A-Za-z0-9_-]{30,}$/.test(v)) return "Token must match 123456:ABC... (30+ chars after colon)";
+  return "";
+}
+
+function validateTgUid(v) {
+  if (!v) return "Telegram user ID is required";
+  if (!/^\d+$/.test(v)) return "User ID must be numeric";
+  if (parseInt(v, 10) <= 0) return "User ID must be positive";
+  return "";
+}
+
+function validateSymbol(v) {
+  if (!v) return "Symbol is required";
+  if (!/^[A-Za-z0-9]{1,12}$/.test(v)) return "Symbol: alphanumeric, max 12 chars";
+  return "";
+}
+
+function validateLots(v) {
+  if (v === "" || v == null) return "Lots is required";
+  const n = parseFloat(v);
+  if (isNaN(n)) return "Lots must be a number";
+  if (n <= 0) return "Lots must be greater than 0";
+  if (n > 1000) return "Lots must be 1000 or less";
+  return "";
+}
+
+function validateDays(v) {
+  if (v === "" || v == null) return "Days is required";
+  const n = parseInt(v, 10);
+  if (isNaN(n) || String(n) !== String(v).trim()) return "Days must be an integer";
+  if (n < 1 || n > 365) return "Days must be between 1 and 365";
+  return "";
+}
+
+function validateUrl(v) {
+  if (!v) return "URL is required";
+  if (!/^https:\/\//i.test(v)) return "URL must start with https://";
+  return "";
+}
+
+function validateEmail(v) {
+  if (!v) return "Email is required";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "Enter a valid email address";
+  return "";
+}
+
+function validateLoginCode(v) {
+  if (!v) return "Login code is required";
+  return "";
+}
+
+function showFieldError(inputId, msg) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  let err = input.parentNode.querySelector(".field-error");
+  if (msg) {
+    if (!err) {
+      err = document.createElement("div");
+      err.className = "field-error";
+      err.setAttribute("role", "alert");
+      input.parentNode.insertBefore(err, input.nextSibling);
+    }
+    err.innerHTML = ICONS.alert + escapeHtml(msg);
+    input.setAttribute("aria-invalid", "true");
+  } else {
+    if (err) err.remove();
+    input.removeAttribute("aria-invalid");
+  }
+}
+
+function clearFieldError(inputId) {
+  showFieldError(inputId, "");
+}
+
+function clearFormErrors(scope) {
+  scope.querySelectorAll(".field-error").forEach(e => e.remove());
+  scope.querySelectorAll("[aria-invalid]").forEach(e => e.removeAttribute("aria-invalid"));
+}
+
+function setBtnLoading(btn, label) {
+  if (!btn) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>' + escapeHtml(label);
+}
+
+function setBtnSuccess(btn, label, icon) {
+  if (!btn) return;
+  btn.disabled = true;
+  btn.innerHTML = (icon || ICONS.check) + escapeHtml(label);
+  btn.classList.add("btn-success");
+}
+
+function setBtnError(btn, label, icon) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.innerHTML = (icon || ICONS.x) + escapeHtml(label);
+  btn.classList.add("btn-error");
+  btn.classList.remove("btn-success");
+}
+
+function setBtnIdle(btn, html) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.innerHTML = html;
+  btn.classList.remove("btn-success", "btn-error");
+}
+
+let setupDirty = false;
+window.addEventListener("beforeunload", e => {
+  if (setupDirty) {
+    e.preventDefault();
+    e.returnValue = "You have unsaved changes in the Setup Wizard.";
+    return e.returnValue;
+  }
+});
+
+const VALIDATORS = {
+  tgToken: (v) => {
+    if (!v) return "Bot token is required";
+    if (!/^\d+:[A-Za-z0-9_-]{35}$/.test(v)) return "Token must match 123456:ABC... (35 char secret)";
+    return "";
+  },
+  tgUid: (v) => {
+    if (!v) return "Telegram user ID is required";
+    if (!/^\d+$/.test(v)) return "User ID must be numeric";
+    if (parseInt(v, 10) <= 0) return "User ID must be greater than 0";
+    return "";
+  },
+  cfToken: (v) => {
+    if (!v) return "Tunnel token is required";
+    if (!v.startsWith("eyJ")) return "Token must start with eyJ";
+    return "";
+  },
+  cfUrl: (v) => {
+    if (!v) return "Tunnel URL is required";
+    if (!v.startsWith("https://")) return "URL must start with https://";
+    return "";
+  },
+  days: (v) => {
+    const n = parseInt(v, 10);
+    if (isNaN(n)) return "Enter a whole number";
+    if (n < 1 || n > 3650) return "Must be between 1 and 3650";
+    return "";
+  },
+  symbol: (v) => {
+    if (!v) return "Symbol is required";
+    if (!/^[A-Z]+$/.test(v)) return "Uppercase letters only";
+    return "";
+  },
+  lots: (v) => {
+    const n = parseFloat(v);
+    if (isNaN(n)) return "Enter a number";
+    if (n <= 0) return "Must be positive";
+    return "";
+  },
+  email: (v) => {
+    if (!v) return "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "Enter a valid email";
+    return "";
+  },
+  loginCode: (v) => v ? "" : "Login code is required",
+  loginUid: (v) => {
+    if (!v) return "Telegram user ID is required";
+    if (!/^\d+$/.test(v)) return "User ID must be numeric";
+    return "";
+  },
+};
+
+function validateInput(input, key) {
+  const v = input.value.trim();
+  const err = VALIDATORS[key] ? VALIDATORS[key](v) : "";
+  const wrap = input.closest(".field") || input.parentElement;
+  setFieldState(input, wrap, err);
+  return !err;
+}
+
+function setFieldState(input, wrap, errMsg) {
+  if (!wrap) wrap = input.parentElement;
+  let msgEl = wrap.querySelector(".field-error");
+  if (errMsg) {
+    input.classList.add("input-error");
+    input.classList.remove("input-ok");
+    input.setAttribute("aria-invalid", "true");
+    if (!msgEl) {
+      msgEl = document.createElement("div");
+      msgEl.className = "field-error";
+      wrap.appendChild(msgEl);
+    }
+    msgEl.textContent = errMsg;
+    input.setAttribute("aria-describedby", msgEl.id || (msgEl.id = input.id + "-err"));
+  } else {
+    input.classList.remove("input-error");
+    if (input.value.trim()) input.classList.add("input-ok");
+    else input.classList.remove("input-ok");
+    input.removeAttribute("aria-invalid");
+    if (msgEl) msgEl.remove();
+  }
+}
+
+function attachValidator(input, key) {
+  if (!input) return;
+  input.addEventListener("blur", () => validateInput(input, key));
+  input.addEventListener("input", () => {
+    if (input.classList.contains("input-error")) validateInput(input, key);
+  });
+}
+
+function addPasswordToggle(input) {
+  if (!input || input.dataset.toggleAdded) return;
+  input.dataset.toggleAdded = "1";
+  const wrap = input.closest(".field") || input.parentElement;
+  if (!wrap) return;
+  wrap.classList.add("has-toggle");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "pwd-toggle";
+  btn.setAttribute("aria-label", "Show value");
+  btn.innerHTML = ICONS.eye;
+  btn.addEventListener("click", e => {
+    e.preventDefault();
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.innerHTML = show ? ICONS.eyeOff : ICONS.eye;
+    btn.setAttribute("aria-label", show ? "Hide value" : "Show value");
+    input.focus();
+  });
+  wrap.appendChild(btn);
+}
+
+function setBtnLoading(btn, text) {
+  if (!btn) return;
+  btn.dataset.origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span>${escapeHtml(text)}`;
+}
+
+function setBtnSuccess(btn, text, restoreMs = 2000) {
+  if (!btn) return;
+  btn.innerHTML = `${ICONS.check}${escapeHtml(text)}`;
+  btn.classList.add("btn-success");
+  setTimeout(() => {
+    btn.classList.remove("btn-success");
+    btn.disabled = false;
+    btn.innerHTML = btn.dataset.origHtml || btn.innerHTML;
+  }, restoreMs);
+}
+
+function setBtnError(btn, text) {
+  if (!btn) return;
+  btn.classList.add("btn-error");
+  btn.innerHTML = `${ICONS.x}${escapeHtml(text)}`;
+  setTimeout(() => {
+    btn.classList.remove("btn-error");
+    btn.disabled = false;
+    btn.innerHTML = btn.dataset.origHtml || btn.innerHTML;
+  }, 2500);
+}
+
+function autofocusFirst(scope) {
+  if (!scope) return;
+  const el = scope.querySelector("input:not([disabled]):not([readonly]), select:not([disabled]), textarea:not([disabled])");
+  if (el) setTimeout(() => el.focus(), 50);
+}
+
+function closeOnEscape(overlay, closeFn) {
+  if (!overlay) return;
+  const handler = e => {
+    if (e.key === "Escape") { e.preventDefault(); closeFn(); document.removeEventListener("keydown", handler); }
+  };
+  document.addEventListener("keydown", handler);
+}
+
+function submitOnEnter(scope, submitFn) {
+  if (!scope) return;
+  scope.addEventListener("keydown", e => {
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA" && e.target.tagName !== "SELECT") {
+      e.preventDefault();
+      submitFn();
+    }
+  });
 }
 
 function adminHeaders(extra = {}) {
@@ -84,6 +403,10 @@ const PALETTE = {
   text: "#e4e4e7",
   muted: "#9a9aa3",
   muted2: "#82828b",
+  card: "#131318",
+  grid: "rgba(255,255,255,0.08)",
+  gridFaint: "rgba(255,255,255,0.05)",
+  gridTrack: "rgba(255,255,255,0.06)",
 };
 
 function emptyState(icon, msg, actionLabel, actionName) {
@@ -111,14 +434,13 @@ function bindRetry(scope, action, fn) {
   if (el) el.addEventListener("click", e => { e.preventDefault(); fn(); });
 }
 let routeTimer = null;
-let domCache = { content: null, actions: null, sidebar: null };
 let overviewRendered = false;
 let overviewSig = null;
 let visibilityPolling = true;
 
 const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="190 48 475 48" preserveAspectRatio="xMidYMid meet" class="brand-logo" aria-label="PineTunnel"><g fill="currentColor"><g transform="translate(196,91.6)"><path d="M32.25-37.94c1.38 0 2.66.34 3.81 1.03 1.16.68 2.07 1.6 2.75 2.75.68 1.15 1.02 2.42 1.02 3.81v7.58c0 1.39-.34 2.66-1.02 3.81-.68 1.15-1.6 2.07-2.75 2.75-1.15.68-2.42 1.02-3.81 1.02H9.48v15.17H1.89v-37.94zM9.48-22.77h22.77v-7.58H9.48z"/></g><g transform="translate(243,91.6)"><path d="M39.83 0H1.89v-7.59h15.19v-22.75H1.89v-7.59h37.94v7.59H24.66v22.75h15.17z"/></g><g transform="translate(290,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(338,91.6)"><path d="M39.83-37.94v7.59H9.48v7.58h30.35v7.59H9.48v7.58h30.35V0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-22.75c0-1.39.34-2.66 1.02-3.81.68-1.16 1.6-2.07 2.75-2.75 1.16-.69 2.44-1.03 3.83-1.03z"/></g><g transform="translate(385,91.6)"><path d="M39.83-37.94v7.59H24.66V0h-7.58v-30.35H1.89v-7.59z"/></g><g transform="translate(432,91.6)"><path d="M32.25 0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-30.35h7.59v30.35H32.25v-30.35h7.58v30.35c0 1.39-.34 2.66-1.02 3.81-.68 1.16-1.6 2.07-2.75 2.75-1.15.69-2.43 1.03-3.81 1.03z"/></g><g transform="translate(479,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(526,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(574,91.6)"><path d="M39.83-37.94v7.59H9.48v7.58h30.35v7.59H9.48v7.58h30.35V0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-22.75c0-1.39.34-2.66 1.02-3.81.68-1.16 1.6-2.07 2.75-2.75 1.16-.69 2.44-1.03 3.83-1.03z"/></g><g transform="translate(621,91.6)"><path d="M39.83 0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-30.35h7.59v30.35h30.35z"/></g></g></svg>';
 
-const SVG_ATTRS = ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"';
+const SVG_ATTRS = ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
 const ICONS = {
   overview: '<svg' + SVG_ATTRS + '><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>',
   signals: '<svg' + SVG_ATTRS + '><path d="M2 12h4l3-9 6 18 3-9h4"/></svg>',
@@ -149,82 +471,153 @@ const ICONS = {
   license: '<svg' + SVG_ATTRS + '><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 2.5l3 3L16 8l1.5 1.5L14 13"/></svg>',
   security: '<svg' + SVG_ATTRS + '><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
   audit: '<svg' + SVG_ATTRS + '><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  eye: '<svg' + SVG_ATTRS + '><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg' + SVG_ATTRS + '><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
   trash: '<svg' + SVG_ATTRS + '><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   ban: '<svg' + SVG_ATTRS + '><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>',
   power: '<svg' + SVG_ATTRS + '><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>',
   edit: '<svg' + SVG_ATTRS + '><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
   plus: '<svg' + SVG_ATTRS + '><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  minus: '<svg' + SVG_ATTRS + '><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  search: '<svg' + SVG_ATTRS + '><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  filter: '<svg' + SVG_ATTRS + '><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
+  eye: '<svg' + SVG_ATTRS + '><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  "eye-off": '<svg' + SVG_ATTRS + '><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  "chevron-up": '<svg' + SVG_ATTRS + '><polyline points="18 15 12 9 6 15"/></svg>',
+  "chevron-down": '<svg' + SVG_ATTRS + '><polyline points="6 9 12 15 18 9"/></svg>',
+  "chevron-right": '<svg' + SVG_ATTRS + '><polyline points="9 18 15 12 9 6"/></svg>',
+  stop: '<svg' + SVG_ATTRS + '><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  download: '<svg' + SVG_ATTRS + '><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  upload: '<svg' + SVG_ATTRS + '><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+  logout: '<svg' + SVG_ATTRS + '><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
 };
 
 const cache = {};
+function getCached(path) {
+  const e = cache[path];
+  if (!e) return null;
+  if (Date.now() - e.ts > CACHE_TTL_MS) { delete cache[path]; return null; }
+  return e.data;
+}
+function setCached(path, data) { cache[path] = { data, ts: Date.now() }; }
+function invalidateCache(path) { delete cache[path]; }
+function clearCache() { Object.keys(cache).forEach(k => delete cache[k]); }
+function forceRefresh(routeId) {
+  clearCache();
+  route(routeId || currentRoute);
+}
 
 async function http(path, opts = {}) {
-  const attempt = async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-    try {
-      const r = await fetch(path, {
-        ...opts,
-        headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-        signal: controller.signal,
-      });
-      if (r.status === 401) {
-        if (path.startsWith("/api/dashboard/")) {
-          pendingRouteAfterLogin = currentRoute;
-          showLogin(true);
-        }
-        const e = new Error("Your session expired. Please log in again.");
-        e.status = 401;
-        e.transient = false;
-        throw e;
-      }
-      if (!r.ok) {
-        const e = new Error(`HTTP ${r.status}`);
-        e.status = r.status;
-        e.transient = r.status >= 500;
-        throw e;
-      }
-      return r;
-    } catch (e) {
-      if (e.name === "AbortError") {
-        e.message = "Request timed out. Check if the server is running.";
-        e.transient = true;
-        e.status = 0;
-      } else if (e instanceof TypeError) {
-        e.message = "Connection failed. The server is unreachable.";
-        e.transient = true;
-        e.status = 0;
-      } else if (e.transient === undefined) {
-        e.transient = false;
-      }
-      e.friendly = friendlyMsg(e);
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-  try {
-    return await attempt();
-  } catch (e) {
-    if (e.transient && !opts._retried) {
-      await new Promise(r => setTimeout(r, RETRY_DELAY));
-      return await http(path, { ...opts, _retried: true });
-    }
-    throw e;
+  const method = (opts.method || "GET").toUpperCase();
+  const isGet = method === "GET";
+  const dedupKey = isGet ? method + " " + path : null;
+  if (dedupKey && inflight.has(dedupKey)) {
+    return inflight.get(dedupKey);
   }
+  const run = (async () => {
+    const attempt = async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+      try {
+        const mergedHeaders = { "Content-Type": "application/json", ...(opts.headers || {}) };
+        if (!isGet && !mergedHeaders[CSRF_HEADER]) {
+          mergedHeaders[CSRF_HEADER] = "1";
+        }
+        const r = await fetch(path, {
+          ...opts,
+          headers: mergedHeaders,
+          signal: controller.signal,
+        });
+        if (r.status === 401) {
+          if (path.startsWith("/api/dashboard/")) {
+            pendingRouteAfterLogin = currentRoute;
+            showLogin(true);
+          }
+          const e = new Error("Your session expired. Please log in again.");
+          e.status = 401;
+          e.transient = false;
+          throw e;
+        }
+        if (!r.ok) {
+          const e = new Error(`HTTP ${r.status}`);
+          e.status = r.status;
+          e.transient = r.status >= 500;
+          throw e;
+        }
+        return r;
+      } catch (e) {
+        if (e.name === "AbortError") {
+          e.message = "Request timed out. Check if the server is running.";
+          e.transient = true;
+          e.status = 0;
+        } else if (e instanceof TypeError) {
+          e.message = "Connection failed. The server is unreachable.";
+          e.transient = true;
+          e.status = 0;
+        } else if (e.transient === undefined) {
+          e.transient = false;
+        }
+        e.friendly = friendlyMsg(e);
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    try {
+      return await attempt();
+    } catch (e) {
+      if (e.transient && !opts._retried) {
+        const gen = requestGen;
+        await new Promise(r => setTimeout(r, RETRY_DELAY));
+        if (gen !== requestGen) {
+          const navErr = new Error("Request cancelled - you navigated away.");
+          navErr.status = 0;
+          navErr.transient = false;
+          navErr.friendly = navErr.message;
+          throw navErr;
+        }
+        return await http(path, { ...opts, _retried: true });
+      }
+      throw e;
+    }
+  })();
+  if (dedupKey) {
+    inflight.set(dedupKey, run);
+    run.finally(() => inflight.delete(dedupKey));
+  }
+  return run;
+}
+
+async function parseResponse(r) {
+  if (r.status === 204) return null;
+  const ct = r.headers.get("content-type") || "";
+  if (ct.includes("text/plain")) return await r.text();
+  if (ct.includes("application/json")) {
+    const text = await r.text();
+    if (!text) return null;
+    return JSON.parse(text);
+  }
+  const text = await r.text();
+  if (!text) return null;
+  try { return JSON.parse(text); } catch { return text; }
 }
 
 async function useFetch(path, opts = {}) {
+  const cached = cache[path];
+  if (cached && (Date.now() - cached.ts) < CACHE_FRESH_MS) {
+    return { data: cached.data, error: null, loading: false, stale: false };
+  }
   try {
     const r = await http(path, opts);
-    const data = await r.json();
-    cache[path] = { data, ts: Date.now() };
+    const data = await parseResponse(r);
+    setCached(path, data);
     hideConnectionLost();
     return { data, error: null, loading: false, stale: false };
   } catch (e) {
     const msg = friendlyMsg(e);
-    if (cache[path]) {
-      return { data: cache[path].data, error: msg, loading: false, stale: true };
+    const staleData = getCached(path);
+    if (staleData) {
+      return { data: staleData, error: msg, loading: false, stale: true };
     }
     if (e.status !== 401) showConnectionLost(msg);
     return { data: null, error: msg, loading: false, stale: false };
@@ -246,31 +639,44 @@ function showLogin(sessionExpired) {
       <h1>PineTunnel Login</h1>
       <p>Send /login to your Telegram bot to get a one-time code</p>
       ${notice}
-      <div class="login-form">
-        <input class="input" id="login-code" placeholder="Login code" autocomplete="off">
-        <input class="input" id="login-uid" type="number" placeholder="Telegram user ID">
+      <div class="login-form" id="login-form">
+        <div class="field">
+          <label for="login-code">Login code <span class="req">*</span></label>
+          <input class="input" id="login-code" placeholder="Login code" autocomplete="one-time-code" spellcheck="false" inputmode="numeric">
+          <div class="hint">One-time code from your Telegram bot</div>
+        </div>
+        <div class="field">
+          <label for="login-uid">Telegram user ID <span class="req">*</span></label>
+          <input class="input" id="login-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric">
+          <div class="hint">Message @userinfobot to get your ID</div>
+        </div>
         <button class="btn primary lg" id="login-submit" data-action="do-login">Login</button>
-        <div id="login-error"></div>
+        <div id="login-error" aria-live="polite"></div>
       </div>
     </div>`;
   const btn = app.querySelector("[data-action='do-login']");
+  const form = app.querySelector("#login-form");
+  const codeInput = app.querySelector("#login-code");
+  const uidInput = app.querySelector("#login-uid");
   if (btn) btn.addEventListener("click", e => { e.preventDefault(); doLogin(); });
+  attachValidator(codeInput, "loginCode");
+  attachValidator(uidInput, "loginUid");
+  submitOnEnter(form, doLogin);
+  autofocusFirst(form);
 }
 
 async function doLogin() {
-  const code = document.getElementById("login-code").value.trim();
-  const uid = parseInt(document.getElementById("login-uid").value.trim(), 10);
+  const codeEl = document.getElementById("login-code");
+  const uidEl = document.getElementById("login-uid");
   const err = document.getElementById("login-error");
   const btn = document.getElementById("login-submit");
-  if (!code || !uid) {
-    err.innerHTML = `<div class="inline-error">Code and user ID are required</div>`;
-    return;
-  }
-  btn.disabled = true;
-  btn.textContent = "Logging in...";
+  const okCode = validateInput(codeEl, "loginCode");
+  const okUid = validateInput(uidEl, "loginUid");
+  if (!okCode || !okUid) return;
+  setBtnLoading(btn, "Logging in...");
   err.innerHTML = "";
   try {
-    const r = await http(`${API}/login`, { method: "POST", headers: jsonHeaders(true), body: JSON.stringify({ code, user_id: uid }) });
+    const r = await http(`${API}/login`, { method: "POST", headers: jsonHeaders(true), body: JSON.stringify({ code: codeEl.value.trim(), user_id: parseInt(uidEl.value.trim(), 10) }) });
     if (r.ok) {
       loginVisible = false;
       toast("Logged in", "ok");
@@ -279,8 +685,7 @@ async function doLogin() {
       route(dest);
     }
   } catch (e) {
-    btn.disabled = false;
-    btn.textContent = "Login";
+    setBtnError(btn, "Login");
     err.innerHTML = `<div class="inline-error">${escapeHtml(friendlyMsg(e))}</div>`;
   }
 }
@@ -341,15 +746,53 @@ function staleBanner() {
   return `<div class="stale-banner">${ICONS.alert}<span>Showing last known data - connection issue</span></div>`;
 }
 
+function errorPanel(name, msg, action) {
+  return `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load ${escapeHtml(name)}</div><div class="sub">${escapeHtml(msg || "Server error or unreachable")}</div><button class="btn outline sm mt" data-action="${escapeHtml(action)}">${ICONS.refresh}Retry</button></div>`;
+}
+
+function emptyState(title, subtitle, iconKey) {
+  const icon = ICONS[iconKey] || ICONS.check;
+  return `<div class="empty"><div class="icon">${icon}</div><div class="msg">${escapeHtml(title)}</div><div class="sub">${escapeHtml(subtitle)}</div></div>`;
+}
+
+function partialWarning(label) {
+  return `<div class="partial-warning">${ICONS.alert}<span>${escapeHtml(label)}</span></div>`;
+}
+
+function skeletonRow(cols) {
+  return `<tr>${Array(cols).fill('<td><div class="skeleton line"></div></td>').join("")}</tr>`;
+}
+
+function skeletonTable(cols, rows) {
+  return `<div class="table-wrap"><table class="data-table"><tbody>${Array(rows).fill(skeletonRow(cols)).join("")}</tbody></table></div>`;
+}
+
+function skeletonEaCards(n) {
+  return Array(n).fill('<div class="ea-card"><div class="ea-card-head"><div class="skeleton line short"></div></div><div class="ea-card-body"><div class="skeleton line"></div><div class="skeleton line"></div><div class="skeleton line short"></div></div></div>').join("");
+}
+
+function skeletonTimeline(n) {
+  return Array(n).fill('<div class="tl-entry"><div class="tl-head"><div class="skeleton line short"></div></div><div class="tl-meta"><div class="skeleton line"></div></div></div>').join("");
+}
+
+function bindRetryToScope(action, fn) {
+  const el = document.querySelector(`[data-action="${action}"]`);
+  if (el) el.addEventListener("click", e => { e.preventDefault(); fn(); });
+}
+
+function sigOf(obj) {
+  try { return JSON.stringify(obj); } catch { return ""; }
+}
+
 window.addEventListener("unhandledrejection", e => {
   if (e.reason && (e.reason instanceof TypeError || e.reason.name === "AbortError")) {
-    showConnectionLost(e.reason.message || "Network error");
+    showConnectionLost(friendlyMsg(e.reason));
     e.preventDefault();
   }
 });
 window.addEventListener("error", e => {
   const msg = e.message || "Runtime error";
-  if (/fetch|network|abort|timeout/i.test(msg)) showConnectionLost(msg);
+  if (/fetch|network|abort|timeout|load failed/i.test(msg)) showConnectionLost(msg);
 });
 
 let healthState = { data: null, error: null, stale: false };
@@ -391,7 +834,7 @@ function svgGauge(value, label, opts = {}) {
   const dash = (pct != null) ? (pct / 100) * circumference : 0;
   return `<div class="gauge-wrap">
     <svg class="gauge" viewBox="0 0 ${size} ${size}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${label}: ${display}">
-      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="${stroke}"/>
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${PALETTE.gridTrack}" stroke-width="${stroke}"/>
       <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
         stroke-dasharray="${dash} ${circumference}" stroke-linecap="round"
         transform="rotate(-90 ${cx} ${cy})" class="gauge-arc" style="transition: stroke-dasharray 0.6s ease, stroke 0.3s ease"/>
@@ -411,15 +854,16 @@ async function fetchHealth() {
     const hRes = await http("/api/system/health");
     const health = await hRes.json();
     let connections = null;
+    let connError = null;
     try {
       const cRes = await http("/api/connections");
       connections = await cRes.json();
-    } catch {}
-    healthState = { data: { health, connections }, error: null, stale: false };
+    } catch (ce) { connError = friendlyMsg(ce); }
+    healthState = { data: { health, connections }, error: null, stale: false, connError };
     hideConnectionLost();
   } catch (e) {
-    healthState = { data: prev, error: e.message, stale: true };
-    if (!prev && e.status !== 401) showConnectionLost(e.message);
+    healthState = { data: prev, error: friendlyMsg(e), stale: true };
+    if (!prev && e.status !== 401) showConnectionLost(friendlyMsg(e));
   }
   if (healthActive) updateHealthCard();
 }
@@ -466,11 +910,30 @@ function updateHealthCard() {
   if (!data && error) {
     const grid = document.getElementById("health-grid");
     if (grid) {
-      grid.innerHTML = `<div class="empty grid-span-all"><div class="msg">Health unavailable</div><div class="sub">${escapeHtml(error)}</div></div>`;
+      grid.innerHTML = errorBlock({
+        title: "Could not load health metrics",
+        detail: error,
+        hint: "Check if the server is running and try again.",
+        retryAction: "retry-overview",
+        retryLabel: "Retry",
+      });
+      bindRetry(card, "retry-overview", () => route("overview"));
     }
     return;
   }
   if (!data) return;
+  if (data.connError) {
+    const existing = titleEl.querySelector(".partial-badge");
+    if (!existing) {
+      const b = document.createElement("span");
+      b.className = "partial-badge";
+      b.innerHTML = partialErrorBadge("EA count unavailable");
+      titleEl.appendChild(b);
+    }
+  } else {
+    const existing = titleEl.querySelector(".partial-badge");
+    if (existing) existing.remove();
+  }
   const h = data.health;
   const c = data.connections;
   const uptimeSec = h.uptime_seconds;
@@ -502,6 +965,10 @@ function updateHealthCard() {
 }
 
 function clearPolls() {
+  requestGen++;
+  renderToken++;
+  inflight.clear();
+  Object.keys(panelStates).forEach(id => cleanupPanel(id));
   pollTimers.forEach(t => clearInterval(t));
   pollTimers = [];
   stopHealthPolling();
@@ -595,7 +1062,7 @@ function render() {
     return `<div class="nav-group${expanded ? "" : " collapsed"}" data-group="${g.id}">
       <button class="nav-group-header" data-toggle="${g.id}" aria-expanded="${expanded}" aria-controls="nav-items-${g.id}" type="button">
         <span class="nav-group-label">${g.label}</span>
-        <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div class="nav-group-items" id="nav-items-${g.id}">${navHtml(g.items)}</div>
     </div>`;
@@ -615,11 +1082,11 @@ function render() {
       <nav class="sidebar" aria-label="Main navigation">
         <div class="brand">${LOGO_SVG}</div>
         <div class="nav-scroll">${groupHtml}</div>
-        <div class="footer"><span class="pulse-dot" aria-hidden="true"></span><span>System Online - v1.0</span></div>
+        <div class="footer"><svg class="pulse-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg><span>System Online - v1.0</span></div>
       </nav>
       <div class="main-area">
         <header class="header" role="banner">
-          <div class="title" id="page-title">Overview</div>
+          <h1 class="title" id="page-title">Overview</h1>
           <div class="actions" id="header-actions"></div>
         </header>
         <main class="content" id="content" tabindex="-1"></main>
@@ -628,7 +1095,7 @@ function render() {
     <nav class="mobile-nav" aria-label="Mobile navigation">
       ${mobilePrimaryItems}
       <button class="tab mobile-more" data-action="mobile-more" type="button" aria-haspopup="dialog" tabindex="0">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
         <span>More</span>
       </button>
     </nav>
@@ -636,13 +1103,16 @@ function render() {
       <div class="mobile-sheet-backdrop" data-action="close-sheet"></div>
       <div class="mobile-sheet-card">
         <div class="mobile-sheet-head">
-          <span class="mobile-sheet-title">All Panels</span>
+          <h2 class="mobile-sheet-title">All Panels</h2>
           <button class="btn ghost sm" data-action="close-sheet" type="button" aria-label="Close">${ICONS.x}</button>
         </div>
         <div class="mobile-sheet-body">${mobileSheetItems}</div>
       </div>
     </div>
   `;
+  domCache.content = document.getElementById("content");
+  domCache.actions = document.getElementById("header-actions");
+  domCache.sidebar = document.querySelector(".sidebar");
   document.querySelectorAll("[data-route]").forEach(el => {
     el.addEventListener("click", e => { e.preventDefault(); route(el.dataset.route); closeMobileSheet(); });
     el.addEventListener("keydown", e => {
@@ -779,11 +1249,15 @@ function startOverviewPoll() {
 }
 
 async function renderOverview(content, actions) {
-  content.innerHTML = skeletonCard(3);
+  content.innerHTML = `
+    <div class="card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
+    <div class="card"><div class="card-title"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
+    <div class="card"><div class="card-title"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}</div></div>
+  `;
   const { data, error, stale } = await useFetch(`${API}/setup-status`);
   if (error && !data) {
-    content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load status</div><div class="sub">${escapeHtml(error)}</div><button class="btn outline sm mt" data-action="retry-overview">Retry</button></div>`;
-    bindRetry(content, "retry-overview", () => route("overview"));
+    content.innerHTML = errorPanel("overview", error, "retry-overview");
+    bindRetryToScope("retry-overview", () => route("overview"));
     return;
   }
   const staleBannerHtml = stale ? staleBanner() : "";
@@ -814,31 +1288,49 @@ async function renderOverview(content, actions) {
           <div class="grid grid-3">
             <div class="field">
               <label for="ov-test-symbol">Symbol</label>
-              <input class="input" id="ov-test-symbol" value="EURUSD" placeholder="EURUSD">
+              <input class="input" id="ov-test-symbol" value="EURUSD" placeholder="EURUSD" maxlength="12">
             </div>
             <div class="field">
               <label for="ov-test-action">Action</label>
               <select class="input" id="ov-test-action">
                 <option value="buy">buy</option>
                 <option value="sell">sell</option>
-                <option value="close">close</option>
+                <option value="close_long">close_long</option>
+                <option value="close_short">close_short</option>
                 <option value="close_all">close_all</option>
               </select>
             </div>
             <div class="field">
               <label for="ov-test-lots">Lots</label>
-              <input class="input" id="ov-test-lots" value="0.10" placeholder="0.10">
+              <input class="input" id="ov-test-lots" value="0.10" placeholder="0.10" type="number" min="0.01" step="0.01">
             </div>
           </div>
-          <button class="btn primary" id="ov-test-send" data-action="send-test">${ICONS.check}Send Test Signal</button>
+          <div class="grid grid-2">
+            <div class="field">
+              <label for="ov-test-sl">Stop Loss (optional)</label>
+              <input class="input" id="ov-test-sl" placeholder="e.g. 1.0850" type="number" min="0" step="0.00001">
+            </div>
+            <div class="field">
+              <label for="ov-test-tp">Take Profit (optional)</label>
+              <input class="input" id="ov-test-tp" placeholder="e.g. 1.0950" type="number" min="0" step="0.00001">
+            </div>
+          </div>
+          <div class="webhook-test-actions">
+            <button class="btn primary" id="ov-test-send" data-action="send-test">${ICONS.check}Send Test Signal</button>
+            <button class="btn outline" id="ov-test-cancel" data-action="cancel-test">Cancel</button>
+          </div>
           <div id="ov-test-result" aria-live="polite"></div>
         </div>
+      </div>
+      <div class="ea-verify-section mt">
+        <button class="btn outline" id="ov-verify-ea" data-action="verify-ea">${ICONS.health}Verify EA Connection</button>
+        <div id="ov-ea-status" aria-live="polite"></div>
       </div>
     </div>` : "";
 
   const setupBlock = !allDone ? `
     <div class="card">
-      <div class="card-title">Get Started</div>
+      <h2 class="card-title">Get Started</h2>
       <div class="card-desc">3 quick steps to start receiving TradingView webhooks</div>
       <div class="steps">
         <div class="step ${tg ? "done" : ""}">
@@ -871,7 +1363,7 @@ async function renderOverview(content, actions) {
     ${staleBannerHtml}
     ${webhookBlock}
     <div class="card">
-      <div class="card-title">System Status</div>
+      <h2 class="card-title">System Status</h2>
       <div class="card-desc">Current configuration state</div>
       <div class="grid grid-3">
         <div class="stat ${tg ? "ok" : "info"} clickable" data-action="goto-setup" tabindex="0" role="button" aria-label="Telegram Bot status - go to Setup">
@@ -892,17 +1384,17 @@ async function renderOverview(content, actions) {
       </div>
     </div>
     <div class="card" id="health-card">
-      <div class="card-title">Server Health</div>
+      <h2 class="card-title">Server Health${healthState.error && !healthState.data ? ` <span class="partial-badge">${ICONS.alert}Health unavailable</span>` : ""}</h2>
       <div class="card-desc">Live system metrics - refreshes every 10s</div>
-      <div class="gauge-row" id="health-grid">
+      <div class="gauge-row" id="health-grid" role="group" aria-label="Server health gauges">
         <div class="gauge-cell" id="gauge-cpu">${svgGauge(null, "CPU")}</div>
         <div class="gauge-cell" id="gauge-mem">${svgGauge(null, "RAM")}</div>
         <div class="gauge-cell" id="gauge-disk">${svgGauge(null, "Disk", { diskMode: true })}</div>
-        <div class="stat-pair">
-          <div class="stat" id="tile-uptime"><div class="value skeleton line"></div><div class="label">Uptime</div></div>
-          <div class="stat" id="tile-ea"><div class="value skeleton line"></div><div class="label">EA Connections</div></div>
-          <div class="stat" id="tile-signals"><div class="value skeleton line"></div><div class="label">Signals Today</div></div>
-          <div class="stat" id="tile-fill"><div class="value skeleton line"></div><div class="label">Fill Rate</div></div>
+        <div class="stat-pair" role="group" aria-label="Server health stats">
+          <div class="stat" id="tile-uptime" role="group" aria-label="Uptime"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Uptime</div></div>
+          <div class="stat" id="tile-ea" role="group" aria-label="EA Connections"><div class="value skeleton line" aria-hidden="true"></div><div class="label">EA Connections</div></div>
+          <div class="stat" id="tile-signals" role="group" aria-label="Signals Today"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Signals Today</div></div>
+          <div class="stat" id="tile-fill" role="group" aria-label="Fill Rate"><div class="value skeleton line" aria-hidden="true"></div><div class="label">Fill Rate</div></div>
         </div>
       </div>
     </div>
@@ -930,6 +1422,17 @@ function bindOverviewActions(scope) {
   if (toggleBtn) toggleBtn.addEventListener("click", e => { e.preventDefault(); toggleTestForm(); });
   const sendBtn = scope.querySelector("[data-action='send-test']");
   if (sendBtn) sendBtn.addEventListener("click", e => { e.preventDefault(); sendTestWebhook(); });
+  const cancelBtn = scope.querySelector("[data-action='cancel-test']");
+  if (cancelBtn) cancelBtn.addEventListener("click", e => { e.preventDefault(); toggleTestForm(false); });
+  const verifyBtn = scope.querySelector("[data-action='verify-ea']");
+  if (verifyBtn) verifyBtn.addEventListener("click", e => { e.preventDefault(); verifyEaConnection(); });
+  const viewFeedBtn = scope.querySelector("[data-action='view-feed']");
+  if (viewFeedBtn) viewFeedBtn.addEventListener("click", e => { e.preventDefault(); route("signals"); });
+  const symInput = scope.querySelector("#ov-test-symbol");
+  if (symInput) symInput.addEventListener("input", e => {
+    const v = e.target.value.toUpperCase().replace(/[^A-Z0-9.]/g, "");
+    e.target.value = v;
+  });
 }
 
 function setupStepState(data) {
@@ -979,7 +1482,7 @@ function renderStep1(body, data) {
   const tg = data?.telegram_configured;
   body.innerHTML = `
     <div class="card">
-      <div class="card-title">Telegram Bot</div>
+      <h2 class="card-title">Telegram Bot</h2>
       <div class="card-desc">Required for dashboard login and trade alerts</div>
       ${tg ? `
         <div class="row"><span class="k">Status</span><span class="v">${badge("ok", "Configured")}</span></div>
@@ -991,13 +1494,14 @@ function renderStep1(body, data) {
           <div class="hint">Open Telegram, message @BotFather, send /newbot, follow prompts</div>
         </div>
         <div class="field">
-          <label for="tg-token">2. Paste bot token</label>
-          <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" aria-describedby="tg-token-hint">
+          <label for="tg-token">2. Paste bot token <span class="req">*</span></label>
+          <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" spellcheck="false">
+          <div class="hint">From @BotFather - format: 123456789:AA... (35 char secret)</div>
         </div>
         <div class="field">
-          <label for="tg-uid">3. Get your Telegram user ID</label>
+          <label for="tg-uid">3. Get your Telegram user ID <span class="req">*</span></label>
+          <input class="input" id="tg-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric">
           <div class="hint">Message @userinfobot on Telegram, it replies with your numeric ID</div>
-          <input class="input" id="tg-uid" type="number" placeholder="123456789">
         </div>
         <button class="btn primary full-sm" id="save-tg" data-action="save-telegram">${ICONS.check}Save and Verify</button>
         <div id="tg-result" aria-live="polite"></div>
@@ -1008,13 +1512,22 @@ function renderStep1(body, data) {
   if (adv) adv.addEventListener("click", e => { e.preventDefault(); advanceStep(2); });
   const saveBtn = body.querySelector("[data-action='save-telegram']");
   if (saveBtn) saveBtn.addEventListener("click", e => { e.preventDefault(); saveTelegram(); });
+  const tokenInput = body.querySelector("#tg-token");
+  const uidInput = body.querySelector("#tg-uid");
+  if (tokenInput) {
+    attachValidator(tokenInput, "tgToken");
+    addPasswordToggle(tokenInput);
+  }
+  if (uidInput) attachValidator(uidInput, "tgUid");
+  if (saveBtn) submitOnEnter(body.querySelector(".card"), saveTelegram);
+  if (!tg) autofocusFirst(body);
 }
 
 function renderStep2(body, data) {
   const cf = data?.cloudflare_configured;
   body.innerHTML = `
     <div class="card">
-      <div class="card-title">Cloudflare Tunnel</div>
+      <h2 class="card-title">Cloudflare Tunnel</h2>
       <div class="card-desc">Provides public HTTPS URL for TradingView webhooks</div>
       ${cf ? `
         <div class="row"><span class="k">Status</span><span class="v">${badge("ok", "Connected")}</span></div>
@@ -1044,7 +1557,7 @@ async function renderStep3(body, data) {
   const cf = data?.cloudflare_configured;
   body.innerHTML = `
     <div class="card">
-      <div class="card-title">TradingView Webhook</div>
+      <h2 class="card-title">TradingView Webhook</h2>
       <div class="card-desc">Copy this URL and paste it into TradingView</div>
       <div class="webhook-display">
         <code class="webhook-url" id="step3-webhook-url">${cf ? "Loading..." : "Complete Step 2 first"}</code>
@@ -1079,16 +1592,15 @@ async function advanceStep(step) {
 
 async function saveTelegram() {
   const btn = document.getElementById("save-tg");
-  const token = document.getElementById("tg-token").value.trim();
-  const uid = document.getElementById("tg-uid").value.trim();
+  const tokenEl = document.getElementById("tg-token");
+  const uidEl = document.getElementById("tg-uid");
   const result = document.getElementById("tg-result");
-  if (!token || !uid) {
-    result.innerHTML = `<div class="inline-error">Both token and user ID are required</div>`;
-    return;
-  }
-  btn.disabled = true;
-  const original = btn.innerHTML;
-  btn.innerHTML = `<span class="spin"></span>Saving...`;
+  const okToken = validateInput(tokenEl, "tgToken");
+  const okUid = validateInput(uidEl, "tgUid");
+  if (!okToken || !okUid) return;
+  const token = tokenEl.value.trim();
+  const uid = uidEl.value.trim();
+  setBtnLoading(btn, "Saving...");
   result.innerHTML = "";
   try {
     const r = await http(`${API}/config`, {
@@ -1096,8 +1608,7 @@ async function saveTelegram() {
       headers: jsonHeaders(true),
       body: JSON.stringify({ updates: { TELEGRAM_BOT_TOKEN: token, TELEGRAM_ADMIN_IDS: uid } }),
     });
-    btn.innerHTML = `${ICONS.check}Saved`;
-    btn.classList.add("btn-success");
+    setBtnSuccess(btn, "Saved", 2000);
     if (r.needs_restart) {
       result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Restart the server for the bot to pick up the new token.</div>`;
       toast("Telegram saved - restart required", "ok");
@@ -1107,9 +1618,7 @@ async function saveTelegram() {
     }
     setTimeout(() => advanceStep(2), 2000);
   } catch (e) {
-    btn.disabled = false;
-    btn.innerHTML = original;
-    btn.classList.remove("btn-success");
+    setBtnError(btn, "Failed");
     result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(e.message)}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
     const retry = result.querySelector("[data-action='retry-save']");
     if (retry) retry.addEventListener("click", ev => { ev.preventDefault(); saveTelegram(); });
@@ -1146,41 +1655,135 @@ function copyWebhookStep3() {
   });
 }
 
-function toggleTestForm() {
+function toggleTestForm(force) {
   const form = document.getElementById("ov-test-form");
   if (!form) return;
-  form.classList.toggle("hidden");
+  const result = document.getElementById("ov-test-result");
+  if (result) result.innerHTML = "";
+  if (force === false) {
+    form.classList.add("hidden");
+  } else if (force === true) {
+    form.classList.remove("hidden");
+  } else {
+    form.classList.toggle("hidden");
+  }
 }
 
 async function sendTestWebhook() {
   const btn = document.getElementById("ov-test-send");
   const result = document.getElementById("ov-test-result");
   if (!btn || !result) return;
-  const symbol = document.getElementById("ov-test-symbol").value.trim() || "EURUSD";
+  const symbol = (document.getElementById("ov-test-symbol").value.trim() || "EURUSD").toUpperCase();
   const action = document.getElementById("ov-test-action").value;
-  const lots = document.getElementById("ov-test-lots").value.trim() || "0.10";
+  const lotsRaw = document.getElementById("ov-test-lots").value.trim() || "0.10";
+  const lots = parseFloat(lotsRaw);
+  const slVal = document.getElementById("ov-test-sl").value.trim();
+  const tpVal = document.getElementById("ov-test-tp").value.trim();
+  if (!symbol) {
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Symbol is required</div>`;
+    return;
+  }
+  if (!isFinite(lots) || lots <= 0) {
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Lots must be a positive number</div>`;
+    return;
+  }
+  const body = { symbol, action, lots: String(lots) };
+  if (slVal) body.sl = slVal;
+  if (tpVal) body.tp = tpVal;
   btn.disabled = true;
   const original = btn.innerHTML;
   btn.innerHTML = `<span class="spin"></span>Sending...`;
   result.innerHTML = "";
+  const t0 = Date.now();
   try {
     const r = await http(`${API}/test-webhook`, {
       method: "POST",
       headers: jsonHeaders(true),
-      body: JSON.stringify({ symbol, action, lots }),
+      body: JSON.stringify(body),
     });
     const data = await r.json();
+    const clientLatency = Date.now() - t0;
     if (data.status === "sent") {
       const ok = data.response_code >= 200 && data.response_code < 300;
-      result.innerHTML = `<div class="inline-${ok ? "ok" : "error"}">${ok ? ICONS.check : ICONS.x}HTTP ${data.response_code} - ${ok ? "Signal delivered" : "Webhook returned error"}</div><div class="hint mt">Response: ${data.response_body || ""}</div>`;
+      const serverLat = data.latency_ms != null ? data.latency_ms : clientLatency;
+      if (ok) {
+        toast("Signal sent - check Signal Feed", "ok");
+      } else {
+        toast("Webhook returned error", "bad");
+      }
+      result.innerHTML = `<div class="inline-${ok ? "ok" : "error"}">${ok ? ICONS.check : ICONS.x}HTTP ${data.response_code} - ${ok ? "Signal delivered" : "Webhook returned error"} (${serverLat}ms)</div>
+        <div class="hint mt">Response: ${escapeHtml(data.response_body || "")}</div>
+        ${ok ? `<div class="mt"><button class="btn outline sm" data-action="view-feed">${ICONS.feed}View in Signal Feed</button></div>` : ""}`;
+      const vfBtn = result.querySelector("[data-action='view-feed']");
+      if (vfBtn) vfBtn.addEventListener("click", e => { e.preventDefault(); route("signals"); });
     } else {
-      result.innerHTML = `<div class="inline-error">${ICONS.x}${data.message || "Test failed"}</div>`;
+      toast("Test failed", "bad");
+      result.innerHTML = `<div class="inline-error">${ICONS.x}${escapeHtml(data.message || "Test failed")}</div>`;
     }
   } catch (e) {
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(e.message)}</div>`;
+    toast("Request failed", "bad");
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(e.message || friendlyMsg(e))}</div>`;
   }
   btn.disabled = false;
   btn.innerHTML = original;
+}
+
+let eaVerifyTimer = null;
+let eaVerifyStart = 0;
+const EA_VERIFY_DURATION = 60000;
+const EA_VERIFY_INTERVAL = 5000;
+
+async function verifyEaConnection() {
+  const statusEl = document.getElementById("ov-ea-status");
+  const btn = document.getElementById("ov-verify-ea");
+  if (!statusEl || !btn) return;
+  if (eaVerifyTimer) {
+    clearInterval(eaVerifyTimer);
+    eaVerifyTimer = null;
+  }
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.innerHTML = `<span class="spin"></span>Verifying...`;
+  eaVerifyStart = Date.now();
+  await pollEaVerify();
+  eaVerifyTimer = setInterval(async () => {
+    if (Date.now() - eaVerifyStart >= EA_VERIFY_DURATION) {
+      clearInterval(eaVerifyTimer);
+      eaVerifyTimer = null;
+      btn.disabled = false;
+      btn.innerHTML = original;
+      return;
+    }
+    await pollEaVerify();
+  }, EA_VERIFY_INTERVAL);
+}
+
+async function pollEaVerify() {
+  const statusEl = document.getElementById("ov-ea-status");
+  const btn = document.getElementById("ov-verify-ea");
+  if (!statusEl) return;
+  try {
+    const r = await http("/api/connections");
+    const c = await r.json();
+    const ws = (c && c.websocket && c.websocket.websocket_connections) || 0;
+    const httpCount = (c && c.http_polling_connections) || 0;
+    const total = ws + httpCount;
+    const elapsed = Math.round((Date.now() - eaVerifyStart) / 1000);
+    if (total > 0) {
+      statusEl.innerHTML = `<div class="inline-ok">${ICONS.check}<span>EA Connected (${total} connection${total > 1 ? "s" : ""})</span></div>`;
+      if (eaVerifyTimer) {
+        clearInterval(eaVerifyTimer);
+        eaVerifyTimer = null;
+        if (btn) { btn.disabled = false; btn.innerHTML = `${ICONS.health}Verify EA Connection`; }
+      }
+    } else {
+      const remaining = Math.max(0, Math.round((EA_VERIFY_DURATION - (Date.now() - eaVerifyStart)) / 1000));
+      statusEl.innerHTML = `<div class="inline-error" style="background:var(--amber-bg,rgba(242,153,74,0.1));color:${PALETTE.amber}">${ICONS.alert}<span>No EA connected - waiting (${remaining}s left)</span></div>
+        <div class="hint mt">1. Download the EA from the Setup panel<br>2. Attach it to a chart in MetaTrader<br>3. Enter your license key and server URL in the EA inputs<br>4. Enable DLL imports in MetaTrader settings</div>`;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<div class="inline-error">${ICONS.x}Failed to check connections: ${escapeHtml(e.message || friendlyMsg(e))}</div>`;
+  }
 }
 
 async function renderSettings(content) {
@@ -1195,7 +1798,7 @@ async function renderSettings(content) {
   content.innerHTML = `
     ${stale ? staleBanner() : ""}
     <div class="card">
-      <div class="card-title">Configuration</div>
+      <h2 class="card-title">Configuration</h2>
       <div class="card-desc">Environment variables (secrets are redacted)</div>
       ${entries.map(([k, v]) => `<div class="row"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(v)}</span></div>`).join("")}
     </div>
@@ -1251,7 +1854,7 @@ function renderSignalFeed(content, actions) {
   };
   content.innerHTML = `
     <div class="card">
-      <div class="card-title">Live Signal Feed</div>
+      <h2 class="card-title">Live Signal Feed</h2>
       <div class="card-desc">Real-time webhook signals - polling every 5s</div>
       <div class="feed-toolbar">
         <div class="filter-bar">
@@ -1281,7 +1884,7 @@ function renderSignalFeed(content, actions) {
             </tr>
           </thead>
           <tbody id="feed-body">
-            <tr><td colspan="7" class="feed-empty">Loading...</td></tr>
+            ${Array(5).fill(skeletonRow(7)).join("")}
           </tbody>
         </table>
       </div>
@@ -1316,12 +1919,23 @@ function renderSignalFeed(content, actions) {
 
 async function pollSignalFeed() {
   if (currentRoute !== "signals" || !visibilityPolling) return;
-  const { data, error } = await useFetch("/api/webhooks/recent?limit=50");
+  const { data, error, stale } = await useFetch("/api/webhooks/recent?limit=50");
+  const staleEl = document.getElementById("feed-stale-banner");
+  if (staleEl) staleEl.remove();
   if (error && !data) {
     const body = document.getElementById("feed-body");
-    if (body) body.innerHTML = `<tr><td colspan="7" class="feed-empty feed-error">Failed to load: ${escapeHtml(error)}<br><button class="btn outline sm mt" data-action="retry-signals">Retry</button></td></tr>`;
-    bindRetry(content, "retry-signals", () => route("signals"));
+    if (body) body.innerHTML = `<tr><td colspan="7" class="feed-empty feed-error">${errorPanel("signal feed", error, "retry-signals")}</td></tr>`;
+    bindRetryToScope("retry-signals", () => route("signals"));
     return;
+  }
+  if (stale && data) {
+    const card = document.querySelector("#feed-scroll");
+    if (card && !document.getElementById("feed-stale-banner")) {
+      const banner = document.createElement("div");
+      banner.id = "feed-stale-banner";
+      banner.innerHTML = staleBanner();
+      card.parentNode.insertBefore(banner, card);
+    }
   }
   if (!data || !data.webhooks) return;
   const incoming = data.webhooks;
@@ -1380,7 +1994,8 @@ function renderFeedRows() {
   const countEl = document.getElementById("feed-count");
   if (countEl) countEl.textContent = `${filtered.length} signals`;
   if (filtered.length === 0) {
-    body.innerHTML = `<tr><td colspan="7" class="feed-empty">No signals${rows.length > 0 ? " match filters" : ""}</td></tr>`;
+    const isEmpty = rows.length === 0;
+    body.innerHTML = `<tr><td colspan="7" class="feed-empty">${isEmpty ? emptyState("No signals yet", "Incoming TradingView webhooks will appear here in real time", "signals") : "No signals match filters"}</td></tr>`;
     return;
   }
   body.innerHTML = filtered.map(r => {
@@ -1413,11 +2028,12 @@ let eaMapState = { expanded: null };
 
 function renderEaMap(content, actions) {
   content.innerHTML = `
+    <div id="ea-stale-banner"></div>
     <div class="card">
       <div class="card-title">EA Connections</div>
       <div class="card-desc">Connected EAs with live telemetry - polling every 10s</div>
       <div class="ea-grid" id="ea-grid">
-        <div class="ea-empty">Loading connections...</div>
+        ${skeletonEaCards(3)}
       </div>
     </div>
     <div id="ea-expand-container"></div>
@@ -1431,17 +2047,29 @@ function renderEaMap(content, actions) {
 async function pollEaMap() {
   if (currentRoute !== "ea-map" || !visibilityPolling) return;
   const [overviewRes, eaCheckRes] = await Promise.all([
-    useFetch("/api/ea/ws-telemetry/overview").catch(() => ({ data: null, error: "telemetry" })),
-    useFetch("/health/ea-check").catch(() => ({ data: null, error: "ea-check" })),
+    useFetch("/api/ea/ws-telemetry/overview").catch(() => ({ data: null, error: "telemetry", stale: false })),
+    useFetch("/health/ea-check").catch(() => ({ data: null, error: "ea-check", stale: false })),
   ]);
   const overview = overviewRes.data;
   const eaCheck = eaCheckRes.data;
   const grid = document.getElementById("ea-grid");
   if (!grid) return;
+  const staleBannerEl = document.getElementById("ea-stale-banner");
+  const partials = [];
+  if (overviewRes.error && !overview) partials.push("telemetry");
+  if (eaCheckRes.error && !eaCheck) partials.push("EA health check");
+  if (staleBannerEl) {
+    if ((overviewRes.stale || eaCheckRes.stale) && (overview || eaCheck)) {
+      staleBannerEl.innerHTML = staleBanner();
+    } else if (partials.length > 0 && (overview || eaCheck)) {
+      staleBannerEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+    } else {
+      staleBannerEl.innerHTML = "";
+    }
+  }
   if (!overview && !eaCheck) {
-    grid.innerHTML = `<div class="ea-empty">Failed to load EA data<br><button class="btn outline sm mt" data-action="retry-ea">Retry</button></div>`;
-    const retryBtn = grid.querySelector("[data-action='retry-ea']");
-    if (retryBtn) retryBtn.addEventListener("click", e => { e.preventDefault(); pollEaMap(); });
+    grid.innerHTML = errorPanel("EA connections", (overviewRes.error || "") + (eaCheckRes.error || ""), "retry-ea");
+    bindRetryToScope("retry-ea", () => pollEaMap());
     return;
   }
   const licenses = (overview && overview.licenses) ? overview.licenses : [];
@@ -1478,7 +2106,7 @@ async function pollEaMap() {
     seen.add(maskedKey);
   }
   if (merged.length === 0) {
-    grid.innerHTML = `<div class="ea-empty">No EA connections</div>`;
+    grid.innerHTML = emptyState("No EA connections", "Connected MT4/MT5 EAs will appear here once they link up via WebSocket or HTTP polling", "map");
     return;
   }
   const now = Date.now();
@@ -1533,17 +2161,17 @@ async function pollEaMap() {
 }
 
 async function loadEaTrades(key, container) {
-  container.innerHTML = `<div class="card"><div class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</div><div class="card-desc">Loading trade history...</div></div>`;
+  container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2><div class="card-desc">Loading trade history...</div></div>`;
   try {
     const r = await http(`/api/ea/ws-telemetry/trade-history/${encodeURIComponent(key)}`);
     const data = await r.json();
     const trades = data.deals || data.trades || [];
     if (trades.length === 0) {
-      container.innerHTML = `<div class="card"><div class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</div><div class="ea-empty">No trade history</div></div>`;
+      container.innerHTML = `<div class="card"><div class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</div>${emptyState("No trade history", "Closed positions from this EA will appear here", "analytics")}</div>`;
       return;
     }
     container.innerHTML = `<div class="card">
-      <div class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</div>
+      <h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>
       <div class="card-desc">${trades.length} recent trades</div>
       <div class="feed-scroll">
         <table class="feed-table">
@@ -1566,12 +2194,13 @@ async function loadEaTrades(key, container) {
       </div>
     </div>`;
   } catch (e) {
-    container.innerHTML = `<div class="card"><div class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</div><div class="ea-empty">Failed to load: ${escapeHtml(e.message)}</div></div>`;
+    container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2><div class="ea-empty">Failed to load: ${escapeHtml(e.message)}</div></div>`;
   }
 }
 
 function renderTradeAnalytics(content, actions) {
   content.innerHTML = `
+    <div id="analytics-stale-banner"></div>
     <div class="card">
       <div class="card-title">Trade Analytics</div>
       <div class="card-desc">Performance overview - polling every 15s</div>
@@ -1607,16 +2236,29 @@ function renderTradeAnalytics(content, actions) {
 async function pollTradeAnalytics() {
   if (currentRoute !== "analytics" || !visibilityPolling) return;
   const [statsRes, dashRes] = await Promise.all([
-    useFetch("/api/statistics?days=7").catch(() => ({ data: null, error: "stats" })),
-    useFetch("/api/trades/admin/dashboard").catch(() => ({ data: null, error: "dashboard" })),
+    useFetch("/api/statistics?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
+    useFetch("/api/trades/admin/dashboard").catch(() => ({ data: null, error: "dashboard", stale: false })),
   ]);
   const stats = statsRes.data;
   const dash = dashRes.data;
+  const staleEl = document.getElementById("analytics-stale-banner");
+  if (staleEl) {
+    const partials = [];
+    if (statsRes.error && !stats) partials.push("statistics");
+    if (dashRes.error && !dash) partials.push("dashboard");
+    if ((statsRes.stale || dashRes.stale) && (stats || dash)) {
+      staleEl.innerHTML = staleBanner();
+    } else if (partials.length > 0 && (stats || dash)) {
+      staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
   if (!stats && !dash) {
     const content = domCache.content || document.getElementById("content");
     if (content) {
-      content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load analytics</div><div class="sub">Statistics and dashboard endpoints unavailable</div><button class="btn outline sm mt" data-action="retry-analytics">Retry</button></div>`;
-      bindRetry(content, "retry-analytics", () => route("analytics"));
+      content.innerHTML = errorPanel("analytics", "Statistics and dashboard endpoints unavailable", "retry-analytics");
+      bindRetryToScope("retry-analytics", () => route("analytics"));
     }
     return;
   }
@@ -1628,6 +2270,14 @@ async function pollTradeAnalytics() {
   const successRate = overall.success_rate != null ? overall.success_rate : (dash && dash.overview && dash.overview.success_rate) || 0;
   const avgLatency = alerts.avg_response_time != null ? alerts.avg_response_time : (overall.avg_latency != null ? overall.avg_latency : null);
   const profitFactor = overall.profit_factor != null ? overall.profit_factor : null;
+  if (totalTrades === 0 && !stats) {
+    const content = domCache.content || document.getElementById("content");
+    if (content) {
+      const staleHtml = (statsRes.stale || dashRes.stale) ? staleBanner() : "";
+      content.innerHTML = `${staleHtml}${emptyState("No trade data yet", "Executed signals from connected EAs will populate analytics here", "analytics")}`;
+    }
+    return;
+  }
   setStat("stat-total", String(totalTrades), totalTrades > 0 ? "ok" : "info");
   setStat("stat-winrate", `${successRate.toFixed(1)}%`, successRate >= 60 ? "ok" : successRate >= 40 ? "warn" : "bad");
   setStat("stat-latency", avgLatency != null ? `${avgLatency.toFixed(0)}ms` : "--", avgLatency != null && avgLatency < 100 ? "ok" : avgLatency != null && avgLatency < 500 ? "warn" : "info");
@@ -1665,17 +2315,17 @@ function drawBarChart(daily, dash) {
     const bh = (h.count / maxVal) * (H - pad * 2);
     const x = pad + i * barW;
     const y = H - pad - bh;
-    return `<rect x="${x + 1}" y="${y}" width="${barW - 2}" height="${Math.max(0, bh)}" fill="#5e6ad2" rx="2" class="bar-rect">
+    return `<rect x="${x + 1}" y="${y}" width="${Math.max(0, barW - 2)}" height="${Math.max(0, bh)}" fill="${PALETTE.blue}" rx="2" class="bar-rect">
       <title>${h.hour}:00 - ${h.count} trades</title>
     </rect>`;
   }).join("");
   const labels = hours.filter((_, i) => i % 3 === 0).map(h => {
     const x = pad + h.hour * barW + barW / 2;
-    return `<text x="${x}" y="${H - pad + 14}" text-anchor="middle" fill="#82828b" font-size="10">${h.hour}</text>`;
+    return `<text x="${x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${h.hour}</text>`;
   }).join("");
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg">
-    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="rgba(255,255,255,0.08)"/>
-    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="rgba(255,255,255,0.08)"/>
+    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
+    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     ${bars}${labels}
   </svg>`;
 }
@@ -1696,22 +2346,23 @@ function drawLineChart(daily) {
   }));
   const pathD = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
   const areaD = `${pathD} L ${coords[coords.length - 1].x} ${H - pad} L ${coords[0].x} ${H - pad} Z`;
-  const dots = coords.map((c, i) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="#22c55e"><title>${points[i].date}: ${points[i].rate.toFixed(1)}%</title></circle>`).join("");
+  const dots = coords.map((c, i) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="${PALETTE.green}"><title>${points[i].date}: ${points[i].rate.toFixed(1)}%</title></circle>`).join("");
   const xLabels = points.map((p, i) => {
     if (i % 2 !== 0) return "";
     const d = p.date ? new Date(p.date) : null;
     const lbl = d ? `${d.getMonth() + 1}/${d.getDate()}` : "";
-    return `<text x="${coords[i].x}" y="${H - pad + 14}" text-anchor="middle" fill="#82828b" font-size="10">${lbl}</text>`;
+    return `<text x="${coords[i].x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${lbl}</text>`;
   }).join("");
+  const gid = "lineGrad-" + Math.random().toString(36).slice(2, 8);
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg">
-    <defs><linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#22c55e" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${PALETTE.green}" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="${PALETTE.green}" stop-opacity="0"/>
     </linearGradient></defs>
-    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="rgba(255,255,255,0.08)"/>
-    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="rgba(255,255,255,0.08)"/>
-    <path d="${areaD}" fill="url(#lineGrad)"/>
-    <path d="${pathD}" fill="none" stroke="#22c55e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
+    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
+    <path d="${areaD}" fill="url(#${gid})"/>
+    <path d="${pathD}" fill="none" stroke="${PALETTE.green}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     ${dots}${xLabels}
   </svg>`;
 }
@@ -1729,11 +2380,11 @@ function drawDonutChart(stats, dash) {
       .sort((a, b) => b.vol - a.vol).slice(0, 5);
   }
   if (entries.length === 0) {
-    wrap.innerHTML = `<div class="ea-empty">No symbol data</div>`;
+    wrap.innerHTML = emptyState("No symbol data", "Trade volume by symbol will appear here once trades are executed", "analytics");
     return;
   }
   const total = entries.reduce((s, e) => s + e.vol, 0);
-  const colors = ["#5e6ad2", "#22c55e", "#f59e0b", "#ef4444", "#82828b"];
+  const colors = [PALETTE.blue, PALETTE.green, PALETTE.amber, PALETTE.red, PALETTE.muted2];
   const W = 300, H = 200, cx = 100, cy = 100, r = 70, innerR = 45;
   let angle = -Math.PI / 2;
   const slices = entries.map((e, i) => {
@@ -1757,8 +2408,8 @@ function drawDonutChart(stats, dash) {
   wrap.innerHTML = `<div class="donut-wrap">
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg donut-svg">
       ${slices}
-      <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="#e4e4e7" font-size="16" font-weight="700">${total}</text>
-      <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="#9a9aa3" font-size="10">trades</text>
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="${PALETTE.text}" font-size="16" font-weight="700">${total}</text>
+      <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">trades</text>
     </svg>
     <div class="legend">${legend}</div>
   </div>`;
@@ -1767,6 +2418,7 @@ function drawDonutChart(stats, dash) {
 function renderPipelineMonitor(content, actions) {
   const stages = ["Receive", "Queue", "Validate", "Deliver", "Ack"];
   content.innerHTML = `
+    <div id="pipeline-stale-banner"></div>
     <div class="card">
       <div class="card-title">Signal Pipeline</div>
       <div class="card-desc">5-stage signal processing pipeline - polling every 5s</div>
@@ -1897,14 +2549,14 @@ function drawHistogram() {
     const bh = (b.count / maxC) * (H - pad * 2);
     const x = pad + i * barW;
     const y = H - pad - bh;
-    const color = i === 0 ? "#22c55e" : i === 1 ? "#22c55e" : i === 2 ? "#f59e0b" : i === 3 ? "#f59e0b" : "#ef4444";
-    return `<rect x="${x + 8}" y="${y}" width="${barW - 16}" height="${Math.max(2, bh)}" fill="${color}" rx="3"><title>${b.label}: ${b.count}</title></rect>
-      <text x="${x + barW / 2}" y="${H - pad + 14}" text-anchor="middle" fill="#82828b" font-size="10">${b.label}</text>
-      <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="#9a9aa3" font-size="10">${b.count}</text>`;
+    const color = i === 0 ? PALETTE.green : i === 1 ? PALETTE.green : i === 2 ? PALETTE.amber : i === 3 ? PALETTE.amber : PALETTE.red;
+    return `<rect x="${x + 8}" y="${y}" width="${Math.max(0, barW - 16)}" height="${Math.max(2, bh)}" fill="${color}" rx="3"><title>${b.label}: ${b.count}</title></rect>
+      <text x="${x + barW / 2}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${b.label}</text>
+      <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">${b.count}</text>`;
   }).join("");
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg">
-    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="rgba(255,255,255,0.08)"/>
-    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="rgba(255,255,255,0.08)"/>
+    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
+    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     ${bars}
   </svg>`;
 }
@@ -1953,15 +2605,16 @@ function svgLineChart(values, opts = {}) {
   const W = opts.width || 600;
   const H = opts.height || 160;
   const pad = opts.pad || 24;
-  const color = opts.color || "#22c55e";
+  const color = opts.color || PALETTE.green;
   const max = opts.max != null ? opts.max : Math.max(100, ...values.map(v => v || 0));
   const min = opts.min || 0;
   const range = max - min || 1;
   const n = values.length;
-  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="none"></svg>`;
+  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet"></svg>`;
   const pts = values.map((v, i) => {
     const x = pad + (i / Math.max(1, n - 1)) * (W - pad * 2);
-    const y = H - pad - ((v - min) / range) * (H - pad * 2);
+    const norm = (v != null && !isNaN(v)) ? (v - min) / range : 0;
+    const y = H - pad - norm * (H - pad * 2);
     return [x, y];
   });
   const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
@@ -1971,7 +2624,7 @@ function svgLineChart(values, opts = {}) {
     const y = pad + g * (H - pad * 2);
     return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" stroke="rgba(255,255,255,0.05)"/>`;
   }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="none" role="img" aria-label="${opts.label || "chart"}">
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${opts.label || "chart"}">
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${color}" stop-opacity="0.3"/>
       <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
@@ -1984,15 +2637,16 @@ function svgLineChart(values, opts = {}) {
 
 function svgSparkline(values, opts = {}) {
   const W = 60, H = 20;
-  const color = opts.color || "#22c55e";
+  const color = opts.color || PALETTE.green;
   const n = values.length;
   if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="sparkline"></svg>`;
   const max = Math.max(...values, 1);
   const min = Math.min(...values, 0);
-  const range = max - min || 1;
+  const range = max - min;
   const pts = values.map((v, i) => {
     const x = (i / Math.max(1, n - 1)) * W;
-    const y = H - ((v - min) / range) * H;
+    const norm = range > 0 ? (v - min) / range : 0.5;
+    const y = H - norm * H;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
   return `<svg viewBox="0 0 ${W} ${H}" class="sparkline" preserveAspectRatio="none">
@@ -2056,8 +2710,8 @@ function updateSystemHealthUI() {
   if (!h) return;
   const cpuEl = document.getElementById("sh-cpu-chart");
   const memEl = document.getElementById("sh-mem-chart");
-  if (cpuEl) cpuEl.innerHTML = svgLineChart(cpu, { color: "#22c55e", label: "CPU %", max: 100 });
-  if (memEl) memEl.innerHTML = svgLineChart(mem, { color: "#3b82f6", label: "Memory %", max: 100 });
+  if (cpuEl) cpuEl.innerHTML = svgLineChart(cpu, { color: PALETTE.green, label: "CPU %", max: 100 });
+  if (memEl) memEl.innerHTML = svgLineChart(mem, { color: PALETTE.blue, label: "Memory %", max: 100 });
   const cpuVal = h.system ? h.system.cpu_percent : null;
   const memVal = h.system ? h.system.memory_percent : null;
   setTile("sh-cpu-val", cpuVal != null ? `${cpuVal.toFixed(1)}%` : "--", loadColor(cpuVal));
@@ -2118,13 +2772,13 @@ function renderSystemHealth(content) {
   content.innerHTML = `
     <div class="grid grid-2">
       <div class="card">
-        <div class="card-title">CPU Usage</div>
+        <h2 class="card-title">CPU Usage</h2>
         <div class="card-desc">60s rolling - updates every 5s</div>
         <div class="stat" id="sh-cpu-val"><div class="value skeleton line"></div><div class="label">Current</div></div>
         <div class="chart-wrap" id="sh-cpu-chart"></div>
       </div>
       <div class="card">
-        <div class="card-title">Memory Usage</div>
+        <h2 class="card-title">Memory Usage</h2>
         <div class="card-desc">60s rolling - updates every 5s</div>
         <div class="stat" id="sh-mem-val"><div class="value skeleton line"></div><div class="label">Current</div></div>
         <div class="chart-wrap" id="sh-mem-chart"></div>
@@ -2132,24 +2786,24 @@ function renderSystemHealth(content) {
     </div>
     <div class="grid grid-3">
       <div class="card">
-        <div class="card-title">Disk Usage</div>
+        <h2 class="card-title">Disk Usage</h2>
         <div class="card-desc">Updates every 60s</div>
         <div class="gauge-center" id="sh-disk-gauge"></div>
       </div>
       <div class="card">
-        <div class="card-title">Network I/O</div>
+        <h2 class="card-title">Network I/O</h2>
         <div class="card-desc">Cumulative counters</div>
         <div id="sh-net"></div>
       </div>
       <div class="card">
-        <div class="card-title">DB Pool</div>
+        <h2 class="card-title">DB Pool</h2>
         <div class="card-desc">Connection pool stats</div>
         <div id="sh-db-pool"></div>
       </div>
     </div>
     <div class="grid grid-3">
       <div class="card">
-        <div class="card-title">Redis Info</div>
+        <h2 class="card-title">Redis Info</h2>
         <div class="card-desc">Cache server stats</div>
         <div id="sh-redis"></div>
       </div>
@@ -2162,7 +2816,45 @@ function renderSystemHealth(content) {
   pollTimers.push(t);
 }
 
-let webhookLogState = { rows: [], page: 0, stats: null, filter: { range: "today", status: "", symbol: "", license: "" } };
+let webhookLogState = { rows: [], page: 0, stats: null, loaded: false, sort: { key: "timestamp", dir: "desc" }, filter: { range: "today", status: "", symbol: "", license: "" } };
+
+function sortRows(rows, key, dir) {
+  const mul = dir === "asc" ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const av = a[key] == null ? "" : a[key];
+    const bv = b[key] == null ? "" : b[key];
+    const an = Number(av), bn = Number(bv);
+    if (!isNaN(an) && !isNaN(bn) && av !== "" && bv !== "") return (an - bn) * mul;
+    return String(av).localeCompare(String(bv)) * mul;
+  });
+}
+
+function applySort(scope, sortKey) {
+  const ths = scope.querySelectorAll("th.sortable");
+  ths.forEach(th => {
+    th.classList.remove("sort-asc", "sort-desc");
+    if (th.dataset.sort === sortKey.key) th.classList.add(sortKey.dir === "asc" ? "sort-asc" : "sort-desc");
+  });
+}
+
+function bindSortHeaders(scope, sortState, onSort) {
+  scope.querySelectorAll("th.sortable").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.sort;
+      if (!k) return;
+      if (sortState.key === k) sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+      else { sortState.key = k; sortState.dir = "asc"; }
+      applySort(scope, sortState);
+      onSort();
+    });
+  });
+}
+
+function skeletonRowsHTML(colspan, n) {
+  return Array.from({ length: n }, () =>
+    `<tr class="sk-row">${Array.from({ length: colspan }, () => `<td><div class="sk-cell"></div></td>`).join("")}</tr>`
+  ).join("");
+}
 
 async function pollWebhookLogs() {
   if (currentRoute !== "sys-webhooks" || !visibilityPolling) return;
@@ -2172,6 +2864,7 @@ async function pollWebhookLogs() {
   ]);
   if (recentRes.data && recentRes.data.webhooks) {
     webhookLogState.rows = recentRes.data.webhooks;
+    webhookLogState.loaded = true;
   }
   if (statsRes.data) {
     webhookLogState.stats = statsRes.data;
@@ -2190,6 +2883,8 @@ function updateWebhookStats() {
 }
 
 function renderWebhookLogs(content) {
+  webhookLogState.loaded = false;
+  webhookLogState.page = 0;
   content.innerHTML = `
     <div class="grid grid-4">
       <div class="stat" id="wl-stat-total"><div class="value skeleton line"></div><div class="label">Total (7d)</div></div>
@@ -2215,6 +2910,7 @@ function renderWebhookLogs(content) {
         </select>
         <input class="input filter-input" id="wl-symbol" placeholder="Symbol filter">
         <input class="input filter-input" id="wl-license" placeholder="License filter">
+        <button class="filter-clear" id="wl-clear" type="button">Clear filters</button>
       </div>
     </div>
     <div class="card">
@@ -2222,16 +2918,27 @@ function renderWebhookLogs(content) {
         <table class="data-table" id="wl-table">
           <thead>
             <tr>
-              <th>Timestamp</th><th>Source IP</th><th>Action</th><th>Symbol</th>
-              <th>Volume</th><th>Status</th><th>Resp ms</th><th>Payload</th>
+              <th class="sortable" data-sort="timestamp">Timestamp</th>
+              <th class="sortable" data-sort="ip_address">Source IP</th>
+              <th class="sortable" data-sort="action">Action</th>
+              <th class="sortable" data-sort="symbol">Symbol</th>
+              <th class="sortable" data-sort="volume">Volume</th>
+              <th class="sortable" data-sort="response_code">Status</th>
+              <th class="sortable" data-sort="execution_time_ms">Resp ms</th>
+              <th>Payload</th>
             </tr>
           </thead>
-          <tbody id="wl-body"></tbody>
+          <tbody id="wl-body">${skeletonRowsHTML(8, 5)}</tbody>
         </table>
       </div>
+      <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
       <div class="table-footer">
         <span id="wl-count">0 rows</span>
-        <button class="btn outline sm" id="wl-load-more" data-action="wl-load-more">Load More</button>
+        <div class="pager">
+          <button class="btn outline sm" id="wl-prev" type="button">Prev</button>
+          <button class="btn outline sm" id="wl-next" type="button">Next</button>
+          <button class="btn outline sm" id="wl-load-more" data-action="wl-load-more">Load More</button>
+        </div>
       </div>
     </div>
   `;
@@ -2239,27 +2946,58 @@ function renderWebhookLogs(content) {
   const statusEl = document.getElementById("wl-status");
   const symEl = document.getElementById("wl-symbol");
   const licEl = document.getElementById("wl-license");
+  const clearEl = document.getElementById("wl-clear");
   if (rangeEl) rangeEl.addEventListener("change", () => { webhookLogState.filter.range = rangeEl.value; renderWebhookTable(); });
-  if (statusEl) statusEl.addEventListener("change", () => { webhookLogState.filter.status = statusEl.value; renderWebhookTable(); });
-  if (symEl) symEl.addEventListener("input", () => { webhookLogState.filter.symbol = symEl.value.trim().toUpperCase(); renderWebhookTable(); });
-  if (licEl) licEl.addEventListener("input", () => { webhookLogState.filter.license = licEl.value.trim(); renderWebhookTable(); });
+  if (statusEl) statusEl.addEventListener("change", () => { webhookLogState.filter.status = statusEl.value; webhookLogState.page = 0; renderWebhookTable(); });
+  if (symEl) symEl.addEventListener("input", () => { webhookLogState.filter.symbol = symEl.value.trim().toUpperCase(); webhookLogState.page = 0; renderWebhookTable(); });
+  if (licEl) licEl.addEventListener("input", () => { webhookLogState.filter.license = licEl.value.trim(); webhookLogState.page = 0; renderWebhookTable(); });
+  if (clearEl) clearEl.addEventListener("click", () => {
+    webhookLogState.filter = { range: "today", status: "", symbol: "", license: "" };
+    webhookLogState.page = 0;
+    if (rangeEl) rangeEl.value = "today";
+    if (statusEl) statusEl.value = "";
+    if (symEl) symEl.value = "";
+    if (licEl) licEl.value = "";
+    renderWebhookTable();
+  });
+  const prevBtn = document.getElementById("wl-prev");
+  const nextBtn = document.getElementById("wl-next");
+  if (prevBtn) prevBtn.addEventListener("click", e => { e.preventDefault(); if (webhookLogState.page > 0) { webhookLogState.page--; renderWebhookTable(); } });
+  if (nextBtn) nextBtn.addEventListener("click", e => { e.preventDefault(); const total = filteredWebhookRows().length; if ((webhookLogState.page + 1) * 50 < total) { webhookLogState.page++; renderWebhookTable(); } });
   const loadMore = content.querySelector("[data-action='wl-load-more']");
   if (loadMore) loadMore.addEventListener("click", e => { e.preventDefault(); webhookLogState.page++; renderWebhookTable(); });
+  bindSortHeaders(content.querySelector("#wl-table"), webhookLogState.sort, renderWebhookTable);
+  applySort(content.querySelector("#wl-table"), webhookLogState.sort);
   pollWebhookLogs();
   const t = setInterval(pollWebhookLogs, 10000);
   pollTimers.push(t);
 }
 
-function renderWebhookTable() {
-  const tbody = document.getElementById("wl-body");
-  if (!tbody) return;
+function filteredWebhookRows() {
   const f = webhookLogState.filter;
   let rows = webhookLogState.rows;
   if (f.status) rows = rows.filter(r => String(r.response_code) === f.status);
   if (f.symbol) rows = rows.filter(r => (r.symbol || "").toUpperCase().includes(f.symbol));
   if (f.license) rows = rows.filter(r => (JSON.stringify(r.payload || "")).includes(f.license));
+  return sortRows(rows, webhookLogState.sort.key, webhookLogState.sort.dir);
+}
+
+function renderWebhookTable() {
+  const tbody = document.getElementById("wl-body");
+  if (!tbody) return;
+  const table = document.getElementById("wl-table");
+  if (table) applySort(table, webhookLogState.sort);
+  if (!webhookLogState.loaded) {
+    tbody.innerHTML = skeletonRowsHTML(8, 5);
+    return;
+  }
+  const rows = filteredWebhookRows();
   const perPage = 50;
-  const shown = rows.slice(0, (webhookLogState.page + 1) * perPage);
+  const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
+  if (webhookLogState.page >= totalPages) webhookLogState.page = totalPages - 1;
+  const start = webhookLogState.page * perPage;
+  const end = Math.min(start + perPage, rows.length);
+  const shown = rows.slice(start, end);
   if (shown.length === 0) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty small"><div class="msg">No webhook logs</div></td></tr>`;
   } else {
@@ -2275,16 +3013,29 @@ function renderWebhookTable() {
         <td class="mono">${escapeHtml(String(r.volume || "--"))}</td>
         <td><span class="badge ${cls}"><span class="dot"></span>${r.response_code || "--"}</span></td>
         <td class="mono">${escapeHtml(String(r.execution_time_ms || "--"))}</td>
-        <td class="mono trunc">${escapeHtml(preview)}</td>
+        <td class="mono trunc" title="${escapeHtml(preview)}">${escapeHtml(preview)}</td>
       </tr>`;
     }).join("");
   }
   const countEl = document.getElementById("wl-count");
-  if (countEl) countEl.textContent = `${shown.length} of ${rows.length} rows`;
+  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${start + 1}-${end} of ${rows.length}` : "0 rows";
+  const prevBtn = document.getElementById("wl-prev");
+  const nextBtn = document.getElementById("wl-next");
+  if (prevBtn) prevBtn.disabled = webhookLogState.page === 0;
+  if (nextBtn) nextBtn.disabled = end >= rows.length;
+  const loadMore = document.querySelector("[data-action='wl-load-more']");
+  if (loadMore) loadMore.style.display = end >= rows.length ? "none" : "";
   tbody.querySelectorAll(".row-expandable").forEach(tr => {
     tr.addEventListener("click", () => {
-      const existing = tr.nextElementSibling && tr.nextElementSibling.classList.contains("row-expanded");
-      if (existing) { tr.nextElementSibling.remove(); tr.classList.remove("expanded"); return; }
+      const tbodyEl = tr.parentElement;
+      const existingOpen = tbodyEl.querySelector(".row-expanded");
+      const existingSelf = tr.nextElementSibling && tr.nextElementSibling.classList.contains("row-expanded");
+      if (existingSelf) { tr.nextElementSibling.remove(); tr.classList.remove("expanded"); return; }
+      if (existingOpen) {
+        const prevRow = existingOpen.previousElementSibling;
+        existingOpen.remove();
+        if (prevRow) prevRow.classList.remove("expanded");
+      }
       const payload = tr.dataset.payload || "(no payload)";
       const exp = document.createElement("tr");
       exp.className = "row-expanded";
@@ -2344,12 +3095,12 @@ function updateRiskUI(data) {
 function renderRiskMonitor(content) {
   content.innerHTML = `
     <div class="card">
-      <div class="card-title">Trading Status</div>
+      <h2 class="card-title">Trading Status</h2>
       <div class="card-desc">Current risk gate - polling every 10s</div>
       <div class="stat big-stat" id="risk-status-card"><div class="value skeleton line"></div><div class="label">Loading...</div></div>
     </div>
     <div class="card">
-      <div class="card-title">Risk Metrics</div>
+      <h2 class="card-title">Risk Metrics</h2>
       <div class="grid grid-4">
         <div class="stat" id="risk-daily-pnl"><div class="value skeleton line"></div><div class="label">Daily P&L</div></div>
         <div class="stat" id="risk-max-dd"><div class="value skeleton line"></div><div class="label">Max Drawdown</div></div>
@@ -2358,7 +3109,7 @@ function renderRiskMonitor(content) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Account</div>
+      <h2 class="card-title">Account</h2>
       <div class="grid grid-3">
         <div class="stat" id="risk-balance"><div class="value skeleton line"></div><div class="label">Balance</div></div>
         <div class="stat" id="risk-equity"><div class="value skeleton line"></div><div class="label">Equity</div></div>
@@ -2366,7 +3117,7 @@ function renderRiskMonitor(content) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Alerts</div>
+      <h2 class="card-title">Alerts</h2>
       <div id="risk-alerts"></div>
     </div>
   `;
@@ -2444,7 +3195,7 @@ function renderErrorLogList() {
 function renderErrorLogs(content) {
   content.innerHTML = `
     <div class="card">
-      <div class="card-title">Error Log Viewer</div>
+      <h2 class="card-title">Error Log Viewer</h2>
       <div class="card-desc">Real-time log tail - polling every 10s - max 200 entries</div>
       <div class="filter-bar">
         <select class="input filter-sel" id="el-filter">
@@ -2518,12 +3269,12 @@ function renderDatabaseManager(content) {
       <div class="stat" id="db-type"><div class="value skeleton line"></div><div class="label">DB Type</div></div>
     </div>
     <div class="card">
-      <div class="card-title">Table Row Counts</div>
+      <h2 class="card-title">Table Row Counts</h2>
       <div class="card-desc">Records per table - polling every 30s</div>
       <div id="db-tables"></div>
     </div>
     <div class="card">
-      <div class="card-title">Cleanup Tool</div>
+      <h2 class="card-title">Cleanup Tool</h2>
       <div class="card-desc">Remove old records to free space</div>
       <div class="cleanup-row">
         <label for="db-days">Delete records older than</label>
@@ -2534,7 +3285,7 @@ function renderDatabaseManager(content) {
       <div id="db-cleanup-result" aria-live="polite"></div>
     </div>
     <div class="card">
-      <div class="card-title">Migration Status</div>
+      <h2 class="card-title">Migration Status</h2>
       <div class="card-desc">Database schema migrations</div>
       <div id="db-migrations" class="empty small"><div class="msg">Migration info not available via API</div></div>
     </div>
@@ -2580,10 +3331,10 @@ async function pollMetrics() {
   const text = await fetchMetrics();
   if (!text) return;
   const specs = [
-    { key: "webhook_total", name: "pinetunnel_webhook_signals_total", label: "Webhook Signals Total", color: "#22c55e" },
-    { key: "ws_delivered", name: "pinetunnel_websocket_signals_delivered_total", label: "WS Signals Delivered", color: "#3b82f6" },
-    { key: "queue_depth", name: "pinetunnel_signal_queue_depth", label: "Signal Queue Depth", color: "#f59e0b" },
-    { key: "redis_ops", name: "pinetunnel_redis_operations_total", label: "Redis Ops Total", color: "#5e6ad2" },
+    { key: "webhook_total", name: "pinetunnel_webhook_signals_total", label: "Webhook Signals Total", color: PALETTE.green },
+    { key: "ws_delivered", name: "pinetunnel_websocket_signals_delivered_total", label: "WS Signals Delivered", color: PALETTE.blue },
+    { key: "queue_depth", name: "pinetunnel_signal_queue_depth", label: "Signal Queue Depth", color: PALETTE.amber },
+    { key: "redis_ops", name: "pinetunnel_redis_operations_total", label: "Redis Ops Total", color: PALETTE.blue },
   ];
   for (const s of specs) {
     let val = parsePromMetric(text, s.name);
@@ -2615,11 +3366,11 @@ function parsePromMetricSum(text, name) {
 
 function updateMetricsUI() {
   const specs = [
-    { key: "webhook_total", label: "Webhook Signals Total", color: "#22c55e", digits: 0 },
-    { key: "ws_delivered", label: "WS Signals Delivered", color: "#3b82f6", digits: 0 },
-    { key: "queue_depth", label: "Signal Queue Depth", color: "#f59e0b", digits: 0 },
-    { key: "redis_ops", label: "Redis Ops Total", color: "#5e6ad2", digits: 0 },
-    { key: "ws_push_avg", label: "WS Push Avg (ms)", color: "#22c55e", digits: 1 },
+    { key: "webhook_total", label: "Webhook Signals Total", color: PALETTE.green, digits: 0 },
+    { key: "ws_delivered", label: "WS Signals Delivered", color: PALETTE.blue, digits: 0 },
+    { key: "queue_depth", label: "Signal Queue Depth", color: PALETTE.amber, digits: 0 },
+    { key: "redis_ops", label: "Redis Ops Total", color: PALETTE.blue, digits: 0 },
+    { key: "ws_push_avg", label: "WS Push Avg (ms)", color: PALETTE.green, digits: 1 },
   ];
   const grid = document.getElementById("metrics-grid");
   if (!grid) return;
@@ -2639,7 +3390,7 @@ function updateMetricsUI() {
 function renderMetrics(content) {
   content.innerHTML = `
     <div class="card">
-      <div class="card-title">Performance Metrics</div>
+      <h2 class="card-title">Performance Metrics</h2>
       <div class="card-desc">Prometheus metrics - polling every 10s - sparklines show last 20 samples</div>
     </div>
     <div class="grid grid-3" id="metrics-grid">
@@ -2701,7 +3452,7 @@ function updateDiagnosticsUI(data) {
 function renderDiagnostics(content) {
   content.innerHTML = `
     <div class="card">
-      <div class="card-title">Overall Status</div>
+      <h2 class="card-title">Overall Status</h2>
       <div class="stat big-stat" id="diag-overall"><div class="value skeleton line"></div><div class="label">Running diagnostics...</div></div>
     </div>
     <div class="grid grid-4" id="diag-grid">
@@ -2769,18 +3520,18 @@ function renderBotStatus(content) {
   content.innerHTML = `
     <div class="grid grid-2">
       <div class="card">
-        <div class="card-title">Bot Status</div>
+        <h2 class="card-title">Bot Status</h2>
         <div class="card-desc">Telegram bot health - polling every 15s</div>
         <div class="stat big-stat" id="bot-status-card"><div class="value skeleton line"></div><div class="label">Loading...</div></div>
       </div>
       <div class="card">
-        <div class="card-title">Bot Info</div>
+        <h2 class="card-title">Bot Info</h2>
         <div class="stat" id="bot-username"><div class="value skeleton line"></div><div class="label">Username</div></div>
         <div class="stat" id="bot-handlers"><div class="value skeleton line"></div><div class="label">Handler Count</div></div>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Status Flags</div>
+      <h2 class="card-title">Status Flags</h2>
       <div class="grid grid-4">
         <div class="stat" id="bot-started"><div class="value skeleton line"></div><div class="label">Started</div></div>
         <div class="stat" id="bot-app"><div class="value skeleton line"></div><div class="label">App Exists</div></div>
@@ -2789,11 +3540,11 @@ function renderBotStatus(content) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Admin Configuration</div>
+      <h2 class="card-title">Admin Configuration</h2>
       <div id="bot-admins"></div>
     </div>
     <div class="card">
-      <div class="card-title">Alerts</div>
+      <h2 class="card-title">Alerts</h2>
       <div class="card-desc">Trade alert notifications</div>
       <div class="row">
         <span class="k">Alerts enabled</span>
@@ -2830,13 +3581,15 @@ async function sendBotTestMessage() {
   btn.innerHTML = original;
 }
 
-let licenseState = { rows: [], search: "" };
+let licenseState = { rows: [], search: "", loaded: false, sort: { key: "email", dir: "asc" }, page: 0, perPage: 25 };
 
 async function renderLicenses(content, actions) {
   content.innerHTML = skeletonCard(1);
   actions.innerHTML = `<button class="btn primary sm" id="add-license-btn" data-action="add-license">${ICONS.plus}Add License</button>`;
   const addBtn = actions.querySelector("[data-action='add-license']");
   if (addBtn) addBtn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
+  licenseState.loaded = false;
+  licenseState.page = 0;
   const { data, error, stale } = await useFetch(`${API}/users`);
   if (error && !data) {
     content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load licenses</div><div class="sub">${escapeHtml(error)}</div><button class="btn outline sm mt" data-action="retry-licenses">Retry</button></div>`;
@@ -2844,6 +3597,7 @@ async function renderLicenses(content, actions) {
     return;
   }
   licenseState.rows = data ? data.users : [];
+  licenseState.loaded = true;
   const staleBannerHtml = stale ? staleBanner() : "";
   const total = data ? data.total_users : 0;
   const totalEAs = licenseState.rows.reduce((n, u) => n + (u.stats && u.stats.connected_eas || 0), 0);
@@ -2851,40 +3605,100 @@ async function renderLicenses(content, actions) {
     ${staleBannerHtml}
     <div class="panel-toolbar">
       <input class="input search-input" id="lic-search" placeholder="Search by key, name, or email" value="${escapeHtml(licenseState.search)}" aria-label="Search licenses">
+      <button class="filter-clear" id="lic-clear" type="button">Clear</button>
       <span class="badge info">${total} users</span>
       <span class="badge ok">${totalEAs} EAs connected</span>
     </div>
     <div class="card">
       <div class="table-wrap">
-        <table class="data-table mgr-table">
+        <table class="data-table mgr-table" id="lic-table">
           <thead>
             <tr>
-              <th>License Key</th>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Status</th>
+              <th class="sortable" data-sort="license_key">License Key</th>
+              <th class="sortable" data-sort="name">Name</th>
+              <th class="sortable" data-sort="email">Email</th>
+              <th class="sortable" data-sort="status">Status</th>
               <th>Secret</th>
-              <th>Expires</th>
-              <th class="td-num">EAs</th>
-              <th class="td-num">Trades</th>
-              <th>Last Activity</th>
+              <th class="sortable" data-sort="expires_at">Expires</th>
+              <th class="sortable th-num" data-sort="connected_eas">EAs</th>
+              <th class="sortable th-num" data-sort="total_trades">Trades</th>
+              <th class="sortable" data-sort="last_activity">Last Activity</th>
               <th class="td-actions">Actions</th>
             </tr>
           </thead>
-          <tbody id="lic-body"></tbody>
+          <tbody id="lic-body">${skeletonRowsHTML(10, 5)}</tbody>
         </table>
+      </div>
+      <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
+      <div class="table-footer">
+        <span id="lic-count">0 rows</span>
+        <div class="pager">
+          <button class="btn outline sm" id="lic-prev" type="button">Prev</button>
+          <button class="btn outline sm" id="lic-next" type="button">Next</button>
+        </div>
       </div>
     </div>
   `;
   const searchEl = content.querySelector("#lic-search");
   if (searchEl) searchEl.addEventListener("input", () => {
     licenseState.search = searchEl.value.trim().toLowerCase();
+    licenseState.page = 0;
     renderLicenseRows();
   });
+  const clearEl = content.querySelector("#lic-clear");
+  if (clearEl) clearEl.addEventListener("click", () => {
+    licenseState.search = "";
+    licenseState.page = 0;
+    if (searchEl) searchEl.value = "";
+    renderLicenseRows();
+  });
+  const prevBtn = content.querySelector("#lic-prev");
+  const nextBtn = content.querySelector("#lic-next");
+  if (prevBtn) prevBtn.addEventListener("click", e => { e.preventDefault(); if (licenseState.page > 0) { licenseState.page--; renderLicenseRows(); } });
+  if (nextBtn) nextBtn.addEventListener("click", e => { e.preventDefault(); const t = filteredLicenseRows().length; if ((licenseState.page + 1) * licenseState.perPage < t) { licenseState.page++; renderLicenseRows(); } });
+  bindSortHeaders(content.querySelector("#lic-table"), licenseState.sort, renderLicenseRows);
+  applySort(content.querySelector("#lic-table"), licenseState.sort);
   renderLicenseRows();
   pollLicenses();
   const t = setInterval(pollLicenses, 15000);
   pollTimers.push(t);
+}
+
+function filteredLicenseRows() {
+  const q = licenseState.search;
+  let rows = licenseState.rows;
+  if (q) {
+    rows = rows.filter(u => {
+      const hay = `${u.email || ""} ${u.name || ""} ` + (u.licenses || []).map(l => l.license_key || "").join(" ");
+      return hay.toLowerCase().includes(q);
+    });
+  }
+  const flat = rows.map(u => {
+    const lic = (u.licenses && u.licenses[0]) || {};
+    const stats = u.stats || {};
+    const status = lic.status || "active";
+    const enabled = lic.enabled !== false;
+    let pillCls = "ok";
+    let pillLabel = "Active";
+    if (!enabled || status === "disabled") { pillCls = "bad"; pillLabel = "Disabled"; }
+    else if (status === "expired") { pillCls = "warn"; pillLabel = "Expired"; }
+    return {
+      license_key: lic.license_key || "",
+      name: u.name || "",
+      email: u.email || "",
+      status: pillLabel,
+      status_cls: pillCls,
+      enabled,
+      expires_at: lic.expires_at || "",
+      connected_eas: stats.connected_eas || 0,
+      total_trades: stats.total_trades || 0,
+      last_activity: lic.last_activity || "",
+      _u: u,
+      _lic: lic,
+      _stats: stats,
+    };
+  });
+  return sortRows(flat, licenseState.sort.key, licenseState.sort.dir);
 }
 
 function pollLicenses() {
@@ -2899,54 +3713,58 @@ function pollLicenses() {
 function renderLicenseRows() {
   const body = document.getElementById("lic-body");
   if (!body) return;
-  const q = licenseState.search;
-  let rows = licenseState.rows;
-  if (q) {
-    rows = rows.filter(u => {
-      const hay = `${u.email || ""} ${u.name || ""} ` + (u.licenses || []).map(l => l.license_key || "").join(" ");
-      return hay.toLowerCase().includes(q);
-    });
-  }
-  if (rows.length === 0) {
-    body.innerHTML = `<tr><td colspan="10" class="empty small"><div class="msg">${licenseState.rows.length === 0 ? "No licenses yet" : "No matches"}</div></td></tr>`;
+  const table = document.getElementById("lic-table");
+  if (table) applySort(table, licenseState.sort);
+  if (!licenseState.loaded) {
+    body.innerHTML = skeletonRowsHTML(10, 5);
     return;
   }
-  body.innerHTML = rows.map(u => {
-    const lic = (u.licenses && u.licenses[0]) || {};
-    const stats = u.stats || {};
-    const status = lic.status || "active";
-    const enabled = lic.enabled !== false;
-    let pillCls = "ok";
-    let pillLabel = "Active";
-    if (!enabled || status === "disabled") { pillCls = "bad"; pillLabel = "Disabled"; }
-    else if (status === "expired") { pillCls = "warn"; pillLabel = "Expired"; }
-    const expires = lic.expires_at ? new Date(lic.expires_at).toLocaleDateString() : "--";
-    const lastAct = lic.last_activity ? relativeTime(lic.last_activity) : (stats.total_trades > 0 ? "prior" : "never");
-    return `<tr>
-      <td class="td-key" title="${escapeHtml(lic.license_key || "")}">${escapeHtml(maskKey(lic.license_key))}</td>
-      <td>${escapeHtml(u.name || "--")}</td>
-      <td class="td-email" title="${escapeHtml(u.email || "")}">${escapeHtml(u.email || "--")}</td>
-      <td><span class="status-pill ${pillCls}"><span class="dot"></span>${pillLabel}</span></td>
-      <td class="secret-cell">****</td>
-      <td>${escapeHtml(expires)}</td>
-      <td class="td-num">${stats.connected_eas || 0}</td>
-      <td class="td-num">${stats.total_trades || 0}</td>
-      <td>${escapeHtml(lastAct)}</td>
-      <td class="td-actions">
-        <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(lic.license_key || "")}" title="Edit">${ICONS.edit}</button>
-        <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(lic.license_key || "")}" title="Extend +30d">+30d</button>
-        <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(lic.license_key || "")}" data-enabled="${enabled ? "1" : "0"}" title="${enabled ? "Disable" : "Enable"}">${enabled ? ICONS.ban : ICONS.power}</button>
-        <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(lic.license_key || "")}" title="Force disconnect">${ICONS.power}</button>
-        <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(lic.license_key || "")}" data-name="${escapeHtml(u.email || u.name || "")}" title="Delete">${ICONS.trash}</button>
-      </td>
-    </tr>`;
-  }).join("");
-  body.querySelectorAll("[data-action='lic-edit']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("License editing"); }));
-  body.querySelectorAll("[data-action='lic-extend']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("License extension"); }));
-  body.querySelectorAll("[data-action='lic-toggle']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("Enable/disable license"); }));
-  body.querySelectorAll("[data-action='lic-disconnect']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); comingSoon("Force disconnect"); }));
+  const rows = filteredLicenseRows();
+  const pp = licenseState.perPage;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pp));
+  if (licenseState.page >= totalPages) licenseState.page = totalPages - 1;
+  const start = licenseState.page * pp;
+  const end = Math.min(start + pp, rows.length);
+  const shown = rows.slice(start, end);
+  if (shown.length === 0) {
+    body.innerHTML = `<tr><td colspan="10" class="empty small"><div class="msg">${licenseState.rows.length === 0 ? "No licenses yet" : "No matches"}</div></td></tr>`;
+  } else {
+    body.innerHTML = shown.map(r => {
+      const u = r._u, lic = r._lic;
+      const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
+      const lastAct = r.last_activity ? relativeTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
+      return `<tr>
+        <td class="td-key" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
+        <td>${escapeHtml(r.name || "--")}</td>
+        <td class="td-email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
+        <td><span class="status-pill ${r.status_cls}"><span class="dot"></span>${r.status}</span></td>
+        <td class="secret-cell">****</td>
+        <td>${escapeHtml(expires)}</td>
+        <td class="td-num">${r.connected_eas}</td>
+        <td class="td-num">${r.total_trades}</td>
+        <td>${escapeHtml(lastAct)}</td>
+        <td class="td-actions">
+          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" title="Edit">${ICONS.edit}</button>
+          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" title="Extend +30d">+30d</button>
+          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" title="Force disconnect">${ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" title="Delete">${ICONS.trash}</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+  const countEl = document.getElementById("lic-count");
+  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${start + 1}-${end} of ${rows.length}` : "0 rows";
+  const prevBtn = document.getElementById("lic-prev");
+  const nextBtn = document.getElementById("lic-next");
+  if (prevBtn) prevBtn.disabled = licenseState.page === 0;
+  if (nextBtn) nextBtn.disabled = end >= rows.length;
+  body.querySelectorAll("[data-action='lic-edit']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("License editing"); }));
+  body.querySelectorAll("[data-action='lic-extend']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("License extension"); }));
+  body.querySelectorAll("[data-action='lic-toggle']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("Enable/disable license"); }));
+  body.querySelectorAll("[data-action='lic-disconnect']").forEach(b => b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); comingSoon("Force disconnect"); }));
   body.querySelectorAll("[data-action='lic-delete']").forEach(b => b.addEventListener("click", e => {
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     const key = b.dataset.key;
     const name = b.dataset.name;
     openConfirmModal("Delete license", `Delete license for ${escapeHtml(name)}?`, () => comingSoon("License deletion"));
@@ -2967,7 +3785,7 @@ function openLicenseModal() {
   overlay.className = "modal-overlay";
   overlay.innerHTML = `<div class="modal-card">
     <button class="modal-close" data-action="modal-close" aria-label="Close">${ICONS.x}</button>
-    <div class="modal-title">Add License</div>
+    <h2 class="modal-title">Add License</h2>
     <div class="modal-desc">Create a new license key. CRUD endpoints arrive in Phase 3.</div>
     <div class="modal-body">
       <div class="field">
@@ -3020,7 +3838,7 @@ function openConfirmModal(title, msg, onConfirm, confirmLabel = "Delete") {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `<div class="modal-card">
-    <div class="modal-title">${escapeHtml(title)}</div>
+    <h2 class="modal-title">${escapeHtml(title)}</h2>
     <div class="modal-desc">${msg}</div>
     <div class="modal-footer">
       <button class="btn outline" data-action="confirm-cancel">Cancel</button>
@@ -3119,7 +3937,7 @@ function renderSecurityContent(content) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Blocked IPs</div>
+      <h2 class="card-title">Blocked IPs</h2>
       <div class="card-desc">Currently blocked by rate limiter</div>
       <div class="table-wrap">
         <table class="data-table mgr-table">
@@ -3129,7 +3947,7 @@ function renderSecurityContent(content) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Security Headers</div>
+      <h2 class="card-title">Security Headers</h2>
       <div class="card-desc">HTTP security response headers</div>
       <div class="headers-checklist">
         ${headerList.map(h => {
@@ -3143,7 +3961,7 @@ function renderSecurityContent(content) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">TradingView IP Allowlist</div>
+      <h2 class="card-title">TradingView IP Allowlist</h2>
       <div class="card-desc">Webhook requests restricted to known TradingView egress IPs</div>
       <div class="allowlist-status">
         <div>
@@ -3154,7 +3972,7 @@ function renderSecurityContent(content) {
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Recent 401/403 Responses</div>
+      <h2 class="card-title">Recent 401/403 Responses</h2>
       <div class="card-desc">Authentication and authorization failures</div>
       <div class="empty small"><div class="msg">Requires audit log filtering by action - available when audit endpoints support status filtering</div></div>
     </div>
@@ -3253,9 +4071,10 @@ function renderAuditContent(content) {
       <input class="input filter-input" id="audit-filter-from" type="date" value="${escapeHtml(auditState.filterFrom)}" aria-label="From date">
       <input class="input filter-input" id="audit-filter-to" type="date" value="${escapeHtml(auditState.filterTo)}" aria-label="To date">
       <input class="input search-input" id="audit-search" placeholder="Search details" value="${escapeHtml(auditState.search)}" aria-label="Search">
+      <button class="filter-clear" id="audit-clear" type="button">Clear filters</button>
     </div>
     <div class="card">
-      <div class="card-title">Admin Activity Timeline</div>
+      <h2 class="card-title">Admin Activity Timeline</h2>
       <div class="card-desc">${filtered.length} entries - polling every 10s</div>
       <div class="timeline" id="audit-timeline"></div>
       ${auditState.hasMore ? `<div class="load-more-row" id="audit-load-more">Showing ${auditState.rows.length} - increase limit for more history</div>` : `<div class="load-more-row">End of log</div>`}
@@ -3296,6 +4115,20 @@ function renderAuditContent(content) {
   if (fromEl) fromEl.addEventListener("change", () => { auditState.filterFrom = fromEl.value; renderAuditContent(content); });
   if (toEl) toEl.addEventListener("change", () => { auditState.filterTo = toEl.value; renderAuditContent(content); });
   if (searchEl) searchEl.addEventListener("input", () => { auditState.search = searchEl.value.trim(); renderAuditContent(content); });
+  const clearEl = content.querySelector("#audit-clear");
+  if (clearEl) clearEl.addEventListener("click", () => {
+    auditState.filterAction = "";
+    auditState.filterAdmin = "";
+    auditState.filterFrom = "";
+    auditState.filterTo = "";
+    auditState.search = "";
+    if (actionSel) actionSel.value = "";
+    if (adminSel) adminSel.value = "";
+    if (fromEl) fromEl.value = "";
+    if (toEl) toEl.value = "";
+    if (searchEl) searchEl.value = "";
+    renderAuditContent(content);
+  });
 }
 
 window.route = route;
