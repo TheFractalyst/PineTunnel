@@ -11,11 +11,11 @@ let pollTimers = [];
 let requestGen = 0;
 let renderToken = 0;
 const inflight = new Map();
-let currentRoute = "dashboard/overview";
+let currentRoute = "home/overview";
 let currentRouteId = "overview";
-let currentSectionId = "dashboard";
+let currentSectionId = "home";
 let currentTabId = "overview";
-let pendingRouteAfterLogin = "dashboard/overview";
+let pendingRouteAfterLogin = "home/overview";
 let lastSetupStatus = null;
 let loginVisible = false;
 let connectionLostVisible = false;
@@ -60,6 +60,43 @@ function startPoll(fn, ms) {
 function staleRender(token) { return token !== renderToken; }
 
 const CSRF_HEADER = "X-Admin-CSRF";
+
+const LABELS = {
+  webhookSignalsTotal: "Signals Received",
+  wsSignalsDelivered: "Signals Sent to EA",
+  signalQueueDepth: "Pending Signals",
+  wsPushAvg: "Delivery Speed",
+  uptime: "Running for",
+  tradingviewIpAllowlist: "Only accept signals from TradingView",
+  signalEncryptionKey: "Encryption Key",
+  webhookSecret: "Webhook Secret",
+  adminApiKey: "Admin Key",
+  successRate: "Win Rate",
+  topSymbols: "Most Traded",
+  avgLatency: "Delivery Speed",
+  profitFactor: "Profit Factor",
+  dailyPnl: "Daily P&L",
+  maxDrawdown: "Max Drawdown",
+  riskPerTrade: "Risk per Trade",
+  positionSizing: "Position Sizing",
+};
+
+function uptimeHuman(sec) {
+  if (sec == null || isNaN(sec)) return "--";
+  const s = Math.round(Number(sec));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+  if (s < 86400) return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+  return Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h";
+}
+
+function latencyLabel(ms) {
+  if (ms == null || isNaN(ms)) return "--";
+  const v = Number(ms);
+  if (v < 100) return "fast";
+  if (v < 500) return "typical";
+  return "slow";
+}
 
 function escapeHtml(s) {
   if (s == null) return "";
@@ -174,7 +211,7 @@ window.addEventListener("beforeunload", () => {
 window.addEventListener("beforeunload", e => {
   if (setupDirty) {
     e.preventDefault();
-    e.returnValue = "You have unsaved changes in the Setup Wizard.";
+    e.returnValue = "You have unsaved changes in Getting Started.";
     return e.returnValue;
   }
 });
@@ -674,7 +711,7 @@ async function doLogin() {
     if (r.ok) {
       loginVisible = false;
       toast("Logged in", "ok");
-      const dest = pendingRouteAfterLogin || currentRoute || "dashboard/overview";
+      const dest = pendingRouteAfterLogin || currentRoute || "home/overview";
       render();
       route(dest);
     }
@@ -903,63 +940,18 @@ function setTile(id, value, cls) {
 }
 
 function updateHealthCard() {
-  const card = document.getElementById("health-card");
-  if (!card) return;
   const { data, error, stale } = healthState;
-  card.classList.toggle("stale", stale);
-  const titleEl = card.querySelector(".card-title");
-  const existingBadge = titleEl.querySelector(".stale-badge");
-  if (stale && !existingBadge) {
-    const b = document.createElement("span");
-    b.className = "stale-badge";
-    b.textContent = "stale";
-    titleEl.appendChild(b);
-  } else if (!stale && existingBadge) {
-    existingBadge.remove();
-  }
-  if (!data && error) {
-    const grid = document.getElementById("health-grid");
-    if (grid) {
-      grid.innerHTML = errorPanel("health metrics", error, "retry-overview");
-      bindRetry(card, "retry-overview", () => route("overview"));
-    }
-    return;
-  }
+  if (!data && error) return;
   if (!data) return;
-  if (data.connError) {
-    const existing = titleEl.querySelector(".partial-badge");
-    if (!existing) {
-      const b = document.createElement("span");
-      b.className = "partial-badge";
-      b.innerHTML = partialErrorBadge("EA count unavailable");
-      titleEl.appendChild(b);
-    }
-  } else {
-    const existing = titleEl.querySelector(".partial-badge");
-    if (existing) existing.remove();
-  }
   const h = (data && data.health) || {};
   const c = data && data.connections;
   const st = data && data.stats;
-  const uptimeSec = h.uptime_seconds;
-  const cpu = h.system ? h.system.cpu_percent : null;
-  const mem = h.system ? h.system.memory_percent : null;
-  let diskPct = null;
-  if (st && st.disk && st.disk.percent != null) diskPct = st.disk.percent;
-  else if (st && st.disk && st.disk.used_percent != null) diskPct = st.disk.used_percent;
   let eaCount = 0;
   if (c) {
     eaCount = getEaConnectionCount(c);
   } else if (h.connections) {
     eaCount = h.connections.total_clients || 0;
   }
-  const cpuCell = document.getElementById("gauge-cpu");
-  const memCell = document.getElementById("gauge-mem");
-  const diskCell = document.getElementById("gauge-disk");
-  updateGauge(cpuCell, cpu, "CPU");
-  updateGauge(memCell, mem, "RAM");
-  updateGauge(diskCell, diskPct, "Disk", { diskMode: true });
-  setTile("tile-uptime", formatDuration(uptimeSec), "ok");
   setTile("tile-ea", formatNumber(eaCount), eaColor(eaCount));
   const trades = (st && st.trades) || {};
   const sig = trades.today != null ? trades.today : null;
@@ -1027,39 +1019,36 @@ function copy(text) {
 
 const SECTIONS = [
   {
-    id: "dashboard", label: "Dashboard", icon: ICONS.overview,
+    id: "overview", label: "Overview", icon: ICONS.overview,
     tabs: [
-      { id: "overview", label: "Overview", title: "Overview", routeId: "overview" },
-      { id: "health", label: "Health", title: "System Health", routeId: "sys-health" },
-      { id: "metrics", label: "Metrics", title: "Performance Metrics", routeId: "sys-metrics" },
-      { id: "diag", label: "Diagnostics", title: "Diagnostics", routeId: "sys-diag" },
+      { id: "home", label: "Overview", title: "Overview", routeId: "overview" },
     ],
   },
   {
     id: "signals", label: "Signals", icon: ICONS.signals,
     tabs: [
-      { id: "feed", label: "Live Feed", title: "Live Signal Feed", routeId: "signals" },
-      { id: "webhooks", label: "Webhooks", title: "Webhook Logs", routeId: "sys-webhooks" },
-      { id: "pipeline", label: "Pipeline", title: "Signal Pipeline Monitor", routeId: "pipeline" },
-      { id: "analytics", label: "Analytics", title: "Trade Analytics", routeId: "analytics" },
-      { id: "risk", label: "Risk", title: "Risk Monitor", routeId: "sys-risk" },
+      { id: "feed", label: "Feed", title: "Recent Trades", routeId: "signals" },
+      { id: "analytics", label: "Analytics", title: "Performance", routeId: "analytics" },
+      { id: "risk", label: "Risk", title: "Risk Status", routeId: "sys-risk" },
     ],
   },
   {
-    id: "manage", label: "Manage", icon: ICONS.settings,
+    id: "licenses", label: "Licenses", icon: ICONS.license,
     tabs: [
-      { id: "licenses", label: "Licenses", title: "License Manager", routeId: "licenses" },
-      { id: "security", label: "Security", title: "Security Center", routeId: "security" },
-      { id: "audit", label: "Audit Log", title: "Audit Log Timeline", routeId: "audit" },
-      { id: "bot", label: "Bot Status", title: "Telegram Bot Status", routeId: "sys-bot" },
+      { id: "keys", label: "Licenses", title: "Licenses", routeId: "licenses" },
     ],
   },
   {
-    id: "setup", label: "Setup", icon: ICONS.setup,
+    id: "status", label: "Status", icon: ICONS.health,
     tabs: [
-      { id: "wizard", label: "Wizard", title: "Setup Wizard", routeId: "setup" },
-      { id: "settings", label: "Settings", title: "Settings", routeId: "settings" },
-      { id: "database", label: "Database", title: "Database Manager", routeId: "sys-database" },
+      { id: "health", label: "Health", title: "System Health", routeId: "sys-health" },
+      { id: "logs", label: "Logs", title: "Activity Log", routeId: "audit" },
+    ],
+  },
+  {
+    id: "settings", label: "Settings", icon: ICONS.settings,
+    tabs: [
+      { id: "setup", label: "Setup", title: "Getting Started", routeId: "setup" },
     ],
   },
 ];
@@ -1087,7 +1076,7 @@ function getPersistedTab(secId) {
 }
 
 function parseHash(hash) {
-  if (!hash) return { sectionId: "dashboard", tabId: "overview" };
+  if (!hash) return { sectionId: "overview", tabId: "home" };
   const parts = hash.split("/");
   if (parts.length === 1) {
     const old = findTabByRouteId(parts[0]);
@@ -1097,12 +1086,12 @@ function parseHash(hash) {
       const persisted = getPersistedTab(sec.id) || sec.tabs[0].id;
       return { sectionId: sec.id, tabId: persisted };
     }
-    return { sectionId: "dashboard", tabId: "overview" };
+    return { sectionId: "overview", tabId: "home" };
   }
   const sectionId = parts[0];
   const tabId = parts.slice(1).join("/");
   const sec = findSection(sectionId);
-  if (!sec) return { sectionId: "dashboard", tabId: "overview" };
+  if (!sec) return { sectionId: "overview", tabId: "home" };
   const tab = findTab(sectionId, tabId);
   if (!tab) {
     const persisted = getPersistedTab(sectionId) || sec.tabs[0].id;
@@ -1191,7 +1180,7 @@ function route(id) {
     currentTabId = parsed.tabId;
     const sec = findSection(currentSectionId);
     const tab = findTab(currentSectionId, currentTabId);
-    if (!sec || !tab) { route("dashboard/overview"); return; }
+    if (!sec || !tab) { route("overview/home"); return; }
     const fullId = currentSectionId + "/" + currentTabId;
     currentRoute = fullId;
     currentRouteId = tab.routeId;
@@ -1225,19 +1214,11 @@ function route(id) {
           renderOverview(content, actions);
         }
       } else if (currentRouteId === "setup") renderSetup(content);
-      else if (currentRouteId === "settings") renderSettings(content);
       else if (currentRouteId === "signals") renderSignalFeed(content, actions);
       else if (currentRouteId === "analytics") renderTradeAnalytics(content, actions);
-      else if (currentRouteId === "pipeline") renderPipelineMonitor(content, actions);
-      else if (currentRouteId === "sys-health") renderSystemHealth(content);
-      else if (currentRouteId === "sys-webhooks") renderWebhookLogs(content);
       else if (currentRouteId === "sys-risk") renderRiskMonitor(content);
-      else if (currentRouteId === "sys-database") renderDatabaseManager(content);
-      else if (currentRouteId === "sys-metrics") renderMetrics(content);
-      else if (currentRouteId === "sys-diag") renderDiagnostics(content);
-      else if (currentRouteId === "sys-bot") renderBotStatus(content);
+      else if (currentRouteId === "sys-health") renderSystemHealth(content);
       else if (currentRouteId === "licenses") renderLicenses(content, actions);
-      else if (currentRouteId === "security") renderSecurity(content, actions);
       else if (currentRouteId === "audit") renderAuditTimeline(content, actions);
       if (content && !prefersReducedMotion()) {
         content.classList.remove("panel-fade-in");
@@ -1338,32 +1319,18 @@ function updateOverviewInPlace(tg, cf, init, allDone) {
   if (actions) {
     actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Welcome"), !allDone);
   }
-  const tgTile = document.getElementById("ov-tile-tg");
-  if (tgTile) {
-    tgTile.className = `stat ${tg ? "ok" : "info"} clickable`;
-    const v = tgTile.querySelector(".value");
-    if (v) v.textContent = tg ? "Configured" : "Pending";
-    const hint = tgTile.querySelector(".stat-hint");
-    if (hint && tg) hint.remove();
-    else if (!hint && !tg) tgTile.insertAdjacentHTML("beforeend", '<div class="stat-hint">Click Setup to configure</div>');
-  }
-  const cfTile = document.getElementById("ov-tile-cf");
-  if (cfTile) {
-    cfTile.className = `stat ${cf ? "ok" : "info"} clickable`;
-    const v = cfTile.querySelector(".value");
-    if (v) v.textContent = cf ? "Connected" : "Pending";
-    const hint = cfTile.querySelector(".stat-hint");
-    if (hint && cf) hint.remove();
-    else if (!hint && !cf) cfTile.insertAdjacentHTML("beforeend", '<div class="stat-hint">Click Setup to configure</div>');
-  }
-  const initTile = document.getElementById("ov-tile-init");
-  if (initTile) {
-    initTile.className = `stat ${init ? "ok" : "warn"}`;
-    const v = initTile.querySelector(".value");
-    if (v) v.textContent = init ? "Yes" : "No";
-    const hint = initTile.querySelector(".stat-hint");
-    if (hint && init) hint.remove();
-    else if (!hint && !init) initTile.insertAdjacentHTML("beforeend", '<div class="stat-hint">Complete steps 1 and 2</div>');
+  const hero = document.getElementById("home-hero");
+  if (hero) {
+    const issues = [];
+    if (!tg) issues.push("Telegram bot not connected");
+    if (!cf) issues.push("Domain not linked");
+    if (!init) issues.push("Setup not finished");
+    const msg = allDone ? "All systems running" : (issues.length + " issue" + (issues.length > 1 ? "s" : "") + " need" + (issues.length > 1 ? "" : "s") + " attention");
+    hero.className = `card hero-card stat hero ${allDone ? "ok" : "warn"}`;
+    const v = hero.querySelector(".value");
+    if (v) v.textContent = msg;
+    const l = hero.querySelector(".label");
+    if (l) l.textContent = allDone ? "Everything looks good" : issues.join(" - ");
   }
 }
 function startOverviewPoll() {
@@ -1376,7 +1343,6 @@ async function renderOverview(content, actions) {
   content.innerHTML = `
     <div class="card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
     <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>').join("")}</div></div>
-    <div class="card"><h2 class="card-title" aria-hidden="true"><div class="skeleton line short"></div></h2><div class="card-desc"><div class="skeleton line short"></div></div><div class="grid grid-3">${Array(3).fill('<div class="stat"><div class="value skeleton line"></div><div class="label">Loading...</div></div>').join("")}</div></div>
   `;
   const { data, error, stale } = await withMinDisplayTime(useFetch(`${API}/setup-status`));
   if (staleRender(tk)) return;
@@ -1396,19 +1362,23 @@ async function renderOverview(content, actions) {
   const small = window.innerWidth < 375;
   actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Welcome"), !allDone);
 
-  const tgHint = tg ? "" : '<div class="stat-hint">Click Setup to configure</div>';
-  const cfHint = cf ? "" : '<div class="stat-hint">Click Setup to configure</div>';
-  const initHint = init ? "" : '<div class="stat-hint">Complete steps 1 and 2</div>';
+  const issues = [];
+  if (!tg) issues.push("Telegram bot not connected");
+  if (!cf) issues.push("Domain not linked");
+  if (!init) issues.push("Setup not finished");
+  const heroOk = allDone;
+  const heroMsg = heroOk ? "All systems running" : (issues.length + " issue" + (issues.length > 1 ? "s" : "") + " need" + (issues.length > 1 ? "" : "s") + " attention");
+  const heroCls = heroOk ? "ok" : "warn";
 
   const webhookBlock = allDone ? `
     <div class="card webhook-card">
-      <h2 class="card-title">Your TradingView Webhook URL</h2>
-      <div class="card-desc">Paste this into TradingView: Alert -> Notifications -> Webhook URL</div>
+      <h2 class="card-title">Your Webhook URL</h2>
+      <div class="card-desc">Paste this into TradingView under Alert -> Notifications -> Webhook URL</div>
       <div class="webhook-display">
         <code class="webhook-url">${escapeHtml(data.server_url || "http://127.0.0.1:8000")}</code>
         <button class="btn primary full-sm" id="copy-webhook" data-action="copy-webhook">${ICONS.copy}Copy URL</button>
       </div>
-      <div class="hint mt">Only ports 80 and 443 are accepted by TradingView. Use the Cloudflare tunnel URL.</div>
+      <div class="hint mt">Use the URL above - TradingView only accepts ports 80 and 443.</div>
       <div class="webhook-test-section mt">
         <button class="btn outline" id="ov-test-toggle" data-action="toggle-test">${ICONS.external}Test Webhook</button>
         <div id="ov-test-form" class="webhook-test-form hidden">
@@ -1451,38 +1421,34 @@ async function renderOverview(content, actions) {
           <div id="ov-test-result" aria-live="polite"></div>
         </div>
       </div>
-      <div class="ea-verify-section mt">
-        <button class="btn outline" id="ov-verify-ea" data-action="verify-ea">${ICONS.health}Verify EA Connection</button>
-        <div id="ov-ea-status" aria-live="polite"></div>
-      </div>
     </div>` : "";
 
   const setupBlock = !allDone ? `
     <div class="card">
       <h2 class="card-title">Get Started</h2>
-      <div class="card-desc">3 quick steps to start receiving TradingView webhooks</div>
+      <div class="card-desc">3 quick steps to start receiving TradingView signals</div>
       <div class="steps">
         <div class="step ${tg ? "done" : ""}">
           <div class="num">${tg ? ICONS.check : "1"}</div>
           <div class="body">
-            <div class="t">Configure Telegram Bot</div>
-            <div class="d">${tg ? "Done" : "Required for login and trade alerts"}</div>
+            <div class="t">Connect your Telegram bot</div>
+            <div class="d">${tg ? "Done" : "Used for login and trade alerts"}</div>
             <div class="action"><button class="btn outline sm" data-action="goto-setup">Go to Setup</button></div>
           </div>
         </div>
         <div class="step ${cf ? "done" : ""}">
           <div class="num">${cf ? ICONS.check : "2"}</div>
           <div class="body">
-            <div class="t">Connect Cloudflare Tunnel</div>
-            <div class="d">${cf ? "Done" : "Provides public HTTPS URL for TradingView webhooks"}</div>
+            <div class="t">Link your domain</div>
+            <div class="d">${cf ? "Done" : "Gives you a public URL for TradingView"}</div>
             <div class="action"><button class="btn outline sm" data-action="goto-setup">Go to Setup</button></div>
           </div>
         </div>
         <div class="step ${init ? "done" : ""}">
           <div class="num">${init ? ICONS.check : "3"}</div>
           <div class="body">
-            <div class="t">Get Your Webhook URL</div>
-            <div class="d">${init ? "Done" : "Copy to TradingView after Cloudflare is connected"}</div>
+            <div class="t">Copy your webhook URL</div>
+            <div class="d">${init ? "Done" : "Paste into TradingView after step 2"}</div>
           </div>
         </div>
       </div>
@@ -1490,49 +1456,72 @@ async function renderOverview(content, actions) {
 
   content.innerHTML = `
     ${staleBannerHtml}
+    <div class="card hero-card stat hero ${heroCls}" id="home-hero" role="group" aria-label="${escapeHtml(heroMsg)}">
+      <div class="value">${escapeHtml(heroMsg)}</div>
+      <div class="label">${heroOk ? "Everything looks good" : issues.join(" - ")}</div>
+    </div>
+    <div class="grid grid-3" id="home-metrics" role="group" aria-label="Key metrics">
+      <div class="stat info" id="tile-signals" role="group" aria-label="Signals Today">
+        <div class="value skeleton line" aria-live="polite"></div>
+        <div class="label">Signals Today</div>
+      </div>
+      <div class="stat info" id="tile-ea" role="group" aria-label="Active EAs">
+        <div class="value skeleton line" aria-live="polite"></div>
+        <div class="label">Active EAs</div>
+      </div>
+      <div class="stat info" id="tile-fill" role="group" aria-label="Win Rate">
+        <div class="value skeleton line" aria-live="polite"></div>
+        <div class="label">Win Rate</div>
+      </div>
+    </div>
     ${webhookBlock}
-    <div class="card">
-      <h2 class="card-title">System Status</h2>
-      <div class="card-desc">Current configuration state</div>
-      <div class="grid grid-3">
-        <div class="stat ${tg ? "ok" : "info"} clickable" id="ov-tile-tg" data-action="goto-setup" tabindex="0" role="button" aria-label="Telegram Bot status - go to Setup">
-          <div class="value">${tg ? "Configured" : "Pending"}</div>
-          <div class="label">Telegram Bot</div>
-          ${tgHint}
-        </div>
-        <div class="stat ${cf ? "ok" : "info"} clickable" id="ov-tile-cf" data-action="goto-setup" tabindex="0" role="button" aria-label="Cloudflare Tunnel status - go to Setup">
-          <div class="value">${cf ? "Connected" : "Pending"}</div>
-          <div class="label">Cloudflare Tunnel</div>
-          ${cfHint}
-        </div>
-        <div class="stat ${init ? "ok" : "warn"}" id="ov-tile-init" role="group" aria-label="Initialized: ${init ? "Yes" : "No"}">
-          <div class="value">${init ? "Yes" : "No"}</div>
-          <div class="label">Initialized</div>
-          ${initHint}
-        </div>
-      </div>
-    </div>
-    <div class="card" id="health-card">
-      <h2 class="card-title">Server Health${healthState.error && !healthState.data ? ` <span class="partial-badge">${ICONS.alert}Health unavailable</span>` : ""}</h2>
-      <div class="card-desc">Live system metrics - refreshes every 10s</div>
-      <div class="gauge-row" id="health-grid" role="group" aria-label="Server health gauges">
-        <div class="gauge-cell" id="gauge-cpu">${svgGauge(null, "CPU")}</div>
-        <div class="gauge-cell" id="gauge-mem">${svgGauge(null, "RAM")}</div>
-        <div class="gauge-cell" id="gauge-disk">${svgGauge(null, "Disk", { diskMode: true })}</div>
-        <div class="stat-pair" role="group" aria-label="Server health stats">
-          <div class="stat" id="tile-uptime" role="group" aria-label="Uptime"><div class="value skeleton line" aria-live="polite"></div><div class="label">Uptime</div></div>
-          <div class="stat" id="tile-ea" role="group" aria-label="EA Connections"><div class="value skeleton line" aria-live="polite"></div><div class="label">EA Connections</div></div>
-          <div class="stat" id="tile-signals" role="group" aria-label="Signals Today"><div class="value skeleton line" aria-live="polite"></div><div class="label">Signals Today</div></div>
-          <div class="stat" id="tile-fill" role="group" aria-label="Fill Rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Fill Rate</div></div>
-        </div>
-      </div>
-    </div>
     ${setupBlock}
+    <div class="card" id="home-activity">
+      <h2 class="card-title">Recent Activity</h2>
+      <div class="card-desc">Latest signals from TradingView</div>
+      <div id="home-activity-feed"></div>
+    </div>
   `;
   bindOverviewActions(content);
   startOverviewPoll();
   startHealthPolling();
   if (healthState.data || healthState.error) updateHealthCard();
+  loadHomeActivityFeed();
+}
+
+async function loadHomeActivityFeed() {
+  const feedEl = document.getElementById("home-activity-feed");
+  if (!feedEl) return;
+  try {
+    const r = await http("/api/signals/recent?limit=5");
+    const data = await parseResponse(r);
+    const signals = (data && Array.isArray(data.signals)) ? data.signals : [];
+    if (signals.length === 0) {
+      feedEl.innerHTML = emptyState(ICONS.signals, "No signals yet. Send a test webhook to see it here.");
+      return;
+    }
+    feedEl.innerHTML = signals.slice(0, 5).map(s => {
+      if (!s) return "";
+      const action = (s.action || "").toLowerCase();
+      const sym = s.symbol || "--";
+      const lots = s.volume != null ? s.volume : null;
+      const status = (s.execution_status || "pending").toLowerCase();
+      const ok = status === "executed" || status === "success" || status === "ok";
+      const icon = ok ? ICONS.check : status === "failed" || status === "error" ? ICONS.x : ICONS.alert;
+      const cls = ok ? "ok" : status === "failed" ? "bad" : "warn";
+      const lotsStr = lots != null ? (lots + " lots ") : "";
+      const verb = action === "buy" ? "BUY" : action === "sell" ? "SELL" : action === "close_all" ? "CLOSE ALL" : (action || "signal").toUpperCase();
+      const ts = s.timestamp ? formatTime(s.timestamp) : "";
+      const lat = s.latency_ms != null ? (" in " + s.latency_ms + "ms") : "";
+      return `<div class="row activity-row">
+        <span class="activity-icon ${cls}">${icon}</span>
+        <span class="activity-text"><strong>${escapeHtml(verb)}</strong> ${escapeHtml(sym)} ${escapeHtml(lotsStr)}${ok ? "executed" : escapeHtml(status)}${escapeHtml(lat)}</span>
+        <span class="activity-time mono">${escapeHtml(ts)}</span>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    feedEl.innerHTML = "";
+  }
 }
 
 function bindOverviewActions(scope) {
@@ -1566,7 +1555,7 @@ function bindOverviewActions(scope) {
 
 const SETUP_STEPS = [
   { n: 1, short: "1", label: "1. Telegram" },
-  { n: 2, short: "2", label: "2. Cloudflare" },
+  { n: 2, short: "2", label: "2. Domain" },
   { n: 3, short: "3", label: "3. Webhook" },
 ];
 const SETUP_STEP_KEY = "setup-wizard-step";
@@ -1651,11 +1640,11 @@ function stepSummary(tg, cf, data) {
   const parts = [];
   if (tg) {
     const uname = data?.bot_username || "";
-    parts.push(`<div class="step-summary"><span class="sum-check">${ICONS.check}</span><span class="sum-text">Telegram: Connected as ${escapeHtml(uname || "@yourbot")}</span></div>`);
+    parts.push(`<div class="step-summary"><span class="sum-check">${ICONS.check}</span><span class="sum-text">Connected as ${escapeHtml(uname || "@yourbot")}</span></div>`);
   }
   if (cf) {
     const url = data?.server_url || "https://pinetunnel.example.com";
-    parts.push(`<div class="step-summary"><span class="sum-check">${ICONS.check}</span><span class="sum-text">Cloudflare: ${escapeHtml(url)}</span></div>`);
+    parts.push(`<div class="step-summary"><span class="sum-check">${ICONS.check}</span><span class="sum-text">Linked: ${escapeHtml(url)}</span></div>`);
   }
   return parts.length ? `<div class="step-summaries">${parts.join("")}</div>` : "";
 }
@@ -1664,8 +1653,8 @@ function renderStep1(body, data) {
   const tg = data?.telegram_configured;
   body.innerHTML = `
     <div class="card">
-      <h2 class="card-title">Telegram Bot</h2>
-      <div class="card-desc">Required for dashboard login and trade alerts</div>
+      <h2 class="card-title">Connect your Telegram bot</h2>
+      <div class="card-desc">Used for login and trade alerts</div>
       ${tg ? `
         ${stepSummary(tg, false, data)}
         <button class="btn primary full-sm" data-action="advance-2">${ICONS.arrow}Continue to Step 2</button>
@@ -1718,8 +1707,8 @@ function renderStep2(body, data) {
   const cf = data?.cloudflare_configured;
   body.innerHTML = `
     <div class="card">
-      <h2 class="card-title">Cloudflare Tunnel</h2>
-      <div class="card-desc">Provides a public HTTPS URL for TradingView webhooks</div>
+      <h2 class="card-title">Link your domain</h2>
+      <div class="card-desc">Gives you a public URL for TradingView to send signals to</div>
       ${cf ? `
         ${stepSummary(true, cf, data)}
         <button class="btn primary full-sm" data-action="advance-3">${ICONS.arrow}Continue to Step 3</button>
@@ -1795,10 +1784,10 @@ async function renderStep3(body, data) {
   const sampleAlert = "LICENSE_KEY,buy,EURUSD,lots=0.10,sl=1.0850,tp=1.0950,secret=YOUR_SECRET";
   body.innerHTML = `
     <div class="card">
-      <h2 class="card-title">TradingView Webhook</h2>
-      <div class="card-desc">${skipped ? "Complete Cloudflare setup to get your webhook URL" : "Copy this URL and paste it into TradingView"}</div>
+      <h2 class="card-title">Copy your webhook URL</h2>
+      <div class="card-desc">${skipped ? "Link your domain first to get your webhook URL" : "Paste this URL into TradingView"}</div>
       <div class="webhook-display">
-        <code class="webhook-url" id="step3-webhook-url">${skipped ? "Complete Cloudflare setup to get your webhook URL" : "Loading..."}</code>
+        <code class="webhook-url" id="step3-webhook-url">${skipped ? "Link your domain first to get your webhook URL" : "Loading..."}</code>
         <button class="btn primary full-sm" id="copy-step3" data-action="copy-step3" ${skipped ? "disabled" : ""}>${ICONS.copy}Copy URL</button>
       </div>
       <div class="hint mt">In TradingView: Chart -&gt; Alert -&gt; Notifications -&gt; Webhook URL</div>
@@ -1884,7 +1873,7 @@ async function renderStep3(body, data) {
       if (info.ready && info.url) {
         urlEl.textContent = info.url;
       } else {
-        urlEl.textContent = info.message || "Complete Cloudflare setup to get your webhook URL";
+        urlEl.textContent = info.message || "Link your domain first to get your webhook URL";
       }
     }
   } catch (e) {
@@ -2403,67 +2392,32 @@ function renderSignalFeed(content, actions) {
   };
   content.innerHTML = `
     <div class="card">
-      <h2 class="card-title">Live Signal Feed</h2>
-      <div class="card-desc">Real-time signal delivery - polling every 5s</div>
+      <h2 class="card-title">Recent Trades</h2>
+      <div class="card-desc">Latest signals from TradingView - updates every 5s</div>
       <div class="filter-bar">
-        <select class="input filter-sel" id="feed-filter-license" aria-label="Filter by license"><option value="">All licenses</option></select>
-        <input class="input filter-txt" id="feed-filter-symbol" placeholder="Symbol filter" aria-label="Filter by symbol" value="${escapeHtml(signalFeedState.filterSymbol)}">
+        <input class="input filter-txt" id="feed-filter-symbol" placeholder="Filter by symbol" aria-label="Filter by symbol" value="${escapeHtml(signalFeedState.filterSymbol)}">
         <select class="input filter-sel" id="feed-filter-status" aria-label="Filter by status">
-          <option value="">All status</option>
+          <option value="">All</option>
           <option value="executed" ${signalFeedState.filterStatus === "executed" ? "selected" : ""}>Executed</option>
           <option value="pending" ${signalFeedState.filterStatus === "pending" ? "selected" : ""}>Pending</option>
-          <option value="delivered" ${signalFeedState.filterStatus === "delivered" ? "selected" : ""}>Delivered</option>
           <option value="failed" ${signalFeedState.filterStatus === "failed" ? "selected" : ""}>Failed</option>
         </select>
-        <button class="btn outline sm" id="feed-pause-btn" data-action="feed-pause" aria-pressed="false">${ICONS.pause}Pause</button>
       </div>
       <div class="feed-scroll" id="feed-scroll">
-        <table class="feed-table">
-          <caption class="sr-only">Live Signal Feed - real-time webhook signals</caption>
-          <thead>
-            <tr>
-              <th scope="col">Time</th>
-              <th scope="col">License</th>
-              <th scope="col">Action</th>
-              <th scope="col">Symbol</th>
-              <th scope="col" class="th-num">Lots</th>
-              <th scope="col" class="td-status">Status</th>
-              <th scope="col" class="th-num">Latency</th>
-            </tr>
-          </thead>
-          <tbody id="feed-body">
-            ${Array(5).fill(skeletonRow(7)).join("")}
-          </tbody>
-        </table>
+        <div id="feed-body" role="list" aria-label="Recent trades">
+          ${Array(5).fill('<div class="trade-card skeleton-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}
+        </div>
       </div>
       <div class="feed-footer">
-        <span id="feed-count">0 signals</span>
-        <span class="feed-hint">Hover to pause auto-scroll</span>
+        <span id="feed-count">0 trades</span>
       </div>
     </div>
   `;
-  const licenseSel = content.querySelector("#feed-filter-license");
   const symbolInput = content.querySelector("#feed-filter-symbol");
   const statusSel = content.querySelector("#feed-filter-status");
-  const pauseBtn = content.querySelector("[data-action='feed-pause']");
   const scrollEl = content.querySelector("#feed-scroll");
-  licenseSel.addEventListener("change", () => { signalFeedState.filterLicense = licenseSel.value; setPanelState("signals", { filters: { filterLicense: licenseSel.value } }); renderFeedRows(); });
   symbolInput.addEventListener("input", debounce(() => { signalFeedState.filterSymbol = symbolInput.value.trim().toUpperCase(); setPanelState("signals", { filters: { filterSymbol: signalFeedState.filterSymbol } }); renderFeedRows(); }, 200));
   statusSel.addEventListener("change", () => { signalFeedState.filterStatus = statusSel.value; setPanelState("signals", { filters: { filterStatus: statusSel.value } }); renderFeedRows(); });
-  pauseBtn.addEventListener("click", e => {
-    e.preventDefault();
-    signalFeedState.paused = !signalFeedState.paused;
-    pauseBtn.innerHTML = signalFeedState.paused ? `${ICONS.play}Resume` : `${ICONS.pause}Pause`;
-    pauseBtn.setAttribute("aria-pressed", String(signalFeedState.paused));
-  });
-  scrollEl.addEventListener("mouseenter", () => { signalFeedState.paused = true; });
-  scrollEl.addEventListener("mouseleave", () => {
-    if (pauseBtn.innerHTML.indexOf("Resume") === -1) signalFeedState.paused = false;
-  });
-  scrollEl.addEventListener("focusin", () => { signalFeedState.paused = true; });
-  scrollEl.addEventListener("focusout", () => {
-    if (pauseBtn.innerHTML.indexOf("Resume") === -1) signalFeedState.paused = false;
-  });
   actions.innerHTML = autoPollIndicator(5);
   startPoll(pollSignalFeed, 5000);
 }
@@ -2484,7 +2438,7 @@ async function pollSignalFeed() {
     if (staleEl) staleEl.remove();
     if (error && !data) {
       const body = document.getElementById("feed-body");
-      if (body) body.innerHTML = `<tr><td colspan="7" class="feed-empty feed-error">${errorPanel("signal feed", error, "retry-signals")}</td></tr>`;
+      if (body) body.innerHTML = errorPanel("recent trades", error, "retry-signals");
       bindRetryToScope("retry-signals", () => route("signals"));
       return;
     }
@@ -2508,104 +2462,61 @@ async function pollSignalFeed() {
       signalFeedState.seenIds.add(id);
     }
     if (newRows.length > 0) {
-      signalFeedState.rows = newRows.concat(signalFeedState.rows).slice(0, 100);
+      signalFeedState.rows = newRows.concat(signalFeedState.rows).slice(0, 20);
     }
     if (signalFeedState.rows.length === 0 && incoming.length > 0) {
-      signalFeedState.rows = incoming.slice(0, 100);
+      signalFeedState.rows = incoming.slice(0, 20);
       incoming.forEach(w => { if (w && w.id != null) signalFeedState.seenIds.add(w.id); });
     }
-  const licenseSet = new Set();
-  for (const r of signalFeedState.rows) {
-    const lk = r.license_key || "";
-    if (lk) licenseSet.add(maskKey(lk));
-  }
-  const licenseSel = document.getElementById("feed-filter-license");
-  if (licenseSel) {
-    const cur = licenseSel.value;
-    const opts = ['<option value="">All licenses</option>'].concat(
-      Array.from(licenseSet).sort().map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`)
-    );
-    const newHtml = opts.join("");
-    if (licenseSel.innerHTML !== newHtml) {
-      licenseSel.innerHTML = newHtml;
-      licenseSel.value = cur;
-    }
-  }
-  const hasFilters = signalFeedState.filterLicense || signalFeedState.filterSymbol || signalFeedState.filterStatus;
-  if (newRows.length > 0 && !hasFilters) {
-    const body = document.getElementById("feed-body");
-    if (body) {
-      const emptyRow = body.querySelector(".feed-empty");
-      if (emptyRow) emptyRow.closest("tr").remove();
-      const html = newRows.map(feedRowHtml).join("");
-      body.insertAdjacentHTML("afterbegin", html);
-      const countEl = document.getElementById("feed-count");
-      if (countEl) countEl.textContent = `${signalFeedState.rows.length} signals`;
-      if (!signalFeedState.paused) {
-        const scroll = document.getElementById("feed-scroll");
-        if (scroll) scroll.scrollTop = 0;
-      }
-      return;
-    }
-  }
-  if (newRows.length > 0 || !signalFeedState._renderedOnce) {
     renderFeedRows();
     signalFeedState._renderedOnce = true;
-  }
   } catch (e) {
     console.error("[dashboard] pollSignalFeed error:", e);
   }
 }
 
-function feedRowHtml(r) {
-    const ts = r.timestamp ? formatTime(r.timestamp) : "--";
-  const lk = maskKey(r.license_key || "");
-  const action = r.action || "--";
+function tradeCardHtml(r) {
+  const ts = r.timestamp ? formatTime(r.timestamp) : "--";
+  const action = (r.action || "").toLowerCase();
   const sym = r.symbol || "--";
-  const lots = r.volume != null ? r.volume : "--";
-  const status = r.execution_status || "pending";
-  const cls = statusClassFor(status);
-  const lat = r.latency_ms != null ? formatLatency(r.latency_ms) : "--";
-  const actionCls = action === "buy" ? "act-buy" : action === "sell" ? "act-sell" : action === "close" || action === "close_all" ? "act-close" : "act-other";
-  return `<tr class="row-${cls}">
-    <td class="td-time" scope="row">${escapeHtml(ts)}</td>
-    <td class="td-key">${escapeHtml(lk)}</td>
-    <td><span class="action-tag ${actionCls}">${escapeHtml(action)}</span></td>
-    <td>${escapeHtml(sym)}</td>
-    <td class="td-num">${escapeHtml(String(lots))}</td>
-    <td class="td-status">${badge(cls, escapeHtml(status))}</td>
-    <td class="td-lat">${escapeHtml(lat)}</td>
-  </tr>`;
+  const lots = r.volume != null ? r.volume : null;
+  const status = (r.execution_status || "pending").toLowerCase();
+  const ok = status === "executed" || status === "success" || status === "ok";
+  const cls = ok ? "ok" : status === "failed" || status === "error" ? "bad" : status === "delivered" || status === "pending" ? "warn" : "info";
+  const icon = ok ? ICONS.check : status === "failed" ? ICONS.x : ICONS.alert;
+  const verb = action === "buy" ? "BUY" : action === "sell" ? "SELL" : action === "close_all" ? "CLOSE ALL" : action === "close_long" ? "CLOSE LONG" : action === "close_short" ? "CLOSE SHORT" : (action || "signal").toUpperCase();
+  const lotsStr = lots != null ? (lots + " lots") : "";
+  const lat = r.latency_ms != null ? (" in " + r.latency_ms + "ms") : "";
+  const statusLabel = ok ? "executed" : status === "delivered" ? "sent" : status;
+  return `<div class="trade-card ${cls}" role="listitem">
+    <span class="trade-icon">${icon}</span>
+    <div class="trade-body">
+      <div class="trade-title"><strong>${escapeHtml(verb)}</strong> ${escapeHtml(sym)} ${escapeHtml(lotsStr)}</div>
+      <div class="trade-sub">${escapeHtml(statusLabel)}${escapeHtml(lat)}</div>
+    </div>
+    <span class="trade-time mono">${escapeHtml(ts)}</span>
+  </div>`;
 }
 
 function renderFeedRows() {
   const body = document.getElementById("feed-body");
   if (!body) return;
-  const { rows, filterLicense, filterSymbol, filterStatus } = signalFeedState;
+  const { rows, filterSymbol, filterStatus } = signalFeedState;
   let filtered = rows;
-  if (filterLicense) filtered = filtered.filter(r => {
-    const lk = maskKey(r.license_key || "");
-    return lk === filterLicense;
-  });
   if (filterSymbol) filtered = filtered.filter(r => (r.symbol || "").toUpperCase().includes(filterSymbol));
   if (filterStatus) filtered = filtered.filter(r => (r.execution_status || "pending") === filterStatus);
   const countEl = document.getElementById("feed-count");
-  if (countEl) countEl.textContent = pluralize(filtered.length, "signal");
+  if (countEl) countEl.textContent = pluralize(filtered.length, "trade");
   if (filtered.length === 0) {
     const isEmpty = rows.length === 0;
-    body.innerHTML = `<tr><td colspan="7" class="feed-empty">${isEmpty ? emptyState(ICONS.signals, "No signals received yet. Send a test webhook to see it here.", "Send test webhook", "empty-test-webhook") : "No signals match filters"}</td></tr>`;
+    body.innerHTML = isEmpty ? emptyState(ICONS.signals, "No trades yet. Send a test webhook to see it here.", "Send test", "empty-test-webhook") : emptyState(ICONS.filter, "No trades match filters");
     if (isEmpty) {
       const btn = body.querySelector("[data-action='empty-test-webhook']");
-      if (btn) btn.addEventListener("click", e => { e.preventDefault(); route("overview"); });
+      if (btn) btn.addEventListener("click", e => { e.preventDefault(); route("overview/home"); });
     }
     return;
   }
-  body.innerHTML = filtered.map(feedRowHtml).join("");
-  if (!signalFeedState.paused) {
-    const scroll = document.getElementById("feed-scroll");
-    if (scroll) scroll.scrollTop = 0;
-  }
-  updateScrollHint(document.querySelector(".feed-table"));
+  body.innerHTML = filtered.slice(0, 20).map(tradeCardHtml).join("");
 }
 
 let eaMapState = { expanded: null };
@@ -2834,28 +2745,27 @@ function renderTradeAnalytics(content, actions) {
   content.innerHTML = `
     <div id="analytics-stale-banner"></div>
     <div class="card">
-      <h2 class="card-title">Trade Analytics</h2>
-      <div class="card-desc">Performance overview - polling every 15s</div>
-      <div class="grid grid-4" id="analytics-stats" role="group" aria-label="Trade analytics stats">
+      <h2 class="card-title">Performance</h2>
+      <div class="card-desc">How your trades are doing - updates every 15s</div>
+      <div class="grid grid-3" id="analytics-stats" role="group" aria-label="Performance stats">
         <div class="stat" id="stat-total" role="group" aria-label="Total Trades"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total Trades</div></div>
         <div class="stat" id="stat-winrate" role="group" aria-label="Win Rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Win Rate</div></div>
-        <div class="stat" id="stat-latency" role="group" aria-label="Avg Latency"><div class="value skeleton line" aria-live="polite"></div><div class="label">Avg Latency</div></div>
         <div class="stat" id="stat-pf" role="group" aria-label="Profit Factor"><div class="value skeleton line" aria-live="polite"></div><div class="label">Profit Factor</div></div>
       </div>
     </div>
     <div class="card">
-      <h2 class="card-title">Trades by Hour (last 24h)</h2>
-      <div class="card-desc">Hourly trade volume distribution</div>
+      <h2 class="card-title">Trades Over Time</h2>
+      <div class="card-desc">Hourly trade volume for the last 24 hours</div>
       <div id="bar-chart-wrap" class="chart-wrap"></div>
     </div>
     <div class="card">
-      <h2 class="card-title">7-Day Success Rate Trend</h2>
-      <div class="card-desc">Daily success rate over the past week</div>
+      <h2 class="card-title">Win Rate (7 days)</h2>
+      <div class="card-desc">Daily win rate over the past week</div>
       <div id="line-chart-wrap" class="chart-wrap"></div>
     </div>
     <div class="card">
-      <h2 class="card-title">Top Symbols by Volume</h2>
-      <div class="card-desc">Top 5 symbols by trade volume</div>
+      <h2 class="card-title">Most Traded</h2>
+      <div class="card-desc">Top symbols by number of trades</div>
       <div id="donut-chart-wrap" class="chart-wrap"></div>
     </div>
   `;
@@ -2919,7 +2829,6 @@ async function pollTradeAnalytics() {
     }
     setStat("stat-total", formatNumber(totalTrades), totalTrades > 0 ? "ok" : "info");
     setStat("stat-winrate", formatPct(successRate), successRate >= 60 ? "ok" : successRate >= 40 ? "warn" : "bad");
-    setStat("stat-latency", avgLatency != null ? formatLatency(avgLatency) : "--", avgLatency != null && avgLatency < 100 ? "ok" : avgLatency != null && avgLatency < 500 ? "warn" : "info");
     setStat("stat-pf", profitFactor != null ? profitFactor.toFixed(2) : "--", profitFactor != null && profitFactor >= 1.5 ? "ok" : profitFactor != null && profitFactor >= 1 ? "warn" : "info");
     drawBarChart(daily, dash);
     drawLineChart(daily);
@@ -3395,13 +3304,71 @@ function statusColor(code) {
 
 let sysHealthState = { cpu: [], mem: [], disk: null, lastHealth: null, lastStats: null };
 
+function updateSystemHealthUI() {
+  const { lastHealth: h, lastStats: s, diag, dbStats, botInfo, secInfo } = sysHealthState;
+  if (!h) return;
+  const uptimeStr = h.uptime_seconds != null ? uptimeHuman(h.uptime_seconds) : "--";
+  const serverOk = true;
+  setTile("sh-server", serverOk ? "Healthy" : "Down", serverOk ? "ok" : "bad");
+  const upEl = document.getElementById("sh-uptime-val");
+  if (upEl) upEl.textContent = uptimeStr;
+  const dbOk = h.services && h.services.database === "healthy";
+  setTile("sh-database", dbOk ? "Connected" : "Disconnected", dbOk ? "ok" : "bad");
+  const redisOk = h.services && (h.services.redis === "healthy" || h.services.redis === "not_configured");
+  const redisLabel = h.services && h.services.redis === "not_configured" ? "Not used" : (redisOk ? "Connected" : "Disconnected");
+  setTile("sh-redis", redisLabel, redisOk ? "ok" : "bad");
+  const dbLineEl = document.getElementById("sh-db-line");
+  if (dbLineEl && dbStats) {
+    const sizeStr = dbStats.size_mb != null ? formatBytes(dbStats.size_mb * 1048576) : "--";
+    const recStr = dbStats.total_records != null ? formatNumber(dbStats.total_records) : "--";
+    dbLineEl.textContent = sizeStr + ", " + recStr + " records";
+  }
+  const botEl = document.getElementById("sh-bot");
+  if (botEl && botInfo) {
+    const running = botInfo.started && botInfo.updater_running;
+    const uname = botInfo.username ? ("@" + botInfo.username) : "connected";
+    botEl.textContent = running ? ("Connected as " + uname) : "Not running";
+    botEl.className = "health-line " + (running ? "ok" : "bad");
+  }
+  const secEl = document.getElementById("sh-security");
+  if (secEl && secInfo) {
+    const hdr = secInfo.headers || {};
+    const headerList = [
+      hdr.x_frame_options, hdr.content_security_policy, hdr.x_content_type_options,
+      hdr.x_xss_protection, hdr.referrer_policy, hdr.strict_transport_security,
+    ];
+    const active = headerList.filter(Boolean).length;
+    const blocked = secInfo.blocked_ip_count || 0;
+    secEl.textContent = active + "/6 headers active, " + blocked + " blocked IPs";
+  }
+  const warnEl = document.getElementById("sh-warnings");
+  if (warnEl) {
+    const warnings = [];
+    if (!dbOk) warnings.push("Database is not connected. Check your DATABASE_URL in Setup.");
+    if (h.services && h.services.redis && h.services.redis !== "healthy" && h.services.redis !== "not_configured") warnings.push("Redis is not connected. Check your REDIS_URL in Setup.");
+    if (botInfo && !(botInfo.started && botInfo.updater_running)) warnings.push("Telegram bot is not running. Check your bot token in Setup.");
+    if (diag && diag.overall_status && diag.overall_status !== "ok") {
+      const issueCount = (diag.probes || []).filter(p => p.status !== "ok").length;
+      warnings.push(issueCount + " system issue" + (issueCount > 1 ? "s" : "") + " detected by diagnostics.");
+    }
+    warnEl.innerHTML = warnings.length
+      ? warnings.map(w => `<div class="inline-error">${ICONS.alert}${escapeHtml(w)}</div>`).join("")
+      : `<div class="inline-ok">${ICONS.check}Everything looks good</div>`;
+  }
+}
+
 async function pollSystemHealth() {
   if (currentRouteId !== "sys-health" || !visibilityPolling) return;
-  let hRes, sRes;
+  let hRes, sRes, diagRes, dbRes, botRes, secHdrRes, secRlRes;
   try {
-    [hRes, sRes] = await Promise.all([
+    [hRes, sRes, diagRes, dbRes, botRes, secHdrRes, secRlRes] = await Promise.all([
       useFetch("/api/system/health").catch(() => ({ data: null, error: "health", stale: false })),
       useFetch("/api/system/stats").catch(() => ({ data: null, error: "stats", stale: false })),
+      useFetch("/api/diagnostics").catch(() => ({ data: null, error: "diag", stale: false })),
+      useFetch("/api/database/stats").catch(() => ({ data: null, error: "db", stale: false })),
+      useFetch(`${API}/bot-info`).catch(() => ({ data: null, error: "bot", stale: false })),
+      useFetch(`${API}/security-headers`).catch(() => ({ data: null, error: "sec-hdr", stale: false })),
+      useFetch(`${API}/rate-limits`).catch(() => ({ data: null, error: "sec-rl", stale: false })),
     ]);
   } catch (e) {
     console.error("[dashboard] pollSystemHealth fetch error:", e);
@@ -3411,18 +3378,21 @@ async function pollSystemHealth() {
   try {
     const h = hRes ? hRes.data : null;
     const s = sRes ? sRes.data : null;
+    if (h) sysHealthState.lastHealth = h;
+    if (s) sysHealthState.lastStats = s;
+    if (diagRes) sysHealthState.diag = diagRes.data;
+    if (dbRes) sysHealthState.dbStats = dbRes.data;
+    if (botRes) sysHealthState.botInfo = botRes.data;
+    if (secHdrRes && secRlRes) {
+      sysHealthState.secInfo = Object.assign({}, secHdrRes.data || {}, secRlRes.data || {});
+    }
     const staleEl = document.getElementById("sh-stale-banner");
     if (staleEl) {
-      const partials = [];
-      if (hRes && hRes.error && !h) partials.push("health");
-      if (sRes && sRes.error && !s) partials.push("stats");
-      if ((hRes && hRes.stale || sRes && sRes.stale) && (h || s)) {
-        staleEl.innerHTML = staleBanner();
-      } else if (partials.length > 0 && (h || s)) {
-        staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
-      } else {
-        staleEl.innerHTML = "";
-      }
+      const anyStale = (hRes && hRes.stale) || (sRes && sRes.stale);
+      const anyPartial = (hRes && hRes.error && !h) || (sRes && sRes.error && !s);
+      if (anyStale && (h || s)) staleEl.innerHTML = staleBanner();
+      else if (anyPartial && (h || s)) staleEl.innerHTML = partialWarning("some details unavailable");
+      else staleEl.innerHTML = "";
     }
     if (!h && !s) {
       const content = domCache.content || document.getElementById("content");
@@ -3432,171 +3402,47 @@ async function pollSystemHealth() {
       }
       return;
     }
-    if (h) {
-      const cpu = h.system ? h.system.cpu_percent : null;
-      const mem = h.system ? h.system.memory_percent : null;
-      if (cpu != null) {
-        sysHealthState.cpu.push(cpu);
-        if (sysHealthState.cpu.length > 60) sysHealthState.cpu.shift();
-      }
-      if (mem != null) {
-        sysHealthState.mem.push(mem);
-        if (sysHealthState.mem.length > 60) sysHealthState.mem.shift();
-      }
-      sysHealthState.lastHealth = h;
-    }
-    if (s) sysHealthState.lastStats = s;
     updateSystemHealthUI();
   } catch (e) {
     console.error("[dashboard] pollSystemHealth error:", e);
   }
 }
 
-function updateSystemHealthUI() {
-  const { lastHealth: h, lastStats: s, cpu, mem } = sysHealthState;
-  if (!h) return;
-  const cpuEl = document.getElementById("sh-cpu-chart");
-  const memEl = document.getElementById("sh-mem-chart");
-  updateLineChart(cpuEl, cpu, { color: PALETTE.green, label: "CPU %", max: 100 });
-  updateLineChart(memEl, mem, { color: PALETTE.blue, label: "Memory %", max: 100 });
-  const cpuVal = h.system ? h.system.cpu_percent : null;
-  const memVal = h.system ? h.system.memory_percent : null;
-  setTile("sh-cpu-val", cpuVal != null ? formatPct(cpuVal) : "--", loadColor(cpuVal));
-  setTile("sh-mem-val", memVal != null ? formatPct(memVal) : "--", loadColor(memVal));
-  setTile("sh-threads", (h.process && h.process.threads != null) ? formatNumber(h.process.threads) : "--", "info");
-  setTile("sh-proc-mem", (h.process && h.process.memory_mb != null) ? formatBytes(h.process.memory_mb * 1048576) : "--", "info");
-  setTile("sh-proc-cpu", (h.process && h.process.cpu_percent != null) ? formatPct(h.process.cpu_percent) : "--", loadColor(h.process ? h.process.cpu_percent : null));
-  setTile("sh-mem-avail", (h.system && h.system.memory_available_gb != null) ? (h.system.memory_available_gb.toFixed(1) + " GB") : "--", "info");
-  setTile("sh-uptime", h.uptime_seconds != null ? formatDuration(h.uptime_seconds) : "--", "ok");
-  const procCpu = h.process ? h.process.cpu_percent : null;
-  if (procCpu != null) {
-    sysHealthState.procCpu = sysHealthState.procCpu || [];
-    sysHealthState.procCpu.push(procCpu);
-    if (sysHealthState.procCpu.length > 60) sysHealthState.procCpu.shift();
-  }
-  const diskWrap = document.getElementById("sh-disk-gauge");
-  if (diskWrap && s) {
-    const diskPct = s.disk ? s.disk.percent : null;
-    updateGauge(diskWrap, diskPct, "Disk", { diskMode: true });
-  }
-  if (s && s.disk) {
-    setTile("sh-disk-free", s.disk.free_mb != null ? formatBytes(s.disk.free_mb * 1048576) : (s.disk.free_gb != null ? (s.disk.free_gb.toFixed(2) + " GB") : "--"), "info");
-    setTile("sh-disk-path", s.disk.path ? escapeHtml(s.disk.path) : "--", "info");
-  } else {
-    setTile("sh-disk-free", "--", "info");
-    setTile("sh-disk-path", "--", "info");
-  }
-  if (h.services) {
-    const dbOk = h.services.database === "healthy";
-    const redisOk = h.services.redis === "healthy" || h.services.redis === "not_configured";
-    setTile("sh-services", "DB:" + (h.services.database || "?") + " Redis:" + (h.services.redis || "?"), dbOk && redisOk ? "ok" : "warn");
-  }
-  const netEl = document.getElementById("sh-net");
-  if (netEl && s && s.network) {
-    netEl.innerHTML = `
-      <div class="row"><span class="k">Bytes sent</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_sent || 0))}</span></div>
-      <div class="row"><span class="k">Bytes recv</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_recv || 0))}</span></div>
-      <div class="row"><span class="k">Packets sent</span><span class="v">${escapeHtml(formatNumber(s.network.packets_sent || 0))}</span></div>
-      <div class="row"><span class="k">Packets recv</span><span class="v">${escapeHtml(formatNumber(s.network.packets_recv || 0))}</span></div>`;
-  }
-  const poolEl = document.getElementById("sh-db-pool");
-  if (poolEl && h.db_pool) {
-    const p = h.db_pool;
-    const inUse = p.in_use || p.used || 0;
-    const avail = p.available || p.free || 0;
-    const overflow = p.overflow || 0;
-    const total = (inUse + avail + overflow) || 1;
-    const iW = (inUse / total) * 100;
-    const aW = (avail / total) * 100;
-    const oW = (overflow / total) * 100;
-    poolEl.innerHTML = `
-      <div class="stacked-bar">
-        <div class="seg ok" data-w="${escapeHtml(String(iW))}" title="In use: ${escapeHtml(formatNumber(inUse))}"></div>
-        <div class="seg info" data-w="${escapeHtml(String(aW))}" title="Available: ${escapeHtml(formatNumber(avail))}"></div>
-        <div class="seg warn" data-w="${escapeHtml(String(oW))}" title="Overflow: ${escapeHtml(formatNumber(overflow))}"></div>
-      </div>
-      <div class="stacked-legend">
-        <span class="lg ok"><span class="dot"></span>In use ${escapeHtml(formatNumber(inUse))}</span>
-        <span class="lg info"><span class="dot"></span>Available ${escapeHtml(formatNumber(avail))}</span>
-        <span class="lg warn"><span class="dot"></span>Overflow ${escapeHtml(formatNumber(overflow))}</span>
-      </div>`;
-    poolEl.querySelectorAll(".seg[data-w]").forEach(seg => {
-      const w = parseFloat(seg.dataset.w);
-      if (!isNaN(w)) seg.style.setProperty("--seg-w", w + "%");
-    });
-  }
-  const redisEl = document.getElementById("sh-redis");
-  if (redisEl) {
-    if (h.redis_info && Object.keys(h.redis_info).length) {
-      const ri = h.redis_info;
-      redisEl.innerHTML = `
-        <div class="row"><span class="k">Used memory</span><span class="v">${escapeHtml(formatBytes((ri.used_memory_mb || 0) * 1048576))}</span></div>
-        <div class="row"><span class="k">Connected clients</span><span class="v">${escapeHtml(formatNumber(ri.connected_clients || 0))}</span></div>
-        <div class="row"><span class="k">Keyspace hits</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_hits || 0))}</span></div>
-        <div class="row"><span class="k">Keyspace misses</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_misses || 0))}</span></div>`;
-    } else {
-      redisEl.innerHTML = emptyState(ICONS.database, "Redis not configured");
-    }
-  }
-}
-
 function renderSystemHealth(content) {
-  sysHealthState = { cpu: [], mem: [], disk: null, lastHealth: null, lastStats: null, procCpu: [] };
+  sysHealthState = { cpu: [], mem: [], disk: null, lastHealth: null, lastStats: null, procCpu: [], diag: null, dbStats: null, botInfo: null, secInfo: null };
   content.innerHTML = `
     <div id="sh-stale-banner"></div>
-    <div class="grid grid-2">
-      <div class="card">
-        <h2 class="card-title">CPU Usage</h2>
-        <div class="card-desc">60s rolling - updates every 5s</div>
-        <div class="stat" id="sh-cpu-val"><div class="value skeleton line" aria-live="polite"></div><div class="label">Current</div></div>
-        <div class="chart-wrap" id="sh-cpu-chart"></div>
-      </div>
-      <div class="card">
-        <h2 class="card-title">Memory Usage</h2>
-        <div class="card-desc">60s rolling - updates every 5s</div>
-        <div class="stat" id="sh-mem-val"><div class="value skeleton line" aria-live="polite"></div><div class="label">Current</div></div>
-        <div class="chart-wrap" id="sh-mem-chart"></div>
+    <div class="card">
+      <h2 class="card-title">System Health</h2>
+      <div class="card-desc">Is everything running? - updates every 10s</div>
+      <div class="grid grid-3">
+        <div class="stat" id="sh-server" role="group" aria-label="Server"><div class="value skeleton line" aria-live="polite"></div><div class="label">Server</div><div class="hint" id="sh-uptime-val">--</div></div>
+        <div class="stat" id="sh-database" role="group" aria-label="Database"><div class="value skeleton line" aria-live="polite"></div><div class="label">Database</div><div class="hint" id="sh-db-line">--</div></div>
+        <div class="stat" id="sh-redis" role="group" aria-label="Redis"><div class="value skeleton line" aria-live="polite"></div><div class="label">Redis</div></div>
       </div>
     </div>
-    <div class="grid grid-3">
-      <div class="card">
-        <h2 class="card-title">Disk Usage</h2>
-        <div class="card-desc">Updates every 60s</div>
-        <div class="gauge-center" id="sh-disk-gauge"></div>
-      </div>
-      <div class="card">
-        <h2 class="card-title">Network I/O</h2>
-        <div class="card-desc">Cumulative counters</div>
-        <div id="sh-net"></div>
-      </div>
-      <div class="card">
-        <h2 class="card-title">DB Pool</h2>
-        <div class="card-desc">Connection pool stats</div>
-        <div id="sh-db-pool"></div>
+    <div class="card">
+      <h2 class="card-title">Connected Services</h2>
+      <div class="card-desc">Telegram bot and security status</div>
+      <div class="grid grid-2">
+        <div class="stat" role="group" aria-label="Telegram Bot">
+          <div class="label">Telegram Bot</div>
+          <div class="hint" id="sh-bot">Checking...</div>
+        </div>
+        <div class="stat" role="group" aria-label="Security">
+          <div class="label">Security</div>
+          <div class="hint" id="sh-security">Checking...</div>
+        </div>
       </div>
     </div>
-    <div class="grid grid-3">
-      <div class="card">
-        <h2 class="card-title">Redis Info</h2>
-        <div class="card-desc">Cache server stats</div>
-        <div id="sh-redis"></div>
-      </div>
-      <div class="stat" id="sh-threads"><div class="value skeleton line" aria-live="polite"></div><div class="label">Thread Count</div></div>
-      <div class="stat" id="sh-proc-mem"><div class="value skeleton line" aria-live="polite"></div><div class="label">Process Memory</div></div>
-    </div>
-    <div class="grid grid-3">
-      <div class="stat" id="sh-proc-cpu"><div class="value skeleton line" aria-live="polite"></div><div class="label">Process CPU</div></div>
-      <div class="stat" id="sh-mem-avail"><div class="value skeleton line" aria-live="polite"></div><div class="label">System RAM Free</div></div>
-      <div class="stat" id="sh-disk-free"><div class="value skeleton line" aria-live="polite"></div><div class="label">Disk Free</div></div>
-    </div>
-    <div class="grid grid-3">
-      <div class="stat" id="sh-uptime"><div class="value skeleton line" aria-live="polite"></div><div class="label">Uptime</div></div>
-      <div class="stat" id="sh-disk-path"><div class="value skeleton line" aria-live="polite"></div><div class="label">Disk Path</div></div>
-      <div class="stat" id="sh-services"><div class="value skeleton line" aria-live="polite"></div><div class="label">Services</div></div>
+    <div class="card">
+      <h2 class="card-title">Status</h2>
+      <div class="card-desc">Any problems that need your attention</div>
+      <div id="sh-warnings"><div class="skeleton line"></div></div>
     </div>
   `;
-  setHeaderAutoPoll(5);
-  startPoll(pollSystemHealth, 5000);
+  setHeaderAutoPoll(10);
+  startPoll(pollSystemHealth, 10000);
 }
 
 let webhookLogState = { rows: [], page: 0, stats: null, loaded: false, sort: { key: "timestamp", dir: "desc" }, filter: { range: "today", status: "", symbol: "", license: "" } };
@@ -3962,13 +3808,26 @@ function updateRiskUI(data) {
     const ok = data.can_trade;
     card.className = `stat hero ${ok ? "ok" : "bad"}`;
     const v = card.querySelector(".value");
-    if (v) v.textContent = ok ? "CAN TRADE" : "BLOCKED";
+    if (v) v.textContent = ok ? "Safe to Trade" : "Trading Paused";
     const l = card.querySelector(".label");
-    if (l) l.textContent = data.reason || (ok ? "All checks passed" : "Trading disabled");
+    if (l) l.textContent = data.reason || (ok ? "All checks passed" : "Trading is paused");
   }
   const rm = data.risk_metrics || {};
   const acc = data.account || {};
-  setTile("risk-daily-pnl", rm.daily_pnl != null ? formatCurrency(rm.daily_pnl) : "--", rm.daily_pnl >= 0 ? "ok" : "bad");
+  const dailyLoss = rm.daily_pnl != null ? rm.daily_pnl : null;
+  const dailyLimit = rm.daily_loss_limit != null ? rm.daily_loss_limit : null;
+  let dailyLabel = "--";
+  let dailyCls = "info";
+  if (dailyLoss != null) {
+    dailyCls = dailyLoss >= 0 ? "ok" : "bad";
+    if (dailyLoss < 0 && dailyLimit != null && dailyLimit > 0) {
+      const pctOfLimit = Math.round(Math.abs(dailyLoss) / dailyLimit * 100);
+      dailyLabel = formatCurrency(dailyLoss) + " (" + pctOfLimit + "% of limit)";
+    } else {
+      dailyLabel = formatCurrency(dailyLoss);
+    }
+  }
+  setTile("risk-daily-pnl", dailyLabel, dailyCls);
   setTile("risk-max-dd", rm.max_drawdown != null ? formatPct(rm.max_drawdown) : "--", "warn");
   setTile("risk-mode", rm.position_sizing_mode || "--", "info");
   setTile("risk-pct", rm.risk_per_trade_pct != null ? formatPct(rm.risk_per_trade_pct) : "--", "info");
@@ -3978,16 +3837,16 @@ function updateRiskUI(data) {
   const alertsEl = document.getElementById("risk-alerts");
   if (alertsEl) {
     const alerts = [];
-    if (rm.daily_pnl != null && rm.daily_loss_limit != null && rm.daily_pnl < 0 && Math.abs(rm.daily_pnl) > rm.daily_loss_limit * 0.8) {
-      alerts.push({ cls: "warn", msg: "Approaching daily loss limit" });
+    if (dailyLoss != null && dailyLimit != null && dailyLoss < 0 && Math.abs(dailyLoss) > dailyLimit * 0.8) {
+      alerts.push({ cls: "warn", msg: "You are close to your daily loss limit" });
     }
     if (acc.margin_level != null && acc.margin_level !== 999999 && acc.margin_level <= 10000 && acc.margin_level < 120) {
-      alerts.push({ cls: "bad", msg: "Margin call warning - margin level below 120%" });
+      alerts.push({ cls: "bad", msg: "Margin call warning - margin level is below 120%" });
     }
     if (!data.can_trade) {
-      alerts.push({ cls: "bad", msg: `Trading blocked: ${data.reason || "unknown"}` });
+      alerts.push({ cls: "bad", msg: "Trading is paused: " + (data.reason || "unknown reason") });
     }
-    alertsEl.innerHTML = alerts.length ? alerts.map(a => `<div class="inline-${a.cls === "bad" ? "error" : "ok"}">${escapeHtml(a.msg)}</div>`).join("") : `<div class="inline-ok">No active alerts</div>`;
+    alertsEl.innerHTML = alerts.length ? alerts.map(a => `<div class="inline-${a.cls === "bad" ? "error" : "ok"}">${escapeHtml(a.msg)}</div>`).join("") : `<div class="inline-ok">${ICONS.check}No active alerts - everything looks good</div>`;
   }
 }
 
@@ -3995,21 +3854,23 @@ function renderRiskMonitor(content) {
   content.innerHTML = `
     <div id="risk-stale-banner"></div>
     <div class="card">
-      <h2 class="card-title">Trading Status</h2>
-      <div class="card-desc">Current risk gate - polling every 10s</div>
+      <h2 class="card-title">Risk Status</h2>
+      <div class="card-desc">Whether it is safe to trade right now - updates every 10s</div>
       <div class="stat hero" id="risk-status-card"><div class="value skeleton line" aria-live="polite"></div><div class="label">Loading...</div></div>
     </div>
     <div class="card">
       <h2 class="card-title">Risk Metrics</h2>
+      <div class="card-desc">Your risk settings and today's performance</div>
       <div class="grid grid-4">
-        <div class="stat" id="risk-daily-pnl"><div class="value skeleton line" aria-live="polite"></div><div class="label">Daily P&L</div></div>
+        <div class="stat" id="risk-daily-pnl"><div class="value skeleton line" aria-live="polite"></div><div class="label">Daily Loss</div></div>
         <div class="stat" id="risk-max-dd"><div class="value skeleton line" aria-live="polite"></div><div class="label">Max Drawdown</div></div>
         <div class="stat" id="risk-mode"><div class="value skeleton line" aria-live="polite"></div><div class="label">Position Sizing</div></div>
-        <div class="stat" id="risk-pct"><div class="value skeleton line" aria-live="polite"></div><div class="label">Risk / Trade</div></div>
+        <div class="stat" id="risk-pct"><div class="value skeleton line" aria-live="polite"></div><div class="label">Risk per Trade</div></div>
       </div>
     </div>
     <div class="card">
       <h2 class="card-title">Account</h2>
+      <div class="card-desc">Your broker account balance and equity</div>
       <div class="grid grid-3">
         <div class="stat" id="risk-balance"><div class="value skeleton line" aria-live="polite"></div><div class="label">Balance</div></div>
         <div class="stat" id="risk-equity"><div class="value skeleton line" aria-live="polite"></div><div class="label">Equity</div></div>
@@ -4018,7 +3879,7 @@ function renderRiskMonitor(content) {
     </div>
     <div class="card">
       <h2 class="card-title">Alerts</h2>
-      <div class="card-desc">Active risk warnings</div>
+      <div class="card-desc">Active risk warnings that need your attention</div>
       <div id="risk-alerts"></div>
     </div>
   `;
@@ -4662,7 +4523,7 @@ let licenseState = { rows: [], search: "", loaded: false, sort: { key: "email", 
 async function renderLicenses(content, actions) {
   const tk = renderToken;
   content.innerHTML = skeletonCard(1);
-  actions.innerHTML = `${autoPollIndicator(15)}<button class="btn primary sm" id="add-license-btn" data-action="add-license">${ICONS.plus}Add License</button>`;
+  actions.innerHTML = `${autoPollIndicator(15)}<button class="btn primary sm" id="add-license-btn" data-action="add-license">${ICONS.plus}Add Key</button>`;
   const addBtn = actions.querySelector("[data-action='add-license']");
   if (addBtn) addBtn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
   licenseState.loaded = false;
@@ -4688,18 +4549,17 @@ async function renderLicenses(content, actions) {
       <span class="badge ok">${formatNumber(totalEAs)} EAs connected</span>
     </div>
     <div class="card license-stack">
-      <h2 class="card-title">Licenses</h2>
-      <div class="card-desc">Manage API keys and EA access</div>
+      <h2 class="card-title">API Keys</h2>
+      <div class="card-desc">Manage keys for your EAs</div>
       <div class="table-wrap">
-        <table class="data-table mgr-table" id="lic-table" aria-label="Licenses">
-          <caption class="sr-only">License manager</caption>
+        <table class="data-table mgr-table" id="lic-table" aria-label="API Keys">
+          <caption class="sr-only">API Keys</caption>
           <thead>
             <tr>
-              <th scope="col" class="sortable" data-sort="license_key">License Key</th>
+              <th scope="col" class="sortable" data-sort="license_key">Key</th>
               <th scope="col" class="sortable" data-sort="name">Name</th>
               <th scope="col" class="sortable" data-sort="email">Email</th>
               <th scope="col" class="sortable td-status" data-sort="status">Status</th>
-              <th scope="col">Secret</th>
               <th scope="col" class="sortable" data-sort="expires_at">Expires</th>
               <th scope="col" class="sortable th-num" data-sort="connected_eas">EAs</th>
               <th scope="col" class="sortable th-num" data-sort="total_trades">Trades</th>
@@ -4707,7 +4567,7 @@ async function renderLicenses(content, actions) {
               <th scope="col" class="td-actions">Actions</th>
             </tr>
           </thead>
-          <tbody id="lic-body">${Array(5).fill(skeletonRow(10)).join("")}</tbody>
+          <tbody id="lic-body">${Array(5).fill(skeletonRow(9)).join("")}</tbody>
         </table>
       </div>
       <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
@@ -4831,7 +4691,7 @@ function renderLicenseRows() {
   const end = Math.min(start + pp, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    body.innerHTML = `<tr><td colspan="10">${(licenseState.rows || []).length === 0 ? emptyState(ICONS.license, "No licenses configured. Click 'Add License' to create one.", "Add License", "empty-add-license") : emptyState(ICONS.filter, "No matches")}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9">${(licenseState.rows || []).length === 0 ? emptyState(ICONS.license, "No API keys yet. Click 'Add Key' to create one.", "Add Key", "empty-add-license") : emptyState(ICONS.filter, "No matches")}</td></tr>`;
     if ((licenseState.rows || []).length === 0) {
       const btn = body.querySelector("[data-action='empty-add-license']");
       if (btn) btn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
@@ -4843,21 +4703,20 @@ function renderLicenseRows() {
       const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
       const lastAct = r.last_activity ? formatTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
       return `<tr>
-        <td class="td-key" scope="row" data-label="License Key" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
+        <td class="td-key" scope="row" data-label="Key" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
         <td data-label="Name">${escapeHtml(r.name || "--")}</td>
         <td class="td-email" data-label="Email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
         <td class="td-status" data-label="Status">${badge(r.status_cls, escapeHtml(r.status))}</td>
-        <td class="secret-cell" data-label="Secret" aria-label="Secret hidden">****</td>
         <td data-label="Expires">${escapeHtml(expires)}</td>
         <td class="td-num" data-label="EAs">${formatNumber(r.connected_eas)}</td>
         <td class="td-num" data-label="Trades">${formatNumber(r.total_trades)}</td>
         <td data-label="Last Activity">${escapeHtml(lastAct)}</td>
         <td class="td-actions" data-label="Actions">
-          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit license ${escapeHtml(maskKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
-          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend license ${escapeHtml(maskKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
-          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} license ${escapeHtml(maskKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" aria-label="Force disconnect license ${escapeHtml(maskKey(r.license_key))}" title="Force disconnect">${ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" aria-label="Delete license ${escapeHtml(maskKey(r.license_key))}" title="Delete">${ICONS.trash}</button>
+          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit key ${escapeHtml(maskKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
+          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend key ${escapeHtml(maskKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
+          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} key ${escapeHtml(maskKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" aria-label="Disconnect EA ${escapeHtml(maskKey(r.license_key))}" title="Disconnect EA">${ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" aria-label="Delete key ${escapeHtml(maskKey(r.license_key))}" title="Delete">${ICONS.trash}</button>
         </td>
       </tr>`;
     }).join("");
@@ -4886,7 +4745,7 @@ function handleLicenseAction(b) {
     if (enabled) disableLicense(key, b);
     else enableLicense(key, b);
   }
-  else if (action === "lic-disconnect") openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${maskKey(key)}? The EA will need to reconnect.`, () => forceDisconnectLicense(key), "Disconnect");
+  else if (action === "lic-disconnect") openConfirmModal("Disconnect EA", `Disconnect all EAs using key ${maskKey(key)}? The EA will need to reconnect.`, () => forceDisconnectLicense(key), "Disconnect");
   else if (action === "lic-delete") openConfirmModal("Delete license", `Delete license for ${b.dataset.name}? This cannot be undone.`, () => deleteLicense(key), "Delete");
 }
 
@@ -4903,7 +4762,7 @@ async function extendLicense(key, btn) {
       headers: jsonHeaders(true),
       body: JSON.stringify({ days: 30 }),
     });
-    toast("License extended by 30 days", "ok");
+    toast("Key extended by 30 days", "ok");
     refreshLicenses();
   } catch (e) {
     toast(`Extend failed: ${friendlyMsg(e)}`, "bad");
@@ -4916,7 +4775,7 @@ async function disableLicense(key, btn) {
   if (btn) setBtnLoading(btn, "Disabling...");
   try {
     await http(`${API}/licenses/${encodeURIComponent(key)}/disable`, { method: "POST", headers: jsonHeaders(true) });
-    toast("License disabled", "ok");
+    toast("Key disabled", "ok");
     refreshLicenses();
   } catch (e) {
     toast(`Disable failed: ${friendlyMsg(e)}`, "bad");
@@ -4929,7 +4788,7 @@ async function enableLicense(key, btn) {
   if (btn) setBtnLoading(btn, "Enabling...");
   try {
     await http(`${API}/licenses/${encodeURIComponent(key)}/enable`, { method: "POST", headers: jsonHeaders(true) });
-    toast("License enabled", "ok");
+    toast("Key enabled", "ok");
     refreshLicenses();
   } catch (e) {
     toast(`Enable failed: ${friendlyMsg(e)}`, "bad");
@@ -4957,7 +4816,7 @@ async function deleteLicense(key) {
       headers: jsonHeaders(true),
       body: JSON.stringify({ confirm: true }),
     });
-    toast("License deleted", "ok");
+    toast("Key deleted", "ok");
     refreshLicenses();
   } catch (e) {
     toast(`Delete failed: ${friendlyMsg(e)}`, "bad");
@@ -5030,14 +4889,14 @@ function openLicenseModal() {
   overlay.className = "modal-overlay";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
-  overlay.setAttribute("aria-label", "Add License");
+  overlay.setAttribute("aria-label", "Add Key");
   overlay.innerHTML = `<div class="modal-card">
     <button class="modal-close" data-action="modal-close" aria-label="Close">${ICONS.x}</button>
-    <h2 class="modal-title">Add License</h2>
-    <div class="modal-desc">Create a new license key.</div>
+    <h2 class="modal-title">Add Key</h2>
+    <div class="modal-desc">Create a new API key.</div>
     <div class="modal-body" id="lic-modal-form">
       <div class="field">
-        <label for="lic-modal-key">License Key <span class="req">*</span></label>
+        <label for="lic-modal-key">Key <span class="req">*</span></label>
         <div class="gen-row">
           <input class="input" id="lic-modal-key" value="${genKey("PT")}" readonly>
           <button class="btn outline sm" data-action="regen-key">${ICONS.refresh}Regenerate</button>
@@ -5100,7 +4959,7 @@ function openLicenseModal() {
         body: JSON.stringify(body),
       });
       closeModal(overlay);
-      toast("License created", "ok");
+      toast("Key created", "ok");
       refreshLicenses();
     } catch (err) {
       setBtnError(saveBtn, "Failed");
@@ -5119,14 +4978,14 @@ function openEditLicenseModal(key, dataset) {
   overlay.className = "modal-overlay";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
-  overlay.setAttribute("aria-label", "Edit License");
+  overlay.setAttribute("aria-label", "Edit Key");
   overlay.innerHTML = `<div class="modal-card">
     <button class="modal-close" data-action="modal-close" aria-label="Close">${ICONS.x}</button>
-    <h2 class="modal-title">Edit License</h2>
-    <div class="modal-desc">Update license details for ${escapeHtml(maskKey(key))}.</div>
+    <h2 class="modal-title">Edit Key</h2>
+    <div class="modal-desc">Update details for key ${escapeHtml(maskKey(key))}.</div>
     <div class="modal-body" id="lic-edit-form">
       <div class="field">
-        <label for="lic-edit-key">License Key</label>
+        <label for="lic-edit-key">Key</label>
         <input class="input" id="lic-edit-key" value="${escapeHtml(key)}" readonly>
       </div>
       <div class="field">
@@ -5188,7 +5047,7 @@ function openEditLicenseModal(key, dataset) {
         body: JSON.stringify(body),
       });
       closeModal(overlay);
-      toast("License updated", "ok");
+      toast("Key updated", "ok");
       refreshLicenses();
     } catch (err) {
       setBtnError(saveBtn, "Failed");
@@ -5494,17 +5353,36 @@ function sourceBadge(user) {
   return "";
 }
 
+function auditSentence(a) {
+  if (!a) return "Something happened";
+  const action = (a.action || "").toLowerCase();
+  const user = a.user || "someone";
+  const who = user === "admin" || user === "dashboard" ? "You" : user;
+  if (action.includes("add_license") || action.includes("create_license")) return who + " added an API key";
+  if (action.includes("delete_license")) return who + " deleted an API key";
+  if (action.includes("edit_license") || action.includes("update_license")) return who + " updated an API key";
+  if (action.includes("extend_license")) return who + " extended an API key";
+  if (action.includes("disable_license")) return who + " disabled an API key";
+  if (action.includes("enable_license")) return who + " enabled an API key";
+  if (action.includes("force_disconnect") || action.includes("disconnect")) return who + " disconnected an EA";
+  if (action.includes("login")) return who + " logged in";
+  if (action.includes("logout")) return who + " logged out";
+  if (action.includes("config") || action.includes("settings")) return who + " changed a setting";
+  if (action.includes("rotate")) return who + " rotated a secret";
+  if (action.includes("restart")) return who + " restarted the server";
+  if (action.includes("cleanup") || action.includes("database")) return who + " cleaned up the database";
+  if (action.includes("test_webhook")) return who + " sent a test webhook";
+  return who + " performed: " + (a.action || "an action");
+}
+
 function renderAuditContent(content) {
   const actions = new Set();
-  const admins = new Set();
   for (const a of (auditState.rows || [])) {
     if (!a) continue;
     if (a.action) actions.add(a.action);
-    if (a.user) admins.add(a.user);
   }
   let filtered = auditState.rows || [];
   if (auditState.filterAction) filtered = filtered.filter(a => a && a.action === auditState.filterAction);
-  if (auditState.filterAdmin) filtered = filtered.filter(a => a && a.user === auditState.filterAdmin);
   if (auditState.filterFrom) {
     const from = new Date(auditState.filterFrom).getTime();
     filtered = filtered.filter(a => a && a.timestamp && new Date(a.timestamp).getTime() >= from);
@@ -5517,7 +5395,7 @@ function renderAuditContent(content) {
     const q = auditState.search.toLowerCase();
     filtered = filtered.filter(a => {
       if (!a) return false;
-      const hay = `${a.action || ""} ${a.user || ""} ${a.ip_address || ""} ${a.details || ""}`;
+      const hay = auditSentence(a) + " " + (a.action || "");
       return hay.toLowerCase().includes(q);
     });
   }
@@ -5527,73 +5405,53 @@ function renderAuditContent(content) {
     <div class="filter-bar">
       <select class="input filter-sel" id="audit-filter-action" aria-label="Filter by action">
         <option value="">All actions</option>
-        ${Array.from(actions).sort().map(a => `<option value="${escapeHtml(a)}" ${auditState.filterAction === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
-      </select>
-      <select class="input filter-sel" id="audit-filter-admin" aria-label="Filter by admin">
-        <option value="">All admins</option>
-        ${Array.from(admins).sort().map(a => `<option value="${escapeHtml(a)}" ${auditState.filterAdmin === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+        ${Array.from(actions).sort().map(a => `<option value="${escapeHtml(a)}" ${auditState.filterAction === a ? "selected" : ""}>${escapeHtml(auditSentence({ action: a, user: "You" }))}</option>`).join("")}
       </select>
       <input class="input filter-input" id="audit-filter-from" type="date" value="${escapeHtml(auditState.filterFrom)}" aria-label="From date">
       <input class="input filter-input" id="audit-filter-to" type="date" value="${escapeHtml(auditState.filterTo)}" aria-label="To date">
-      <input class="input search-input" id="audit-search" type="search" placeholder="Search details" value="${escapeHtml(auditState.search)}" aria-label="Search" autocomplete="off" spellcheck="false" inputmode="search">
-      <button class="filter-clear" id="audit-clear" type="button">Clear filters</button>
+      <input class="input search-input" id="audit-search" type="search" placeholder="Search activity" value="${escapeHtml(auditState.search)}" aria-label="Search" autocomplete="off" spellcheck="false" inputmode="search">
+      <button class="filter-clear" id="audit-clear" type="button">Clear</button>
     </div>
     <div class="card">
-      <h2 class="card-title">Admin Activity Timeline</h2>
-      <div class="card-desc">${pluralize(filtered.length, "entry")} - polling every 10s</div>
+      <h2 class="card-title">Activity Log</h2>
+      <div class="card-desc">What has been happening - updates every 10s</div>
       <div class="timeline" id="audit-timeline"></div>
-      ${auditState.hasMore ? `<div class="load-more-row"><button class="btn outline sm" id="audit-load-more" type="button">Load more (showing ${formatNumber(auditState.rows.length)})</button></div>` : `<div class="load-more-row">End of log</div>`}
+      ${auditState.hasMore ? `<div class="load-more-row"><button class="btn outline sm" id="audit-load-more" type="button">Load more</button></div>` : `<div class="load-more-row">End of log</div>`}
     </div>
   `;
   const tl = content.querySelector("#audit-timeline");
   if (filtered.length === 0) {
-    tl.innerHTML = `${(auditState.rows || []).length === 0 ? emptyState(ICONS.audit, "No admin actions recorded yet.") : emptyState(ICONS.filter, "No matches")}`;
+    tl.innerHTML = `${(auditState.rows || []).length === 0 ? emptyState(ICONS.audit, "No activity yet.") : emptyState(ICONS.filter, "No matches")}`;
   } else {
-    tl.innerHTML = filtered.map(a => {
+    tl.innerHTML = filtered.slice(0, 20).map(a => {
       if (!a) return "";
       const sev = auditSeverityClass(a.action);
       const ts = a.timestamp ? formatTime(a.timestamp) : "--";
-      const user = a.user || "unknown";
-      const src = sourceBadge(a.user);
-      let details = "";
-      try {
-        if (a.details) details = typeof a.details === "string" ? a.details : JSON.stringify(a.details, null, 2);
-      } catch (e) { details = ""; }
-      const target = a.ip_address || "";
+      const sentence = auditSentence(a);
       return `<div class="tl-entry ${sev}">
         <div class="tl-head">
-          <span class="tl-action">${escapeHtml(a.action || "--")}</span>
+          <span class="tl-action">${escapeHtml(sentence)}</span>
           <span class="tl-time">${escapeHtml(ts)}</span>
-          ${src}
         </div>
-        <div class="tl-meta">
-          <span class="tl-user">by ${escapeHtml(user)}</span>
-          ${target ? `<span class="tl-target">IP: ${escapeHtml(target)}</span>` : ""}
-        </div>
-        ${details ? `<div class="tl-details">${escapeHtml(details)}</div>` : ""}
       </div>`;
     }).join("");
   }
   const actionSel = content.querySelector("#audit-filter-action");
-  const adminSel = content.querySelector("#audit-filter-admin");
   const fromEl = content.querySelector("#audit-filter-from");
   const toEl = content.querySelector("#audit-filter-to");
   const searchEl = content.querySelector("#audit-search");
   if (actionSel) actionSel.addEventListener("change", () => { auditState.filterAction = actionSel.value; setPanelState("audit", { filters: { filterAction: actionSel.value } }); renderAuditContent(content); });
-  if (adminSel) adminSel.addEventListener("change", () => { auditState.filterAdmin = adminSel.value; setPanelState("audit", { filters: { filterAdmin: adminSel.value } }); renderAuditContent(content); });
   if (fromEl) fromEl.addEventListener("change", () => { auditState.filterFrom = fromEl.value; setPanelState("audit", { filters: { filterFrom: fromEl.value } }); renderAuditContent(content); });
   if (toEl) toEl.addEventListener("change", () => { auditState.filterTo = toEl.value; setPanelState("audit", { filters: { filterTo: toEl.value } }); renderAuditContent(content); });
   if (searchEl) searchEl.addEventListener("input", debounce(() => { auditState.search = searchEl.value.trim(); setPanelState("audit", { filters: { search: auditState.search } }); renderAuditContent(content); }, 200));
   const clearEl = content.querySelector("#audit-clear");
   if (clearEl) clearEl.addEventListener("click", () => {
     auditState.filterAction = "";
-    auditState.filterAdmin = "";
     auditState.filterFrom = "";
     auditState.filterTo = "";
     auditState.search = "";
-    setPanelState("audit", { filters: { filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "" } });
+    setPanelState("audit", { filters: { filterAction: "", filterFrom: "", filterTo: "", search: "" } });
     if (actionSel) actionSel.value = "";
-    if (adminSel) adminSel.value = "";
     if (fromEl) fromEl.value = "";
     if (toEl) toEl.value = "";
     if (searchEl) searchEl.value = "";
