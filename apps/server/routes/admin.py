@@ -511,13 +511,13 @@ async def search_trades(
 
 
 @router.get("/api/statistics")
-async def get_statistics(days: int = 30, _username: str = Depends(_require_auth)):
-    """Get trading statistics"""
+async def get_statistics(days: int = 30, license_key: str | None = None, _username: str = Depends(_require_auth)):
+    """Get trading statistics, optionally filtered by license key."""
     from apps.server.state import db_manager, rate_limiter
 
     stats, daily, symbols, alerts = await asyncio.gather(
         asyncio.to_thread(db_manager.get_trade_statistics, days),
-        asyncio.to_thread(_get_daily_summary_7d, db_manager),
+        asyncio.to_thread(_get_daily_summary_7d, db_manager, license_key),
         asyncio.to_thread(db_manager.get_symbol_performance),
         asyncio.to_thread(db_manager.get_alert_statistics, 24),
     )
@@ -554,7 +554,7 @@ def _get_success_rate_7d(db_manager) -> float:
         return 0.0
 
 
-def _get_daily_summary_7d(db_manager) -> list:
+def _get_daily_summary_7d(db_manager, license_key: str | None = None) -> list:
     """Return a 7-element array of daily summaries (oldest first) from the trades table."""
     from datetime import datetime as _dt, timedelta as _td
 
@@ -565,6 +565,11 @@ def _get_daily_summary_7d(db_manager) -> list:
             day = today - _td(days=i)
             day_str = day.strftime("%Y-%m-%d")
             next_day = (day + _td(days=1)).strftime("%Y-%m-%d")
+            params = {"start": day_str + " 00:00:00", "end": next_day + " 00:00:00"}
+            lic_clause = ""
+            if license_key:
+                lic_clause = " AND license_key = :lk"
+                params["lk"] = license_key
             rows = db_manager.execute_query(
                 "SELECT "
                 "COUNT(*) AS total_trades, "
@@ -573,8 +578,8 @@ def _get_daily_summary_7d(db_manager) -> list:
                 "COUNT(CASE WHEN profit < 0 THEN 1 END) AS losing_trades, "
                 "COALESCE(AVG(CASE WHEN profit > 0 THEN profit END), 0) AS avg_win, "
                 "COALESCE(AVG(CASE WHEN profit < 0 THEN profit END), 0) AS avg_loss "
-                "FROM trades WHERE timestamp >= :start AND timestamp < :end",
-                {"start": day_str + " 00:00:00", "end": next_day + " 00:00:00"},
+                f"FROM trades WHERE timestamp >= :start AND timestamp < :end{lic_clause}",
+                params,
             )
             r = rows[0] if rows else {}
             total = r.get("total_trades", 0) or 0
@@ -601,9 +606,9 @@ def _get_daily_summary_7d(db_manager) -> list:
 
 
 @router.get("/api/risk-status")
-async def get_risk_status(_username: str = Depends(_require_auth)):
-    """Get current risk status"""
-    from apps.server.state import mt5_manager, risk_manager
+async def get_risk_status(license_key: str | None = None, _username: str = Depends(_require_auth)):
+    """Get current risk status, optionally filtered by license key."""
+    from apps.server.state import mt5_manager, risk_manager, db_manager
 
     account = mt5_manager.get_account_info()
     if account.get("error"):
@@ -612,11 +617,40 @@ async def get_risk_status(_username: str = Depends(_require_auth)):
     risk_status = risk_manager.get_risk_status(account)
     can_trade, reason = risk_manager.can_trade(account, account.get("open_positions", 0))
 
+    if license_key and db_manager:
+        try:
+            week_ago = db_manager.sql_interval_days(7)
+            rows = db_manager.execute_query(
+                f"SELECT "
+                f"COALESCE(SUM(CASE WHEN profit > 0 THEN profit ELSE 0 END), 0) AS gross_profit, "
+                f"COALESCE(SUM(CASE WHEN profit < 0 THEN profit ELSE 0 END), 0) AS gross_loss, "
+                f"COALESCE(AVG(CASE WHEN profit > 0 THEN profit END), 0) AS avg_win, "
+                f"COALESCE(AVG(CASE WHEN profit < 0 THEN profit END), 0) AS avg_loss, "
+                f"COUNT(CASE WHEN profit > 0 THEN 1 END) AS wins, "
+                f"COUNT(CASE WHEN profit < 0 THEN 1 END) AS losses, "
+                f"COUNT(*) AS total "
+                f"FROM trades WHERE license_key = :lk AND timestamp >= {week_ago}",
+                {"lk": license_key},
+            )
+            r = rows[0] if rows else {}
+            total = r.get("total", 0) or 0
+            wins = r.get("wins", 0) or 0
+            avg_win = r.get("avg_win", 0) or 0
+            avg_loss = r.get("avg_loss", 0) or 0
+            win_rate_dec = wins / total if total > 0 else 0
+            loss_rate_dec = max(1.0 - win_rate_dec, 0.0)
+            risk_status["daily_pnl"] = round(r.get("gross_profit", 0) + r.get("gross_loss", 0), 2)
+            risk_status["expectancy"] = round(win_rate_dec * avg_win + loss_rate_dec * avg_loss, 2)
+            risk_status["license_trades_7d"] = total
+        except Exception as e:
+            logger.debug("License risk filter failed: %s", e)
+
     return {
         "can_trade": can_trade,
         "reason": reason,
         "risk_metrics": risk_status,
         "account": account,
+        "license_key": license_key,
     }
 
 

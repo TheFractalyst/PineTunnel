@@ -194,6 +194,64 @@ function maskKey(k) {
   return s.slice(0, 8) + "...";
 }
 
+let selectedLicenseKey = sessionStorage.getItem("pt_selected_license") || "";
+let licenseListCache = null;
+
+function getSelectedLicense() { return selectedLicenseKey; }
+function setSelectedLicense(key) {
+  selectedLicenseKey = key || "";
+  if (key) sessionStorage.setItem("pt_selected_license", key);
+  else sessionStorage.removeItem("pt_selected_license");
+}
+
+async function fetchLicenseList() {
+  if (licenseListCache) return licenseListCache;
+  try {
+    const res = await http("/api/users");
+    const data = await res.json();
+    const licenses = [];
+    if (data && typeof data === "object") {
+      for (const email of Object.keys(data)) {
+        const user = data[email];
+        if (user && Array.isArray(user.licenses)) {
+          for (const lic of user.licenses) {
+            licenses.push({
+              key: lic.license_key,
+              email: email,
+              name: user.name || email,
+              status: lic.status || "active",
+            });
+          }
+        }
+      }
+    }
+    licenseListCache = licenses;
+    return licenses;
+  } catch (e) {
+    return [];
+  }
+}
+
+function licenseSelectorHTML(licenses, currentKey) {
+  if (!licenses || licenses.length === 0) return "";
+  const opts = ['<option value="">All Licenses</option>'];
+  for (const lic of licenses) {
+    const sel = lic.key === currentKey ? " selected" : "";
+    const label = lic.name + " (" + maskKey(lic.key) + ")";
+    opts.push('<option value="' + escapeHtml(lic.key) + '"' + sel + '>' + escapeHtml(label) + '</option>');
+  }
+  return '<div class="license-selector"><label for="license-select" class="license-label">License</label><select id="license-select" class="input license-select">' + opts.join("") + '</select></div>';
+}
+
+function bindLicenseSelector(onChange) {
+  const sel = document.getElementById("license-select");
+  if (!sel) return;
+  sel.addEventListener("change", () => {
+    setSelectedLicense(sel.value);
+    if (onChange) onChange(sel.value);
+  });
+}
+
 function isSafeUrl(url) {
   if (!url || typeof url !== "string") return false;
   const s = url.trim().toLowerCase();
@@ -2722,9 +2780,11 @@ async function loadEaTrades(key, container) {
   }
 }
 
-function renderTradeAnalytics(content, actions) {
+async function renderTradeAnalytics(content, actions) {
+  const licenses = await fetchLicenseList();
   content.innerHTML = `
     <div id="analytics-stale-banner"></div>
+    ${licenseSelectorHTML(licenses, getSelectedLicense())}
     <div class="card">
       <h2 class="card-title">Performance</h2>
       <div class="card-desc">How your trades are doing - updates every 15s</div>
@@ -2751,17 +2811,21 @@ function renderTradeAnalytics(content, actions) {
     </div>
   `;
   actions.innerHTML = autoPollIndicator(15);
+  bindLicenseSelector(() => pollTradeAnalytics());
   analyticsChartsAnimated = false;
   startPoll(pollTradeAnalytics, 15000);
 }
 
 async function pollTradeAnalytics() {
   if (currentRouteId !== "analytics" || !visibilityPolling) return;
+  const lk = getSelectedLicense();
+  const licParam = lk ? "&license_key=" + encodeURIComponent(lk) : "";
+  const licParamDash = lk ? "?license_key=" + encodeURIComponent(lk) : "";
   let statsRes, dashRes;
   try {
     [statsRes, dashRes] = await Promise.all([
-      useFetch("/api/statistics?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
-      useFetch("/api/trades/admin/dashboard").catch(() => ({ data: null, error: "dashboard", stale: false })),
+      useFetch("/api/statistics?days=7" + licParam).catch(() => ({ data: null, error: "stats", stale: false })),
+      useFetch("/api/trades/admin/dashboard" + licParamDash).catch(() => ({ data: null, error: "dashboard", stale: false })),
     ]);
   } catch (e) {
     console.error("[dashboard] pollTradeAnalytics fetch error:", e);
@@ -2874,23 +2938,27 @@ function drawLineChart(daily) {
   const wrap = document.getElementById("line-chart-wrap");
   if (!wrap) return;
   if (!Array.isArray(daily) || daily.length === 0) {
-    wrap.innerHTML = '<svg viewBox="0 0 600 200" class="chart-svg" role="img" aria-label="7-day success rate trend: no data"><title>7-day success rate trend - no data</title><desc>No daily data available.</desc></svg>';
+    wrap.innerHTML = '<svg viewBox="0 0 600 200" class="chart-svg" role="img" aria-label="7-day expectancy trend: no data"><title>7-day expectancy trend - no data</title><desc>No daily data available.</desc></svg>';
     return;
   }
   const points = daily.slice(-7).filter(d => d && typeof d === "object").map(d => ({
     date: d.date || "",
-    rate: d.success_rate != null ? d.success_rate : (d.total_trades > 0 ? (d.successful_trades / d.total_trades * 100) : 0),
+    val: d.expectancy != null ? d.expectancy : 0,
   }));
-  while (points.length < 7) points.unshift({ date: "", rate: 0 });
+  while (points.length < 7) points.unshift({ date: "", val: 0 });
   const W = 600, H = 200, pad = 30;
+  const vals = points.map(p => p.val);
+  const minVal = Math.min(0, ...vals);
+  const maxVal = Math.max(0, ...vals);
+  const range = maxVal - minVal || 1;
   const xStep = (W - pad * 2) / Math.max(1, points.length - 1);
   const coords = points.map((p, i) => ({
     x: pad + i * xStep,
-    y: H - pad - (p.rate / 100) * (H - pad * 2),
+    y: H - pad - ((p.val - minVal) / range) * (H - pad * 2),
   }));
   const pathD = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
   const areaD = `${pathD} L ${coords[coords.length - 1].x} ${H - pad} L ${coords[0].x} ${H - pad} Z`;
-  const dots = coords.map((c, i) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="${PALETTE.green}"><title>${escapeHtml(points[i].date)}: ${escapeHtml(points[i].rate.toFixed(1))}%</title></circle>`).join("");
+  const dots = coords.map((c, i) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="${PALETTE.blue}"><title>${escapeHtml(points[i].date)}: ${escapeHtml(formatCurrency(points[i].val))}</title></circle>`).join("");
   const xLabels = points.map((p, i) => {
     if (i % 2 !== 0) return "";
     const d = p.date ? new Date(p.date) : null;
@@ -2898,21 +2966,20 @@ function drawLineChart(daily) {
     return `<text x="${coords[i].x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10" class="axis-label">${lbl}</text>`;
   }).join("");
   const gid = "lineGrad-" + Math.random().toString(36).slice(2, 8);
-  const avgRate = points.reduce((s, p) => s + p.rate, 0) / points.length;
-  const latestRate = points[points.length - 1].rate;
-  const minRate = Math.min(...points.map(p => p.rate));
-  const maxRate = Math.max(...points.map(p => p.rate));
-  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg${analyticsChartsAnimated ? "" : " chart-entrance"}" role="img" aria-label="7-day success rate trend: latest ${latestRate.toFixed(1)}%, average ${avgRate.toFixed(1)}%, range ${minRate.toFixed(1)}% to ${maxRate.toFixed(1)}%">
-    <title>7-day success rate trend</title>
-    <desc>Daily success rate over the past 7 days. Latest: ${latestRate.toFixed(1)}%. Average: ${avgRate.toFixed(1)}%. Range: ${minRate.toFixed(1)}% to ${maxRate.toFixed(1)}%.</desc>
+  const avgVal = vals.reduce((s, v) => s + v, 0) / vals.length;
+  const latestVal = vals[vals.length - 1];
+  const chartColor = latestVal >= 0 ? PALETTE.green : PALETTE.red;
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg${analyticsChartsAnimated ? "" : " chart-entrance"}" role="img" aria-label="7-day expectancy trend: latest ${formatCurrency(latestVal)}, average ${formatCurrency(avgVal)}">
+    <title>7-day expectancy trend</title>
+    <desc>Daily expectancy over the past 7 days. Latest: ${formatCurrency(latestVal)}. Average: ${formatCurrency(avgVal)}.</desc>
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="${PALETTE.green}" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="${PALETTE.green}" stop-opacity="0"/>
+      <stop offset="0%" stop-color="${chartColor}" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="${chartColor}" stop-opacity="0"/>
     </linearGradient></defs>
     <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <path d="${areaD}" fill="url(#${gid})"/>
-    <path d="${pathD}" fill="none" stroke="${PALETTE.green}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="line-path"/>
+    <path d="${pathD}" fill="none" stroke="${chartColor}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="line-path"/>
     ${dots}${xLabels}
   </svg>`;
 }
@@ -3750,9 +3817,11 @@ function toggleWebhookRow(tr) {
 
 async function pollRiskMonitor() {
   if (currentRouteId !== "sys-risk" || !visibilityPolling) return;
+  const lk = getSelectedLicense();
+  const qs = lk ? "?license_key=" + encodeURIComponent(lk) : "";
   let result;
   try {
-    result = await useFetch("/api/risk-status");
+    result = await useFetch("/api/risk-status" + qs);
   } catch (e) {
     console.error("[dashboard] pollRiskMonitor fetch error:", e);
     return;
@@ -3831,9 +3900,11 @@ function updateRiskUI(data) {
   }
 }
 
-function renderRiskMonitor(content) {
+async function renderRiskMonitor(content) {
+  const licenses = await fetchLicenseList();
   content.innerHTML = `
     <div id="risk-stale-banner"></div>
+    ${licenseSelectorHTML(licenses, getSelectedLicense())}
     <div class="card">
       <h2 class="card-title">Risk Status</h2>
       <div class="card-desc">Whether it is safe to trade right now - updates every 10s</div>
@@ -3864,6 +3935,7 @@ function renderRiskMonitor(content) {
       <div id="risk-alerts"></div>
     </div>
   `;
+  bindLicenseSelector(() => pollRiskMonitor());
   setHeaderAutoPoll(10);
   startPoll(pollRiskMonitor, 10000);
 }

@@ -587,7 +587,7 @@ async def get_failed_trades(
 
 
 @router.get("/admin/dashboard")
-async def get_admin_dashboard(user: dict = Depends(get_current_user)):
+async def get_admin_dashboard(license_key: str | None = Query(None), user: dict = Depends(get_current_user)):
     """
     Admin dashboard endpoint with complete overview
     Access at /api/trades/admin/dashboard
@@ -614,12 +614,15 @@ async def get_admin_dashboard(user: dict = Depends(get_current_user)):
         if db_manager:
             try:
                 today_expr = db_manager.sql_today()
+                lic_clause = " AND client_id = :lk" if license_key else ""
+                lic_params = {"lk": license_key} if license_key else None
                 rows = db_manager.execute_query(
                     f"SELECT "
                     f"COUNT(*) AS total_trades, "
                     f"COUNT(CASE WHEN DATE(timestamp) = {today_expr} THEN 1 END) AS trades_today, "
                     f"COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count "
-                    f"FROM trades"
+                    f"FROM trades WHERE 1=1{lic_clause}",
+                    lic_params,
                 )
                 row = rows[0] if rows else {}
                 total_trades = row.get("total_trades", 0) or 0
@@ -627,9 +630,10 @@ async def get_admin_dashboard(user: dict = Depends(get_current_user)):
                 success_count = row.get("success_count", 0) or 0
 
                 sym_rows = db_manager.execute_query(
-                    "SELECT symbol, COUNT(*) AS cnt "
-                    "FROM trades WHERE symbol IS NOT NULL "
-                    "GROUP BY symbol ORDER BY cnt DESC LIMIT 10"
+                    f"SELECT symbol, COUNT(*) AS cnt "
+                    f"FROM trades WHERE symbol IS NOT NULL{lic_clause} "
+                    f"GROUP BY symbol ORDER BY cnt DESC LIMIT 10",
+                    lic_params,
                 )
                 for sr in sym_rows:
                     sym = sr.get("symbol") or "UNKNOWN"
@@ -638,9 +642,11 @@ async def get_admin_dashboard(user: dict = Depends(get_current_user)):
                         symbol_counts[sym] = cnt
 
                 recent_rows = db_manager.execute_query(
-                    "SELECT timestamp, symbol, action, volume, price, status, "
-                    "client_id AS license_key, message "
-                    "FROM trades ORDER BY timestamp DESC LIMIT 20"
+                    f"SELECT timestamp, symbol, action, volume, price, status, "
+                    f"client_id AS license_key, message "
+                    f"FROM trades WHERE 1=1{lic_clause} "
+                    f"ORDER BY timestamp DESC LIMIT 20",
+                    lic_params,
                 )
                 for rr in recent_rows:
                     rec = dict(rr)
