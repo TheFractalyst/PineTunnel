@@ -80,6 +80,27 @@ def _project_root() -> Path:
     return Path.cwd()
 
 
+def _ensure_cloudflared() -> None:
+    """Check if cloudflared is installed, print instructions if not."""
+    import shutil
+    if shutil.which("cloudflared"):
+        return
+    system = platform.system().lower()
+    if system == "darwin":
+        print("[pinetunnel] cloudflared not found. Installing via Homebrew...")
+        subprocess.run(["brew", "install", "cloudflared"], capture_output=True)
+    elif system == "windows":
+        print("[pinetunnel] cloudflared not found. Installing via winget...")
+        subprocess.run(["winget", "install", "--id", "Cloudflare.cloudflared", "--accept-source-agreements", "--accept-package-agreements"], capture_output=True)
+    else:
+        print("[pinetunnel] cloudflared not found. Installing...")
+        subprocess.run(["bash", "-c", "curl -sL https://pkg.cloudflare.com/cloudflared-install.sh | sudo bash"], capture_output=True)
+    if not shutil.which("cloudflared"):
+        print("[pinetunnel] WARNING: cloudflared could not be installed automatically.")
+        print("[pinetunnel] Please install it manually from https://pkg.cloudflare.com")
+        print("[pinetunnel] You can still use the dashboard without it, but Cloudflare tunnel setup will be unavailable.")
+
+
 def _run_migrations() -> int:
     root = _project_root()
     result = subprocess.run(
@@ -107,6 +128,7 @@ def _open_browser_after(delay: float, port: int) -> None:
 
 def cmd_start(args: argparse.Namespace) -> int:
     _ensure_minimal_env()
+    _ensure_cloudflared()
     _run_migrations()
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))
