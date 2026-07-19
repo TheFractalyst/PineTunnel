@@ -1180,7 +1180,8 @@ async function pollSignalFeed() {
   const { data, error } = await useFetch("/api/webhooks/recent?limit=50");
   if (error && !data) {
     const body = document.getElementById("feed-body");
-    if (body) body.innerHTML = `<tr><td colspan="7" class="feed-empty feed-error">Failed to load: ${escapeHtml(error)}</td></tr>`;
+    if (body) body.innerHTML = `<tr><td colspan="7" class="feed-empty feed-error">Failed to load: ${escapeHtml(error)}<br><button class="btn outline sm mt" data-action="retry-signals">Retry</button></td></tr>`;
+    bindRetry(content, "retry-signals", () => route("signals"));
     return;
   }
   if (!data || !data.webhooks) return;
@@ -1299,7 +1300,9 @@ async function pollEaMap() {
   const grid = document.getElementById("ea-grid");
   if (!grid) return;
   if (!overview && !eaCheck) {
-    grid.innerHTML = `<div class="ea-empty">Failed to load EA data</div>`;
+    grid.innerHTML = `<div class="ea-empty">Failed to load EA data<br><button class="btn outline sm mt" data-action="retry-ea">Retry</button></div>`;
+    const retryBtn = grid.querySelector("[data-action='retry-ea']");
+    if (retryBtn) retryBtn.addEventListener("click", e => { e.preventDefault(); pollEaMap(); });
     return;
   }
   const licenses = (overview && overview.licenses) ? overview.licenses : [];
@@ -1470,6 +1473,14 @@ async function pollTradeAnalytics() {
   ]);
   const stats = statsRes.data;
   const dash = dashRes.data;
+  if (!stats && !dash) {
+    const content = domCache.content || document.getElementById("content");
+    if (content) {
+      content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load analytics</div><div class="sub">Statistics and dashboard endpoints unavailable</div><button class="btn outline sm mt" data-action="retry-analytics">Retry</button></div>`;
+      bindRetry(content, "retry-analytics", () => route("analytics"));
+    }
+    return;
+  }
   const overall = (stats && stats.overall) || {};
   const daily = (stats && stats.daily) || [];
   const alerts = (stats && stats.alerts) || {};
@@ -1671,6 +1682,14 @@ async function pollPipeline() {
   ]);
   const status = statusRes.data;
   const m = metricsText;
+  if (!status && !m) {
+    const content = domCache.content || document.getElementById("content");
+    if (content) {
+      content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load pipeline data</div><div class="sub">Status and metrics endpoints unavailable</div><button class="btn outline sm mt" data-action="retry-pipeline">Retry</button></div>`;
+      bindRetry(content, "retry-pipeline", () => route("pipeline"));
+    }
+    return;
+  }
   const webhookTotal = parsePromMetric(m, "pinetunnel_webhook_signals_total");
   const queueDepth = parsePromMetric(m, "pinetunnel_signal_queue_depth");
   const wsConn = parsePromMetric(m, "pinetunnel_websocket_connections");
@@ -1856,6 +1875,8 @@ function fmtNum(n, digits = 0) {
 }
 
 function statusColor(code) {
+  if (code === 200) return "ok";
+  if (code === 202) return "info";
   if (code >= 200 && code < 300) return "ok";
   if (code >= 300 && code < 400) return "info";
   if (code === 400) return "warn";
@@ -2630,7 +2651,7 @@ async function sendBotTestMessage() {
   btn.innerHTML = `<span class="spin"></span>Sending...`;
   result.innerHTML = "";
   try {
-    const r = await http("/debug/telegram-test", { method: "POST", headers: jsonHeaders(true) });
+    const r = await http("/debug/telegram-test", { method: "GET", headers: adminHeaders() });
     const data = await r.json();
     result.innerHTML = `<div class="inline-ok">${ICONS.check}Test message sent: ${escapeHtml(JSON.stringify(data))}</div>`;
     toast("Test message sent", "ok");
