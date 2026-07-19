@@ -7,12 +7,21 @@ helpers live in apps.server.config.lifespan.
 """
 
 import os
+from importlib.resources import files
+from pathlib import Path as _Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+import apps.server.admin_dashboard as _dash_pkg
+from apps.server.auth.session import setup_session_middleware
+from apps.server.auth.telegram_auth import TelegramAuthStore
+from apps.server.routes.dashboard import create_dashboard_router
 
 # Backward-compatible re-exports for tests and external importers.
 # These are None at import time; actual instances are created by
@@ -70,6 +79,10 @@ app.add_middleware(
         else []
     ),
 )
+
+_session_secret = os.getenv("SESSION_SECRET", "")
+if _session_secret:
+    setup_session_middleware(app, secret_key=_session_secret)
 
 _TELEGRAM_BOT_URL = os.getenv("TELEGRAM_BOT_URL", "")
 
@@ -161,6 +174,52 @@ try:
     logger.info("Trade Analytics API loaded")
 except ImportError as e:
     logger.warning("Trade Analytics API not loaded: %s", e)
+
+# ---------------------------------------------------------------------------
+# Dashboard API router (/api/dashboard/*)
+# Registered BEFORE the /admin SPA mount so it can never be shadowed.
+# TelegramAuthStore is a singleton on apps.server.state so Task 10 can pass
+# the same instance to the Telegram bot.
+# ---------------------------------------------------------------------------
+from apps.server import state
+
+if not hasattr(state, "_auth_store") or state._auth_store is None:
+    state._auth_store = TelegramAuthStore()
+
+_admin_ids_str = os.getenv("TELEGRAM_ADMIN_IDS", "")
+_admin_ids = [int(x.strip()) for x in _admin_ids_str.split(",") if x.strip().isdigit()]
+
+_env_path = _Path(__file__).resolve().parents[2] / ".env"
+
+_dashboard_router = create_dashboard_router(
+    auth_store=state._auth_store,
+    admin_ids=_admin_ids,
+    env_path=_env_path,
+)
+app.include_router(_dashboard_router)
+
+# ---------------------------------------------------------------------------
+# Dashboard SPA mount (/admin/*)
+# Mounted AFTER all /api/* routers so the SPA fallback can never shadow API
+# routes.  SpaStaticFiles serves index.html for extension-less paths (client-
+# side routing) and 404s for missing assets with a file extension.
+# ---------------------------------------------------------------------------
+_dashboard_path = str(files(_dash_pkg))
+
+
+class SpaStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except (HTTPException, StarletteHTTPException) as ex:
+            if ex.status_code == 404:
+                last_segment = path.split("/")[-1] if path else ""
+                if "." not in last_segment:
+                    return await super().get_response("index.html", scope)
+            raise
+
+
+app.mount("/admin", SpaStaticFiles(directory=_dashboard_path, html=True), name="admin_dashboard")
 
 
 # ---------------------------------------------------------------------------

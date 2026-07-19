@@ -206,6 +206,7 @@ TRUSTED_PROXY_COUNT=1
 WEBHOOK_SECRET={webhook_secret}
 JWT_SECRET={jwt_secret}
 ADMIN_API_KEY={admin_api_key}
+SESSION_SECRET={session_secret}
 
 # Database (SQLite by default, change to PostgreSQL for production)
 DATABASE_URL=sqlite:///pinetunnel.db
@@ -1623,6 +1624,7 @@ def cmd_init(args: argparse.Namespace) -> int:
                 webhook_secret=webhook_secret,
                 jwt_secret=jwt_secret,
                 admin_api_key=admin_api_key,
+                session_secret=_generate_secret(32),
                 encryption_key=__import__('secrets').token_hex(32),
             )
             env_path.write_text(env_content)
@@ -2288,6 +2290,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     webhook_secret = _generate_secret()
     jwt_secret = _generate_secret(48)
     admin_api_key = _generate_secret(48)
+    session_secret = _generate_secret(32)
     encryption_key = __import__('secrets').token_hex(32)
     env_content = ENV_TEMPLATE.format(
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -2295,6 +2298,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         webhook_secret=webhook_secret,
         jwt_secret=jwt_secret,
         admin_api_key=admin_api_key,
+        session_secret=session_secret,
         encryption_key=encryption_key,
     )
     env_path.write_text(env_content)
@@ -2307,6 +2311,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     print_ok(f"WEBHOOK_SECRET ({len(webhook_secret)} chars)")
     print_ok(f"JWT_SECRET ({len(jwt_secret)} chars)")
     print_ok(f"ADMIN_API_KEY ({len(admin_api_key)} chars)")
+    print_ok(f"SESSION_SECRET ({len(session_secret)} chars)")
     print_ok(f"SIGNAL_ENCRYPTION_KEY ({len(encryption_key)} chars)")
     print()
 

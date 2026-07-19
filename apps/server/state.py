@@ -125,6 +125,9 @@ _ws_subscriber_task: Any = None
 # Auth dependency (created during startup by create_auth_dependency)
 _require_auth_dependency: Any = None
 
+# TelegramAuthStore singleton (created by app_factory for dashboard + bot)
+_auth_store: Any = None
+
 # Feature flags
 MT5_AVAILABLE: bool = False
 PINETUNNEL_AVAILABLE: bool = False
