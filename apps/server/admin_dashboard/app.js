@@ -64,7 +64,9 @@ async function http(path, opts = {}) {
         signal: controller.signal,
       });
       if (r.status === 401) {
-        showLogin();
+        if (path.startsWith("/api/dashboard/")) {
+          showLogin();
+        }
         const e = new Error("Unauthorized");
         e.status = 401;
         e.transient = false;
