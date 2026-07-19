@@ -207,7 +207,7 @@ function setSelectedLicense(key) {
 async function fetchLicenseList() {
   if (licenseListCache) return licenseListCache;
   try {
-    const res = await http("/api/users");
+    const res = await http("/api/dashboard/users");
     const data = await res.json();
     const licenses = [];
     if (data && typeof data === "object") {

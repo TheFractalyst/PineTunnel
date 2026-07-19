@@ -1,0 +1,71 @@
+{
+  "demo_abc123def456": {
+    "license_key": "demo_abc123def456",
+    "secret_key": "secret_xyz789abc012",
+    "email": "alice@example.com",
+    "name": "Alice Cooper",
+    "status": "active",
+    "enabled": true,
+    "expires_at": "2027-01-16T01:18:21.852366",
+    "features": [
+      "unlimited_symbols"
+    ],
+    "allowed_symbols": [],
+    "last_activity": "2026-07-20T01:18:21.852396"
+  },
+  "demo_def789ghi012": {
+    "license_key": "demo_def789ghi012",
+    "secret_key": "secret_yza234bcd567",
+    "email": "bob@example.com",
+    "name": "Bob Marley",
+    "status": "active",
+    "enabled": true,
+    "expires_at": "2026-08-19T01:18:21.852400",
+    "features": [],
+    "allowed_symbols": [
+      "EURUSD",
+      "GBPUSD"
+    ],
+    "last_activity": "2026-07-20T01:18:21.852405"
+  },
+  "demo_ghi012jkl345": {
+    "license_key": "demo_ghi012jkl345",
+    "secret_key": "secret_zab567cde890",
+    "email": "carol@example.com",
+    "name": "Carol King",
+    "status": "active",
+    "enabled": true,
+    "expires_at": "2027-07-20T01:18:21.852408",
+    "features": [
+      "unlimited_symbols"
+    ],
+    "allowed_symbols": [],
+    "last_activity": "2026-07-20T01:18:21.852412"
+  },
+  "demo_jkl345mno678": {
+    "license_key": "demo_jkl345mno678",
+    "secret_key": "secret_abc901efg234",
+    "email": "dave@example.com",
+    "name": "Dave Grohl",
+    "status": "disabled",
+    "enabled": false,
+    "expires_at": "2026-07-15T01:18:21.852415",
+    "features": [],
+    "allowed_symbols": [],
+    "last_activity": "2026-07-15T01:18:21.852419"
+  },
+  "demo_mno678pqr901": {
+    "license_key": "demo_mno678pqr901",
+    "secret_key": "secret_bcd123fgh456",
+    "email": "eve@example.com",
+    "name": " Eve Stone",
+    "status": "active",
+    "enabled": true,
+    "expires_at": "2027-01-16T01:18:21.852423",
+    "features": [],
+    "allowed_symbols": [
+      "XAUUSD"
+    ],
+    "last_activity": "2026-07-20T01:18:21.852427"
+  }
+}
