@@ -2254,7 +2254,6 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 @media (max-width: 768px) {
   .mgr-table .td-key { max-width: 100px; }
   .mgr-table .td-email { max-width: 140px; }
-  .modal-card { padding: 18px; }
   .modal-title { font-size: var(--text-lg); }
   .tl-entry { padding: 12px 14px; }
   .table-scroll-hint { display: block; }
@@ -2297,7 +2296,9 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .settings-group .card-title { gap: var(--sp-2); }
 .settings-group .card-title svg { width: 16px; height: 16px; color: var(--muted); }
 .settings-fields { display: flex; flex-direction: column; gap: 14px; }
-.settings-field { display: flex; flex-direction: column; gap: 6px; }
+.settings-field { display: flex; flex-direction: row; align-items: center; gap: var(--sp-3); }
+.settings-field .settings-label { flex: 0 0 200px; min-width: 0; }
+.settings-field .settings-row { flex: 1; min-width: 0; }
 .settings-label {
   font-family: var(--mono);
   font-size: var(--text-xs);
@@ -2314,6 +2315,10 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 .settings-row .input { flex: 1; min-width: 0; }
 .settings-row .btn { flex-shrink: 0; }
+@media (max-width: 1024px) {
+  .settings-field { flex-direction: column; align-items: stretch; gap: 6px; }
+  .settings-field .settings-label { flex: none; }
+}
 .field-note {
   font-size: var(--text-xs);
   color: var(--muted-2);

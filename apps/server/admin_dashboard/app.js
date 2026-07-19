@@ -520,7 +520,7 @@ async function http(path, opts = {}) {
   const isGet = method === "GET";
   const dedupKey = isGet ? method + " " + path : null;
   if (dedupKey && inflight.has(dedupKey)) {
-    return inflight.get(dedupKey);
+    return inflight.get(dedupKey).then(r => r.clone());
   }
   const run = (async () => {
     const attempt = async () => {
@@ -2175,6 +2175,12 @@ async function renderSettings(content) {
       <button class="btn primary" id="settings-save" data-action="settings-save">${ICONS.check}Save Changes</button>
       <div class="hint mt">Some changes require a server restart to take effect.</div>
     </div>
+    <div class="card">
+      <h2 class="card-title">Reset Settings</h2>
+      <div class="card-desc">Regenerate all secrets and reset .env to defaults</div>
+      <div class="hint mt">This deletes the current .env file and generates a new one with fresh secrets. All existing values are lost. The server must restart afterwards.</div>
+      <button class="btn red" id="settings-reset" data-action="settings-reset">Reset All Settings</button>
+    </div>
   `;
   bindSettingsActions(content);
 }
@@ -2188,6 +2194,8 @@ function bindSettingsActions(scope) {
   });
   const saveBtn = scope.querySelector("[data-action='settings-save']");
   if (saveBtn) saveBtn.addEventListener("click", e => { e.preventDefault(); saveConfigChange(); });
+  const resetBtn = scope.querySelector("[data-action='settings-reset']");
+  if (resetBtn) resetBtn.addEventListener("click", e => { e.preventDefault(); resetConfig(); });
 }
 
 function editConfigKey(key) {
