@@ -143,14 +143,19 @@ function formatBytes(n) {
 
 function pluralize(n, word) {
   n = n || 0;
-  return formatNumber(n) + " " + word + (n === 1 ? "" : "s");
+  let plural = word;
+  if (n !== 1) {
+    if (/[^aeiou]y$/i.test(word)) plural = word.slice(0, -1) + "ies";
+    else plural = word + "s";
+  }
+  return formatNumber(n) + " " + plural;
 }
 
 function maskKey(k) {
   if (!k) return "--";
   const s = String(k);
-  if (s.length <= 4) return s + "****";
-  return s.slice(0, 4) + "****";
+  if (s.length <= 8) return s + "...";
+  return s.slice(0, 8) + "...";
 }
 
 function statusBadge(status) {
@@ -4057,7 +4062,7 @@ function renderDiagnostics(content) {
 
 async function pollBotStatus() {
   if (currentRoute !== "sys-bot" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch("/health/bot");
+  const { data, error, stale } = await useFetch(`${API}/bot-info`);
   const staleEl = document.getElementById("bot-stale-banner");
   if (staleEl) {
     if (stale && data) {
@@ -4069,7 +4074,7 @@ async function pollBotStatus() {
   if (error || !data) {
     const card = document.getElementById("bot-status-card");
     if (card) {
-      if (!cache["/health/bot"]) {
+      if (!cache[`${API}/bot-info`]) {
         card.innerHTML = errorPanel("bot status", error, "retry-sys-bot");
         bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
       } else {
@@ -4088,6 +4093,7 @@ function updateBotUI(data) {
   const tokenSet = data.token_set;
   const updaterRunning = data.updater_running;
   const appRunning = data.app_running;
+  const alertsEnabled = data.alerts_enabled;
   const card = document.getElementById("bot-status-card");
   if (card) {
     const ok = started && updaterRunning;
@@ -4108,19 +4114,16 @@ function updateBotUI(data) {
   }
   const adminEl = document.getElementById("bot-admins");
   if (adminEl) {
-    const env = data.env || {};
-    const admins = env.TELEGRAM_ADMIN_IDS || "";
-    adminEl.innerHTML = `<div class="row"><span class="k">Admin IDs</span><span class="v mono">${escapeHtml(admins || "not set")}</span></div>
-      <div class="row"><span class="k">Token len</span><span class="v mono">${escapeHtml(formatNumber(env.TELEGRAM_BOT_TOKEN_len || 0))}</span></div>`;
+    const admins = Array.isArray(data.admin_ids) ? data.admin_ids.join(", ") : "";
+    adminEl.innerHTML = `<div class="row"><span class="k">Admin IDs</span><span class="v mono">${escapeHtml(admins || "not set")}</span></div>`;
   }
   const usernameEl = document.getElementById("bot-username");
   if (usernameEl) {
-    if (data.bot && data.bot.username) {
-      usernameEl.querySelector(".value").textContent = "@" + data.bot.username;
-    } else {
-      usernameEl.querySelector(".value").textContent = "unavailable";
-    }
+    const val = usernameEl.querySelector(".value");
+    if (val) val.textContent = data.username ? "@" + data.username : "unavailable";
   }
+  const alertsToggle = document.getElementById("bot-alerts-toggle");
+  if (alertsToggle) alertsToggle.checked = !!alertsEnabled;
 }
 
 function renderBotStatus(content) {
@@ -4156,7 +4159,7 @@ function renderBotStatus(content) {
       <div class="card-desc">Trade alert notifications</div>
       <div class="row">
         <span class="k">Alerts enabled</span>
-        <span class="v"><label class="toggle"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label></span>
+        <span class="v"><label class="toggle"><input type="checkbox" id="bot-alerts-toggle" checked disabled><span class="toggle-slider"></span></label></span>
       </div>
       <button class="btn primary sm mt" id="bot-test-msg" data-action="bot-test-msg">Send Test Message</button>
       <div id="bot-test-result" aria-live="polite"></div>
@@ -4176,10 +4179,14 @@ async function sendBotTestMessage() {
   btn.innerHTML = `<span class="spin"></span>Sending...`;
   result.innerHTML = "";
   try {
-    const r = await http("/debug/telegram-test", { method: "GET", headers: adminHeaders() });
+    const r = await http(`${API}/bot-test`, { method: "POST", headers: adminHeaders() });
     const data = await r.json();
-    result.innerHTML = `<div class="inline-ok">${ICONS.check}Test message sent: ${escapeHtml(JSON.stringify(data))}</div>`;
-    toast("Test message sent", "ok");
+    if (data && data.success) {
+      result.innerHTML = `<div class="inline-ok">${ICONS.check}${escapeHtml(data.message || "Test message sent")}</div>`;
+      toast("Test message sent", "ok");
+    } else {
+      result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(data && data.error ? data.error : "Unknown error")}</div>`;
+    }
   } catch (e) {
     result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
