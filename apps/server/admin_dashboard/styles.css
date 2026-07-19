@@ -342,8 +342,41 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .stat.warn .value { color: var(--amber); }
 .stat.info .value { color: var(--blue); }
 .stat .value.empty.empty { color: var(--muted-2); }
-.stat.hero { padding: var(--sp-6); text-align: center; margin-bottom: var(--sp-6); }
-.stat.hero .value { font-size: 28px; }
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+  margin-bottom: var(--sp-6);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.status-banner.ok { border-color: var(--green); background: linear-gradient(90deg, rgba(0,200,83,0.06) 0%, var(--card) 100%); }
+.status-banner.warn { border-color: var(--amber); background: linear-gradient(90deg, rgba(255,152,0,0.06) 0%, var(--card) 100%); }
+.status-banner.bad { border-color: var(--red); background: linear-gradient(90deg, rgba(255,0,81,0.06) 0%, var(--card) 100%); }
+.status-banner .status-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+}
+.status-banner.ok .status-icon { color: var(--green); border-color: var(--green); background: rgba(0,200,83,0.08); }
+.status-banner.warn .status-icon { color: var(--amber); border-color: var(--amber); background: rgba(255,152,0,0.08); }
+.status-banner.bad .status-icon { color: var(--red); border-color: var(--red); background: rgba(255,0,81,0.08); }
+.status-banner .status-icon svg { width: 20px; height: 20px; }
+.status-banner .status-body { flex: 1; min-width: 0; }
+.status-banner .status-title { font-size: var(--text-lg); font-weight: var(--fw-semibold); margin-bottom: 4px; color: var(--text); }
+.status-banner .status-desc { font-size: var(--text-base); color: var(--muted); }
+.status-banner .btn { margin-left: auto; flex-shrink: 0; }
+@media (max-width: 480px) {
+  .status-banner { flex-direction: column; align-items: flex-start; gap: var(--sp-3); }
+  .status-banner .btn { margin-left: 0; width: 100%; }
+}
 @media (max-width: 1024px) {
   .stat { padding: 16px; }
   .stat .value { font-size: var(--text-xl); }

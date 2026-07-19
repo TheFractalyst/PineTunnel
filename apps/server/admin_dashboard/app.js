@@ -1349,8 +1349,11 @@ async function renderOverview(content, actions) {
   if (!cf) issues.push("Domain not linked");
   if (!init) issues.push("Setup not finished");
   const heroOk = allDone;
-  const heroMsg = heroOk ? "All systems running" : (issues.length + " issue" + (issues.length > 1 ? "s" : "") + " need" + (issues.length > 1 ? "" : "s") + " attention");
   const heroCls = heroOk ? "ok" : "warn";
+  const heroIcon = heroOk ? ICONS.check : ICONS.alert;
+  const heroTitle = heroOk ? "All systems running" : (issues.length + " issue" + (issues.length > 1 ? "s" : "") + " need" + (issues.length > 1 ? "" : "s") + " attention");
+  const heroDesc = heroOk ? "Your bridge is ready to receive TradingView signals" : "Complete setup to start receiving signals";
+  const heroAction = heroOk ? "" : `<button class="btn primary" data-action="goto-setup">Go to Setup</button>`;
 
   const webhookBlock = allDone ? `
     <div class="card webhook-card">
@@ -1432,9 +1435,13 @@ async function renderOverview(content, actions) {
 
   content.innerHTML = `
     ${staleBannerHtml}
-    <div class="card hero-card stat hero ${heroCls}" id="home-hero" role="group" aria-label="${escapeHtml(heroMsg)}">
-      <div class="value">${escapeHtml(heroMsg)}</div>
-      <div class="label">${heroOk ? "Everything looks good" : issues.join(" - ")}</div>
+    <div class="card status-banner ${heroCls}" id="home-hero" role="group" aria-label="${escapeHtml(heroTitle)}">
+      <div class="status-icon" aria-hidden="true">${heroIcon}</div>
+      <div class="status-body">
+        <div class="status-title">${escapeHtml(heroTitle)}</div>
+        <div class="status-desc">${escapeHtml(heroDesc)}</div>
+      </div>
+      ${heroAction}
     </div>
     <div class="grid grid-3" id="home-metrics" role="group" aria-label="Key metrics">
       <div class="stat info" id="tile-signals" role="group" aria-label="Signals Today">
