@@ -1828,7 +1828,7 @@ async function renderSettings(content) {
   `;
 }
 
-function maskKey(k) {
+function formatMaskedKey(k) {
   if (!k) return "--";
   const s = String(k);
   if (s.length <= 10) return s.slice(0, 4) + "...";
@@ -1985,7 +1985,7 @@ async function pollSignalFeed() {
   const licenseSet = new Set();
   for (const r of signalFeedState.rows) {
     const lk = r.payload && r.payload.license_key ? r.payload.license_key : (r.ip_address || "");
-    if (lk) licenseSet.add(maskKey(lk));
+    if (lk) licenseSet.add(formatMaskedKey(lk));
   }
   const licenseSel = document.getElementById("feed-filter-license");
   if (licenseSel) {
@@ -2024,7 +2024,7 @@ async function pollSignalFeed() {
 
 function feedRowHtml(r) {
     const ts = r.timestamp ? formatTime(r.timestamp) : "--";
-  const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "--");
+  const lk = r.payload && r.payload.license_key ? formatMaskedKey(r.payload.license_key) : (r.ip_address || "--");
   const action = r.action || "--";
   const sym = r.symbol || "--";
   const lots = r.volume != null ? r.volume : "--";
@@ -2049,7 +2049,7 @@ function renderFeedRows() {
   const { rows, filterLicense, filterSymbol, filterStatus } = signalFeedState;
   let filtered = rows;
   if (filterLicense) filtered = filtered.filter(r => {
-    const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "");
+    const lk = r.payload && r.payload.license_key ? formatMaskedKey(r.payload.license_key) : (r.ip_address || "");
     return lk === filterLicense;
   });
   if (filterSymbol) filtered = filtered.filter(r => (r.symbol || "").toUpperCase().includes(filterSymbol));
@@ -2133,7 +2133,7 @@ async function pollEaMap() {
     const key = lic.license_key;
     merged.push({
       license_key: key,
-      masked: maskKey(key),
+      masked: formatMaskedKey(key),
       account: lic.account || null,
       health: lic.health || null,
       open_position_count: lic.open_position_count || 0,
@@ -2216,20 +2216,20 @@ async function pollEaMap() {
 }
 
 async function loadEaTrades(key, container) {
-  container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2><div class="card-desc">Loading trade history...</div></div>`;
+  container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2><div class="card-desc">Loading trade history...</div></div>`;
   try {
     const r = await http(`/api/ea/ws-telemetry/trade-history/${encodeURIComponent(key)}`);
     const data = await r.json();
     const trades = data.deals || data.trades || [];
     if (trades.length === 0) {
-      container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}</div>`;
+      container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2>${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}</div>`;
       return;
     }
     container.innerHTML = `<div class="card">
-      <h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>
+      <h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2>
       <div class="card-desc">${trades.length} recent trades</div>
       <div class="feed-scroll">
-        <table class="feed-table" aria-label="Recent trades for ${escapeHtml(maskKey(key))}">
+        <table class="feed-table" aria-label="Recent trades for ${escapeHtml(formatMaskedKey(key))}">
           <caption class="sr-only">Recent trades</caption>
           <thead><tr><th scope="col">Time</th><th scope="col">Symbol</th><th scope="col">Type</th><th scope="col">Lots</th><th scope="col">Ticket</th><th scope="col">Profit</th></tr></thead>
           <tbody>
@@ -2243,14 +2243,14 @@ async function loadEaTrades(key, container) {
               const profit = t.profit != null ? t.profit : null;
               const cls = profit != null ? (profit >= 0 ? "ok" : "bad") : "info";
               const pStr = profit != null ? (profit >= 0 ? "+" : "") + profit.toFixed(2) : "--";
-              return `<tr class="row-${cls}"><td class="td-time">${escapeHtml(tsStr)}</td><td>${escapeHtml(sym)}</td><td>${escapeHtml(String(type))}</td><td>${escapeHtml(String(lots))}</td><td>${escapeHtml(String(ticket))}</td><td class="ea-num">${escapeHtml(pStr)}</td></tr>`;
+              return `<tr class="row-${cls}"><td class="td-time" scope="row">${escapeHtml(tsStr)}</td><td>${escapeHtml(sym)}</td><td>${escapeHtml(String(type))}</td><td>${escapeHtml(String(lots))}</td><td>${escapeHtml(String(ticket))}</td><td class="ea-num">${escapeHtml(pStr)}</td></tr>`;
             }).join("")}
           </tbody>
         </table>
       </div>
     </div>`;
   } catch (e) {
-    container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2><div class="ea-empty">Failed to load: ${escapeHtml(e.message)}</div></div>`;
+    container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2><div class="ea-empty">Failed to load: ${escapeHtml(e.message)}</div></div>`;
   }
 }
 
@@ -3174,13 +3174,13 @@ function renderWebhookTable() {
       const cls = statusColor(r.response_code);
       const preview = r.payload ? String(r.payload).slice(0, 60) : "";
       const payloadStr = r.payload ? escapeHtml(JSON.stringify(r.payload)) : "";
-      return `<tr class="row-expandable" data-payload="${payloadStr}" tabindex="0" role="button" aria-expanded="false" aria-label="Webhook log at ${escapeHtml(formatTime(r.timestamp))}, status ${r.response_code || "--"}">
+      return `<tr class="row-expandable" data-payload="${payloadStr}" tabindex="0" role="button" aria-expanded="false" aria-label="Webhook log at ${escapeHtml(formatTime(r.timestamp))}, status ${escapeHtml(String(r.response_code || "--"))}">
         <td class="mono" scope="row">${escapeHtml(formatTime(r.timestamp))}</td>
         <td class="mono">${escapeHtml(r.ip_address || "--")}</td>
         <td>${escapeHtml(r.action || "--")}</td>
         <td class="mono">${escapeHtml(r.symbol || "--")}</td>
         <td class="mono">${escapeHtml(String(r.volume || "--"))}</td>
-        <td><span class="badge ${cls}"><span class="dot" aria-hidden="true"></span>${r.response_code || "--"}</span></td>
+        <td><span class="badge ${cls}"><span class="dot" aria-hidden="true"></span>${escapeHtml(String(r.response_code || "--"))}</span></td>
         <td class="mono">${escapeHtml(String(r.execution_time_ms || "--"))}</td>
         <td class="mono trunc" title="${escapeHtml(preview)}">${escapeHtml(preview)}</td>
       </tr>`;
@@ -4021,7 +4021,7 @@ function renderLicenseRows() {
       const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
       const lastAct = r.last_activity ? relativeTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
       return `<tr>
-        <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
+        <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(formatMaskedKey(r.license_key))}</td>
         <td>${escapeHtml(r.name || "--")}</td>
         <td class="td-email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
         <td><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
@@ -4031,11 +4031,11 @@ function renderLicenseRows() {
         <td class="td-num">${r.total_trades}</td>
         <td>${escapeHtml(lastAct)}</td>
         <td class="td-actions">
-          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit license ${escapeHtml(maskKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
-          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend license ${escapeHtml(maskKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
-          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} license ${escapeHtml(maskKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" aria-label="Force disconnect license ${escapeHtml(maskKey(r.license_key))}" title="Force disconnect">${ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" aria-label="Delete license ${escapeHtml(maskKey(r.license_key))}" title="Delete">${ICONS.trash}</button>
+          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit license ${escapeHtml(formatMaskedKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
+          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend license ${escapeHtml(formatMaskedKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
+          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} license ${escapeHtml(formatMaskedKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" aria-label="Force disconnect license ${escapeHtml(formatMaskedKey(r.license_key))}" title="Force disconnect">${ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" aria-label="Delete license ${escapeHtml(formatMaskedKey(r.license_key))}" title="Delete">${ICONS.trash}</button>
         </td>
       </tr>`;
     }).join("");
@@ -4052,7 +4052,7 @@ function renderLicenseRows() {
   body.querySelectorAll("[data-action='lic-disconnect']").forEach(b => b.addEventListener("click", e => {
     e.preventDefault(); e.stopPropagation();
     const key = b.dataset.key;
-    openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${maskKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
+    openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${formatMaskedKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
   }));
   body.querySelectorAll("[data-action='lic-delete']").forEach(b => b.addEventListener("click", e => {
     e.preventDefault(); e.stopPropagation();
