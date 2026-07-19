@@ -49,6 +49,17 @@
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
+#app:empty::after {
+  content: "Loading PineTunnel...";
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 14px;
+}
+
 .txt-green { color: var(--green); }
 .txt-muted2 { color: var(--muted-2); }
 .txt-red { color: var(--red); }

@@ -1097,7 +1097,7 @@ function render() {
         <span>More</span>
       </button>
     </nav>
-    <div class="mobile-sheet" id="mobile-sheet" role="dialog" aria-modal="true" aria-label="All panels">
+    <div class="mobile-sheet hidden" id="mobile-sheet" role="dialog" aria-modal="true" aria-label="All panels">
       <div class="mobile-sheet-backdrop" data-action="close-sheet"></div>
       <div class="mobile-sheet-card">
         <div class="sheet-grab-handle" aria-hidden="true"></div>
@@ -1154,6 +1154,7 @@ function openMobileSheet() {
   const sheet = document.getElementById("mobile-sheet");
   if (!sheet) return;
   _mobileSheetTrigger = document.activeElement;
+  sheet.classList.remove("hidden");
   sheet.classList.remove("sheet-closing");
   requestAnimationFrame(() => sheet.classList.add("sheet-open"));
   _mobileSheetEscape = e => { if (e.key === "Escape") { e.preventDefault(); closeMobileSheet(); } };
@@ -1184,6 +1185,7 @@ function closeMobileSheet() {
   if (_mobileSheetTab) { document.removeEventListener("keydown", _mobileSheetTab); _mobileSheetTab = null; }
   setTimeout(() => {
     sheet.classList.remove("sheet-closing");
+    sheet.classList.add("hidden");
     if (_mobileSheetTrigger) { try { _mobileSheetTrigger.focus(); } catch {} _mobileSheetTrigger = null; }
   }, 200);
 }
@@ -1917,6 +1919,52 @@ async function pollEaVerify() {
   }
 }
 
+const SETTINGS_GROUPS = [
+  { id: "server", label: "Server", keys: ["HOST", "PORT", "APP_ENV", "SERVER_BASE_URL", "DEBUG", "LOG_LEVEL"] },
+  { id: "security", label: "Security", keys: ["WEBHOOK_SECRET", "JWT_SECRET", "ADMIN_API_KEY", "SESSION_SECRET", "SIGNAL_ENCRYPTION_KEY"] },
+  { id: "telegram", label: "Telegram", keys: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_IDS", "TELEGRAM_BOT_URL"] },
+  { id: "database", label: "Database", keys: ["DATABASE_URL", "DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT", "DB_POOL_RECYCLE"] },
+  { id: "redis", label: "Redis", keys: ["REDIS_URL", "REDIS_MAX_CONNECTIONS"] },
+  { id: "mt5", label: "MT5", keys: ["MT5_LOGIN", "MT5_PASSWORD", "MT5_SERVER", "MT5_PATH"] },
+  { id: "cloudflare", label: "Cloudflare", keys: ["CLOUDFLARE_TUNNEL_TOKEN", "CLOUDFLARE_TUNNEL_URL"] },
+  { id: "cors", label: "CORS", keys: ["SERVER_CORS_ORIGINS"] },
+];
+
+const SECRET_PATTERNS = ["SECRET", "TOKEN", "KEY", "PASSWORD", "PASSPHRASE", "CREDENTIAL"];
+
+function isSecretKey(k) {
+  const u = (k || "").toUpperCase();
+  return SECRET_PATTERNS.some(p => u.indexOf(p) >= 0);
+}
+
+function generateSecret(len = 32) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let s = "";
+  const arr = new Uint8Array(len);
+  crypto.getRandomValues(arr);
+  for (let i = 0; i < len; i++) s += chars[arr[i] % chars.length];
+  return s;
+}
+
+function groupConfigEntries(data) {
+  const used = new Set();
+  const groups = [];
+  for (const g of SETTINGS_GROUPS) {
+    const entries = [];
+    for (const k of g.keys) {
+      if (data[k] != null) { entries.push([k, data[k]]); used.add(k); }
+    }
+    if (entries.length > 0) groups.push({ id: g.id, label: g.label, entries });
+  }
+  const other = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (used.has(k) || k.startsWith("#") || !k) continue;
+    other.push([k, v]);
+  }
+  if (other.length > 0) groups.push({ id: "other", label: "Other", entries: other });
+  return groups;
+}
+
 async function renderSettings(content) {
   const tk = renderToken;
   content.innerHTML = skeletonCard(1);
@@ -1927,15 +1975,115 @@ async function renderSettings(content) {
     bindRetry(content, "retry-settings", () => route("settings"));
     return;
   }
-  const entries = Object.entries(data).filter(([k]) => !k.startsWith("#") && k);
+  const groups = groupConfigEntries(data);
   content.innerHTML = `
     ${stale ? staleBanner() : ""}
+    <div id="settings-result" aria-live="polite"></div>
+    ${groups.map(g => `
+      <div class="card">
+        <h2 class="card-title">${escapeHtml(g.label)}</h2>
+        <div class="card-desc">${escapeHtml(g.id === "other" ? "Uncategorized variables" : g.label + " configuration")}</div>
+        ${g.entries.map(([k, v]) => {
+          const isSecret = isSecretKey(k);
+          const isRedacted = isSecret && /\*{4}/.test(String(v));
+          const rotateBtn = isSecret ? `<button class="btn outline sm" data-action="rotate-secret" data-key="${escapeHtml(k)}" title="Generate new ${escapeHtml(k)}">${ICONS.refresh}Rotate</button>` : "";
+          const editBtn = !isRedacted ? `<button class="btn ghost sm" data-action="edit-config" data-key="${escapeHtml(k)}" title="Edit ${escapeHtml(k)}">${ICONS.edit}</button>` : "";
+          return `<div class="row">
+            <span class="k">${escapeHtml(k)}</span>
+            <span class="v mono ${isSecret ? "secret-val" : ""}">${escapeHtml(v)}</span>
+            <span class="row-actions">${rotateBtn}${editBtn}</span>
+          </div>`;
+        }).join("")}
+      </div>
+    `).join("")}
     <div class="card">
-      <h2 class="card-title">Configuration</h2>
-      <div class="card-desc">Environment variables (secrets are redacted)</div>
-      ${entries.map(([k, v]) => `<div class="row"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(v)}</span></div>`).join("")}
+      <h2 class="card-title">Save Changes</h2>
+      <div class="card-desc">Edit configuration values inline</div>
+      <div class="field">
+        <label for="settings-edit-key">Variable name</label>
+        <input class="input" id="settings-edit-key" placeholder="e.g. LOG_LEVEL" spellcheck="false" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="settings-edit-value">New value</label>
+        <input class="input" id="settings-edit-value" placeholder="e.g. DEBUG" spellcheck="false" autocomplete="off">
+      </div>
+      <button class="btn primary" id="settings-save" data-action="settings-save">${ICONS.check}Save Changes</button>
+      <div class="hint mt">Some changes require a server restart to take effect.</div>
     </div>
   `;
+  bindSettingsActions(content);
+}
+
+function bindSettingsActions(scope) {
+  scope.querySelectorAll("[data-action='rotate-secret']").forEach(btn => {
+    btn.addEventListener("click", e => { e.preventDefault(); rotateSecret(btn.dataset.key, btn); });
+  });
+  scope.querySelectorAll("[data-action='edit-config']").forEach(btn => {
+    btn.addEventListener("click", e => { e.preventDefault(); editConfigKey(btn.dataset.key); });
+  });
+  const saveBtn = scope.querySelector("[data-action='settings-save']");
+  if (saveBtn) saveBtn.addEventListener("click", e => { e.preventDefault(); saveConfigChange(); });
+}
+
+function editConfigKey(key) {
+  const keyInput = document.getElementById("settings-edit-key");
+  const valInput = document.getElementById("settings-edit-value");
+  if (keyInput) keyInput.value = key;
+  if (valInput) valInput.focus();
+}
+
+async function rotateSecret(key, btn) {
+  if (!key) return;
+  const result = document.getElementById("settings-result");
+  const len = key === "SIGNAL_ENCRYPTION_KEY" ? 64 : 32;
+  const newVal = generateSecret(len);
+  setBtnLoading(btn, "Rotating...");
+  try {
+    await http(`${API}/config`, {
+      method: "PUT",
+      headers: jsonHeaders(true),
+      body: JSON.stringify({ updates: { [key]: newVal } }),
+    });
+    setBtnSuccess(btn, "Rotated", 2000);
+    if (result) result.innerHTML = `<div class="inline-ok">${ICONS.check}${escapeHtml(key)} rotated. Restart the server for the new value to take effect.</div>`;
+    toast(`${key} rotated - restart required`, "ok");
+    invalidateCache(`${API}/config`);
+    setTimeout(() => route("settings"), 1500);
+  } catch (e) {
+    setBtnError(btn, "Failed");
+    if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Failed to rotate ${escapeHtml(key)}: ${escapeHtml(friendlyMsg(e))}</div>`;
+  }
+}
+
+async function saveConfigChange() {
+  const keyEl = document.getElementById("settings-edit-key");
+  const valEl = document.getElementById("settings-edit-value");
+  const result = document.getElementById("settings-result");
+  const btn = document.getElementById("settings-save");
+  if (!keyEl || !valEl) return;
+  const key = keyEl.value.trim();
+  const val = valEl.value.trim();
+  if (!key) { if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Variable name is required</div>`; return; }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Invalid variable name - use letters, digits, underscores</div>`; return; }
+  setBtnLoading(btn, "Saving...");
+  try {
+    const r = await http(`${API}/config`, {
+      method: "PUT",
+      headers: jsonHeaders(true),
+      body: JSON.stringify({ updates: { [key]: val } }),
+    });
+    const data = await r.json();
+    setBtnSuccess(btn, "Saved", 2000);
+    if (result) result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved ${escapeHtml(key)}.${data.needs_restart ? " Restart the server for the change to take effect." : ""}</div>`;
+    toast("Configuration saved", "ok");
+    invalidateCache(`${API}/config`);
+    keyEl.value = "";
+    valEl.value = "";
+    setTimeout(() => route("settings"), 1500);
+  } catch (e) {
+    setBtnError(btn, "Failed");
+    if (result) result.innerHTML = `<div class="inline-error">${ICONS.x}Failed to save: ${escapeHtml(friendlyMsg(e))}</div>`;
+  }
 }
 
 function statusClassFor(status) {
