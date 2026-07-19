@@ -569,7 +569,10 @@ def _get_daily_summary_7d(db_manager) -> list:
                 "SELECT "
                 "COUNT(*) AS total_trades, "
                 "COUNT(CASE WHEN status = 'success' THEN 1 END) AS successful_trades, "
-                "COUNT(CASE WHEN profit > 0 THEN 1 END) AS winning_trades "
+                "COUNT(CASE WHEN profit > 0 THEN 1 END) AS winning_trades, "
+                "COUNT(CASE WHEN profit < 0 THEN 1 END) AS losing_trades, "
+                "COALESCE(AVG(CASE WHEN profit > 0 THEN profit END), 0) AS avg_win, "
+                "COALESCE(AVG(CASE WHEN profit < 0 THEN profit END), 0) AS avg_loss "
                 "FROM trades WHERE timestamp >= :start AND timestamp < :end",
                 {"start": day_str + " 00:00:00", "end": next_day + " 00:00:00"},
             )
@@ -577,6 +580,11 @@ def _get_daily_summary_7d(db_manager) -> list:
             total = r.get("total_trades", 0) or 0
             ok = r.get("successful_trades", 0) or 0
             wins = r.get("winning_trades", 0) or 0
+            avg_win = r.get("avg_win", 0) or 0
+            avg_loss = r.get("avg_loss", 0) or 0
+            win_rate_decimal = wins / total if total > 0 else 0
+            loss_rate_decimal = max(1.0 - win_rate_decimal, 0.0)
+            expectancy = round(win_rate_decimal * avg_win + loss_rate_decimal * avg_loss, 2)
             out.append({
                 "date": day_str,
                 "total_trades": total,
@@ -584,6 +592,7 @@ def _get_daily_summary_7d(db_manager) -> list:
                 "winning_trades": wins,
                 "success_rate": round((ok / total * 100), 1) if total > 0 else 0.0,
                 "win_rate": round((wins / total * 100), 1) if total > 0 else 0.0,
+                "expectancy": expectancy,
             })
     except Exception as e:
         logger.debug("Failed to compute 7d daily summary: %s", e)

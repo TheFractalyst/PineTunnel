@@ -2732,7 +2732,7 @@ function renderTradeAnalytics(content, actions) {
       <div class="card-desc">How your trades are doing - updates every 15s</div>
       <div class="grid grid-3" id="analytics-stats" role="group" aria-label="Performance stats">
         <div class="stat" id="stat-total" role="group" aria-label="Total Trades"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total Trades</div></div>
-        <div class="stat" id="stat-winrate" role="group" aria-label="Win Rate"><div class="value skeleton line" aria-live="polite"></div><div class="label">Win Rate</div></div>
+        <div class="stat" id="stat-expectancy" role="group" aria-label="Expectancy"><div class="value skeleton line" aria-live="polite"></div><div class="label">Expectancy</div></div>
         <div class="stat" id="stat-pf" role="group" aria-label="Profit Factor"><div class="value skeleton line" aria-live="polite"></div><div class="label">Profit Factor</div></div>
       </div>
     </div>
@@ -2742,8 +2742,8 @@ function renderTradeAnalytics(content, actions) {
       <div id="bar-chart-wrap" class="chart-wrap"></div>
     </div>
     <div class="card">
-      <h2 class="card-title">Win Rate (7 days)</h2>
-      <div class="card-desc">Daily win rate over the past week</div>
+      <h2 class="card-title">Expectancy (expected value)</h2>
+      <div class="card-desc">Expected profit or loss per trade over the past week</div>
       <div id="line-chart-wrap" class="chart-wrap"></div>
     </div>
     <div class="card">
@@ -2799,7 +2799,7 @@ async function pollTradeAnalytics() {
     const alerts = (stats && stats.alerts) || {};
     const setStat = (id, val, cls) => setTile(id, val, cls);
     const totalTrades = overall.total_trades || (dash && dash.overview && dash.overview.total_trades) || 0;
-    const successRate = overall.success_rate != null ? overall.success_rate : ((dash && dash.overview && dash.overview.success_rate) || 0);
+    const expectancy = overall.expectancy != null ? overall.expectancy : 0;
     const avgLatency = alerts.avg_response_time != null ? alerts.avg_response_time : (overall.avg_latency != null ? overall.avg_latency : null);
     const profitFactor = overall.profit_factor != null ? overall.profit_factor : null;
     if (totalTrades === 0 && !stats) {
@@ -2811,7 +2811,7 @@ async function pollTradeAnalytics() {
       return;
     }
     setStat("stat-total", formatNumber(totalTrades), totalTrades > 0 ? "ok" : "info");
-    setStat("stat-winrate", formatPct(successRate), successRate >= 60 ? "ok" : successRate >= 40 ? "warn" : "bad");
+    setStat("stat-expectancy", formatCurrency(expectancy), expectancy > 0 ? "ok" : expectancy < 0 ? "bad" : "info");
     setStat("stat-pf", profitFactor != null ? profitFactor.toFixed(2) : "--", profitFactor != null && profitFactor >= 1.5 ? "ok" : profitFactor != null && profitFactor >= 1 ? "warn" : "info");
     drawBarChart(daily, dash);
     drawLineChart(daily);

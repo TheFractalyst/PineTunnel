@@ -626,14 +626,14 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .btn.ghost:hover { background: var(--card-2); color: var(--text); }
 .btn.link {
   background: transparent;
-  color: var(--blue);
+  color: var(--text);
   padding: 0;
   min-height: auto;
   border-radius: 0;
   font-weight: var(--fw-medium);
 }
 .btn.link svg { width: 14px; height: 14px; }
-.btn.link:hover { opacity: 0.8; color: var(--blue-dark); }
+.btn.link:hover { opacity: 0.8; color: var(--muted); }
 .btn.sm { padding: 8px 12px; min-height: 32px; font-size: var(--text-sm); }
 .btn.lg { padding: 8px 24px; min-height: 44px; font-size: var(--text-lg); }
 .btn.full { width: 100%; }
