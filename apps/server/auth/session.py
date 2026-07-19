@@ -27,7 +27,8 @@ def setup_session_middleware(app: FastAPI, secret_key: str | None = None) -> Non
 
 
 async def require_auth(request: Request) -> None:
-    if not REQUIRE_AUTH:
+    host = request.url.hostname or "127.0.0.1"
+    if host in ("127.0.0.1", "::1", "localhost"):
         return
     if not request.session.get("authenticated"):
         raise HTTPException(status_code=401, detail="Not authenticated")
