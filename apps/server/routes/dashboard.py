@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
+from collections import defaultdict
 from pathlib import Path
 
 import httpx
@@ -15,6 +17,28 @@ from apps.server.auth.session import require_auth
 from apps.server.auth.telegram_auth import TelegramAuthStore
 
 _TELEGRAM_RELOAD_KEYS = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_IDS"}
+
+_LOGIN_RATE_LIMIT = 5
+_LOGIN_RATE_WINDOW = 60
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_login_rate_limit(client_ip: str) -> bool:
+    now = time.monotonic()
+    cutoff = now - _LOGIN_RATE_WINDOW
+    attempts = _login_attempts[client_ip]
+    _login_attempts[client_ip] = [t for t in attempts if t > cutoff]
+    if len(_login_attempts[client_ip]) >= _LOGIN_RATE_LIMIT:
+        return False
+    _login_attempts[client_ip].append(now)
+    return True
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 def _parse_admin_ids(raw: str) -> list[int]:
@@ -80,6 +104,9 @@ def create_dashboard_router(
 
     @router.post("/login")
     async def login(req: LoginRequest, request: Request, _=Depends(require_csrf)):
+        client_ip = _get_client_ip(request)
+        if not _check_login_rate_limit(client_ip):
+            raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
         if req.user_id not in admin_ids:
             raise HTTPException(status_code=401, detail="Not authorized")
         if not await auth_store.verify_code_async(req.code, expected_user_id=req.user_id):
@@ -87,6 +114,7 @@ def create_dashboard_router(
         request.session.clear()
         request.session["authenticated"] = True
         request.session["user_id"] = req.user_id
+        _login_attempts.pop(client_ip, None)
         return {"status": "ok"}
 
     @router.post("/logout")
@@ -121,7 +149,7 @@ def create_dashboard_router(
         return {"status": "ok", "updated_keys": list(req.updates.keys()), "needs_restart": needs_restart}
 
     @router.post("/validate-telegram")
-    async def validate_telegram(req: ValidateTelegramRequest):
+    async def validate_telegram(req: ValidateTelegramRequest, _=Depends(require_csrf)):
         token = req.token.strip()
         if not token:
             return {"valid": False, "error": "Token is required"}
@@ -202,11 +230,11 @@ def create_dashboard_router(
                 "latency_ms": latency_ms,
             }
         except httpx.ConnectError:
-            return {"status": "error", "message": f"Cannot connect to local webhook at {target}"}
+            return {"status": "error", "message": "Cannot connect to local webhook server"}
         except httpx.TimeoutException:
             return {"status": "error", "message": "Local webhook timed out"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+        except Exception:
+            return {"status": "error", "message": "Webhook test failed"}
 
     # -----------------------------------------------------------------
     # Session-gated proxies for management panels (Licenses, Security)

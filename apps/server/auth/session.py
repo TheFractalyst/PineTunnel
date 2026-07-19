@@ -15,6 +15,8 @@ def setup_session_middleware(app: FastAPI, secret_key: str | None = None) -> Non
     key = secret_key or os.getenv("SESSION_SECRET", "")
     if not key:
         raise RuntimeError("SESSION_SECRET env var is required for dashboard auth")
+    host = os.getenv("HOST", "127.0.0.1")
+    is_production = host not in ("127.0.0.1", "::1", "localhost")
     app.add_middleware(
         SessionMiddleware,
         secret_key=key,
@@ -22,7 +24,7 @@ def setup_session_middleware(app: FastAPI, secret_key: str | None = None) -> Non
         max_age=SESSION_MAX_AGE,
         same_site="lax",
         path="/",
-        https_only=False,
+        https_only=is_production,
     )
 
 

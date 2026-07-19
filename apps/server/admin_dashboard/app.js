@@ -72,6 +72,14 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
+function isSafeUrl(url) {
+  if (!url || typeof url !== "string") return false;
+  const s = url.trim().toLowerCase();
+  if (s.startsWith("javascript:") || s.startsWith("data:") || s.startsWith("vbscript:")) return false;
+  if (!/^https?:\/\//.test(s)) return false;
+  try { new URL(url); return true; } catch { return false; }
+}
+
 let setupDirty = false;
 window.addEventListener("beforeunload", e => {
   if (setupDirty) {
@@ -100,7 +108,7 @@ const VALIDATORS = {
   },
   cfUrl: (v) => {
     if (!v) return "Tunnel URL is required";
-    if (!v.startsWith("https://")) return "URL must start with https://";
+    if (!isSafeUrl(v)) return "URL must be a valid http:// or https:// URL";
     return "";
   },
   days: (v) => {
@@ -341,6 +349,7 @@ function bindRetry(scope, action, fn) {
 let routeTimer = null;
 let overviewRendered = false;
 let overviewSig = null;
+let overviewAllDone = null;
 let visibilityPolling = true;
 let domCache = { content: null, actions: null, sidebar: null };
 
@@ -1237,11 +1246,54 @@ function pollOverview() {
     const sig = JSON.stringify(data);
     if (sig !== lastSetupStatus) {
       lastSetupStatus = sig;
-      const content = document.getElementById("content");
-      const actions = document.getElementById("header-actions");
-      if (content && actions) renderOverview(content, actions);
+      const tg = data.telegram_configured;
+      const cf = data.cloudflare_configured;
+      const init = data.initialized;
+      const allDone = tg && cf && init;
+      if (overviewRendered && allDone === overviewAllDone) {
+        updateOverviewInPlace(tg, cf, init, allDone);
+      } else {
+        const content = document.getElementById("content");
+        const actions = document.getElementById("header-actions");
+        if (content && actions) renderOverview(content, actions);
+      }
     }
   });
+}
+
+function updateOverviewInPlace(tg, cf, init, allDone) {
+  const small = window.innerWidth < 375;
+  const actions = document.getElementById("header-actions");
+  if (actions) {
+    actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Welcome"), !allDone);
+  }
+  const tgTile = document.getElementById("ov-tile-tg");
+  if (tgTile) {
+    tgTile.className = `stat ${tg ? "ok" : "info"} clickable`;
+    const v = tgTile.querySelector(".value");
+    if (v) v.textContent = tg ? "Configured" : "Pending";
+    const hint = tgTile.querySelector(".stat-hint");
+    if (hint && tg) hint.remove();
+    else if (!hint && !tg) tgTile.insertAdjacentHTML("beforeend", '<div class="stat-hint">Click Setup to configure</div>');
+  }
+  const cfTile = document.getElementById("ov-tile-cf");
+  if (cfTile) {
+    cfTile.className = `stat ${cf ? "ok" : "info"} clickable`;
+    const v = cfTile.querySelector(".value");
+    if (v) v.textContent = cf ? "Connected" : "Pending";
+    const hint = cfTile.querySelector(".stat-hint");
+    if (hint && cf) hint.remove();
+    else if (!hint && !cf) cfTile.insertAdjacentHTML("beforeend", '<div class="stat-hint">Click Setup to configure</div>');
+  }
+  const initTile = document.getElementById("ov-tile-init");
+  if (initTile) {
+    initTile.className = `stat ${init ? "ok" : "warn"}`;
+    const v = initTile.querySelector(".value");
+    if (v) v.textContent = init ? "Yes" : "No";
+    const hint = initTile.querySelector(".stat-hint");
+    if (hint && init) hint.remove();
+    else if (!hint && !init) initTile.insertAdjacentHTML("beforeend", '<div class="stat-hint">Complete steps 1 and 2</div>');
+  }
 }
 function startOverviewPoll() {
   if (!visibilityPolling) return;
@@ -1268,6 +1320,8 @@ async function renderOverview(content, actions) {
   const init = data.initialized;
   const allDone = tg && cf && init;
   lastSetupStatus = JSON.stringify(data);
+  overviewAllDone = allDone;
+  overviewRendered = true;
   const small = window.innerWidth < 375;
   actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Welcome"), !allDone);
 
@@ -1370,17 +1424,17 @@ async function renderOverview(content, actions) {
       <h2 class="card-title">System Status</h2>
       <div class="card-desc">Current configuration state</div>
       <div class="grid grid-3">
-        <div class="stat ${tg ? "ok" : "info"} clickable" data-action="goto-setup" tabindex="0" role="button" aria-label="Telegram Bot status - go to Setup">
+        <div class="stat ${tg ? "ok" : "info"} clickable" id="ov-tile-tg" data-action="goto-setup" tabindex="0" role="button" aria-label="Telegram Bot status - go to Setup">
           <div class="value">${tg ? "Configured" : "Pending"}</div>
           <div class="label">Telegram Bot</div>
           ${tgHint}
         </div>
-        <div class="stat ${cf ? "ok" : "info"} clickable" data-action="goto-setup" tabindex="0" role="button" aria-label="Cloudflare Tunnel status - go to Setup">
+        <div class="stat ${cf ? "ok" : "info"} clickable" id="ov-tile-cf" data-action="goto-setup" tabindex="0" role="button" aria-label="Cloudflare Tunnel status - go to Setup">
           <div class="value">${cf ? "Connected" : "Pending"}</div>
           <div class="label">Cloudflare Tunnel</div>
           ${cfHint}
         </div>
-        <div class="stat ${init ? "ok" : "warn"}" role="group" aria-label="Initialized: ${init ? "Yes" : "No"}">
+        <div class="stat ${init ? "ok" : "warn"}" id="ov-tile-init" role="group" aria-label="Initialized: ${init ? "Yes" : "No"}">
           <div class="value">${init ? "Yes" : "No"}</div>
           <div class="label">Initialized</div>
           ${initHint}
@@ -1645,7 +1699,7 @@ async function saveTelegram() {
     setTimeout(() => advanceStep(2), 2000);
   } catch (e) {
     setBtnError(btn, "Failed");
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(e.message)}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(friendlyMsg(e))}. <a href="#" data-action="retry-save" class="retry-link">Retry</a></div>`;
     const retry = result.querySelector("[data-action='retry-save']");
     if (retry) retry.addEventListener("click", ev => { ev.preventDefault(); saveTelegram(); });
   }
@@ -1745,7 +1799,7 @@ async function sendTestWebhook() {
     }
   } catch (e) {
     toast("Request failed", "bad");
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(e.message || friendlyMsg(e))}</div>`;
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Request failed: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
   btn.disabled = false;
   btn.innerHTML = btn.dataset.origHtml || btn.innerHTML;
@@ -1803,17 +1857,17 @@ async function pollEaVerify() {
         <div class="hint mt">1. Download the EA from the Setup panel<br>2. Attach it to a chart in MetaTrader<br>3. Enter your license key and server URL in the EA inputs<br>4. Enable DLL imports in MetaTrader settings</div>`;
     }
   } catch (e) {
-    statusEl.innerHTML = `<div class="inline-error">${ICONS.x}Failed to check connections: ${escapeHtml(e.message || friendlyMsg(e))}</div>`;
+    statusEl.innerHTML = `<div class="inline-error">${ICONS.x}Failed to check connections: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
 }
 
 async function renderSettings(content) {
   const tk = renderToken;
   content.innerHTML = skeletonCard(1);
-  const { data, error, stale } = await useFetch(`${API}/config`);
+  const { data, error, stale } = await withMinDisplayTime(useFetch(`${API}/config`));
   if (staleRender(tk)) return;
   if (error && !data) {
-    content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load settings</div><button class="btn outline sm mt" data-action="retry-settings">Retry</button></div>`;
+    content.innerHTML = errorPanel("settings", error, "retry-settings");
     bindRetry(content, "retry-settings", () => route("settings"));
     return;
   }
@@ -1835,7 +1889,7 @@ function formatMaskedKey(k) {
   return s.slice(0, 8) + "...";
 }
 
-function relativeTime(iso) {
+function formatRelativeTime(iso) {
   if (!iso) return "--";
   const t = new Date(iso).getTime();
   if (isNaN(t)) return "--";
@@ -1848,7 +1902,11 @@ function relativeTime(iso) {
 }
 
 function formatTime(iso) {
-  return relativeTime(iso);
+  return formatRelativeTime(iso);
+}
+
+function formatRelativeTime(iso) {
+  return formatRelativeTime(iso);
 }
 
 function statusClassFor(status) {
@@ -1898,7 +1956,7 @@ function renderSignalFeed(content, actions) {
             <option value="duplicate" ${signalFeedState.filterStatus === "duplicate" ? "selected" : ""}>Duplicate</option>
           </select>
         </div>
-        <button class="btn outline sm" id="feed-pause-btn" data-action="feed-pause">${ICONS.pause}Pause</button>
+        <button class="btn outline sm" id="feed-pause-btn" data-action="feed-pause" aria-pressed="false">${ICONS.pause}Pause</button>
       </div>
       <div class="feed-scroll" id="feed-scroll">
         <table class="feed-table">
@@ -1937,9 +1995,14 @@ function renderSignalFeed(content, actions) {
     e.preventDefault();
     signalFeedState.paused = !signalFeedState.paused;
     pauseBtn.innerHTML = signalFeedState.paused ? `${ICONS.play}Resume` : `${ICONS.pause}Pause`;
+    pauseBtn.setAttribute("aria-pressed", String(signalFeedState.paused));
   });
   scrollEl.addEventListener("mouseenter", () => { signalFeedState.paused = true; });
   scrollEl.addEventListener("mouseleave", () => {
+    if (pauseBtn.innerHTML.indexOf("Resume") === -1) signalFeedState.paused = false;
+  });
+  scrollEl.addEventListener("focusin", () => { signalFeedState.paused = true; });
+  scrollEl.addEventListener("focusout", () => {
     if (pauseBtn.innerHTML.indexOf("Resume") === -1) signalFeedState.paused = false;
   });
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
@@ -2094,6 +2157,19 @@ function renderEaMap(content, actions) {
     <div id="ea-expand-container"></div>
   `;
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
+  const gridEl = document.getElementById("ea-grid");
+  if (gridEl) {
+    gridEl.addEventListener("click", e => {
+      const card = e.target.closest("[data-action='ea-expand']");
+      if (card) { e.preventDefault(); toggleEaCard(card); }
+    });
+    gridEl.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        const card = e.target.closest("[data-action='ea-expand']");
+        if (card) { e.preventDefault(); toggleEaCard(card); }
+      }
+    });
+  }
   startPoll(pollEaMap, 10000);
 }
 
@@ -2178,7 +2254,7 @@ async function pollEaMap() {
     const positions = ea.open_position_count || 0;
     const lat = ea.latency != null ? `${ea.latency}ms` : "--";
     const connBadge = ea.connType === "WS" ? '<span class="conn-badge ws">WS</span>' : '<span class="conn-badge http">HTTP</span>';
-    return `<div class="ea-card ${statusCls}" data-key="${escapeHtml(ea.license_key)}" data-action="ea-expand" tabindex="0" role="button">
+    return `<div class="ea-card ${statusCls}" data-key="${escapeHtml(ea.license_key)}" data-action="ea-expand" tabindex="0" role="button" aria-expanded="false" aria-label="EA ${escapeHtml(ea.masked)}, ${statusLabel}, click to view trades">
       <div class="ea-card-head">
         <span class="ea-key">${escapeHtml(ea.masked)}</span>
         ${connBadge}
@@ -2190,29 +2266,25 @@ async function pollEaMap() {
         <div class="ea-row"><span>Equity</span><span class="ea-num">${escapeHtml(String(equity))}</span></div>
         <div class="ea-row"><span>Margin Lvl</span><span class="ea-num">${escapeHtml(String(marginLevel))}</span></div>
         <div class="ea-row"><span>Positions</span><span class="ea-num">${positions}</span></div>
-        <div class="ea-row"><span>Last Seen</span><span>${escapeHtml(relativeTime(ea.lastSeen))}</span></div>
+        <div class="ea-row"><span>Last Seen</span><span>${escapeHtml(formatRelativeTime(ea.lastSeen))}</span></div>
         <div class="ea-row"><span>Latency</span><span class="ea-num">${escapeHtml(lat)}</span></div>
       </div>
     </div>`;
   }).join("");
-  grid.querySelectorAll("[data-action='ea-expand']").forEach(card => {
-    card.addEventListener("click", e => {
-      e.preventDefault();
-      const key = card.dataset.key;
-      eaMapState.expanded = eaMapState.expanded === key ? null : key;
-      document.querySelectorAll(".ea-card").forEach(c => c.classList.remove("expanded"));
-      const expandContainer = document.getElementById("ea-expand-container");
-      if (eaMapState.expanded) {
-        card.classList.add("expanded");
-        loadEaTrades(key, expandContainer);
-      } else {
-        expandContainer.innerHTML = "";
-      }
-    });
-    card.addEventListener("keydown", e => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); card.click(); }
-    });
-  });
+}
+
+function toggleEaCard(card) {
+  const key = card.dataset.key;
+  eaMapState.expanded = eaMapState.expanded === key ? null : key;
+  document.querySelectorAll(".ea-card").forEach(c => { c.classList.remove("expanded"); c.setAttribute("aria-expanded", "false"); });
+  const expandContainer = document.getElementById("ea-expand-container");
+  if (eaMapState.expanded) {
+    card.classList.add("expanded");
+    card.setAttribute("aria-expanded", "true");
+    loadEaTrades(key, expandContainer);
+  } else {
+    expandContainer.innerHTML = "";
+  }
 }
 
 async function loadEaTrades(key, container) {
@@ -2250,7 +2322,9 @@ async function loadEaTrades(key, container) {
       </div>
     </div>`;
   } catch (e) {
-    container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2><div class="ea-empty">Failed to load: ${escapeHtml(e.message)}</div></div>`;
+    container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2><div class="ea-empty">Failed to load: ${escapeHtml(friendlyMsg(e))}<br><button class="btn outline sm mt" data-action="retry-ea-trades">Retry</button></div></div>`;
+    const retryBtn = container.querySelector("[data-action='retry-ea-trades']");
+    if (retryBtn) retryBtn.addEventListener("click", ev => { ev.preventDefault(); loadEaTrades(key, container); });
   }
 }
 
@@ -3374,27 +3448,12 @@ function renderErrorLogList() {
   wrap.innerHTML = entries.map((e, i) => {
     const cls = e.level === "ERROR" ? "bad" : e.level === "WARN" ? "warn" : "info";
     const full = escapeHtml(e.full || e.message);
-    return `<div class="log-entry ${cls}" data-idx="${i}" data-full="${full}">
+    return `<div class="log-entry ${cls}" data-idx="${i}" data-full="${full}" tabindex="0" role="button" aria-expanded="false" aria-label="${e.level} log entry at ${escapeHtml(formatTime(e.timestamp))}">
       <span class="log-ts mono">${escapeHtml(formatTime(e.timestamp))}</span>
       <span class="log-level badge ${cls}">${e.level}</span>
       <span class="log-msg trunc">${escapeHtml(e.message)}</span>
     </div>`;
   }).join("");
-  wrap.querySelectorAll(".log-entry").forEach(el => {
-    el.addEventListener("click", () => {
-      const existing = el.nextElementSibling && el.nextElementSibling.classList.contains("log-expanded");
-      if (existing) { el.nextElementSibling.remove(); el.classList.remove("expanded"); return; }
-      const full = el.dataset.full || "";
-      const exp = document.createElement("div");
-      exp.className = "log-expanded";
-      const pre = document.createElement("pre");
-      pre.className = "payload-pre";
-      pre.textContent = full;
-      exp.appendChild(pre);
-      el.after(exp);
-      el.classList.add("expanded");
-    });
-  });
   if (!errorLogState.paused) {
     const wrap2 = document.getElementById("el-list");
     if (wrap2 && wrap2.parentElement) {
@@ -3404,6 +3463,21 @@ function renderErrorLogList() {
   }
 }
 
+function toggleLogEntry(el) {
+  const existing = el.nextElementSibling && el.nextElementSibling.classList.contains("log-expanded");
+  if (existing) { el.nextElementSibling.remove(); el.classList.remove("expanded"); el.setAttribute("aria-expanded", "false"); return; }
+  const full = el.dataset.full || "";
+  const exp = document.createElement("div");
+  exp.className = "log-expanded";
+  const pre = document.createElement("pre");
+  pre.className = "payload-pre";
+  pre.textContent = full;
+  exp.appendChild(pre);
+  el.after(exp);
+  el.classList.add("expanded");
+  el.setAttribute("aria-expanded", "true");
+}
+
 function renderErrorLogs(content) {
   content.innerHTML = `
     <div id="el-stale-banner"></div>
@@ -3411,13 +3485,13 @@ function renderErrorLogs(content) {
       <h2 class="card-title">Error Log Viewer</h2>
       <div class="card-desc">Real-time log tail - polling every 10s - max 200 entries</div>
       <div class="filter-bar">
-        <select class="input filter-sel" id="el-filter">
+        <select class="input filter-sel" id="el-filter" aria-label="Filter by log level">
           <option value="ALL">All levels</option>
           <option value="ERROR">ERROR</option>
           <option value="WARN">WARN</option>
         </select>
-        <input class="input filter-input" id="el-search" placeholder="Search text...">
-        <button class="btn outline sm" id="el-pause" data-action="el-pause">${ICONS.pause}Pause</button>
+        <input class="input filter-input" id="el-search" placeholder="Search text..." aria-label="Search log entries">
+        <button class="btn outline sm" id="el-pause" data-action="el-pause" aria-pressed="false">${ICONS.pause}Pause</button>
       </div>
       <div class="log-scroll-wrap" id="el-scroll">
         <div id="el-list"><div class="skeleton line"></div><div class="skeleton line"></div><div class="skeleton line short"></div></div>
@@ -3433,12 +3507,26 @@ function renderErrorLogs(content) {
     e.preventDefault();
     errorLogState.paused = !errorLogState.paused;
     pauseBtn.innerHTML = errorLogState.paused ? `${ICONS.play}Resume` : `${ICONS.pause}Pause`;
+    pauseBtn.setAttribute("aria-pressed", String(errorLogState.paused));
   });
   const scrollWrap = document.getElementById("el-scroll");
   if (scrollWrap) {
     scrollWrap.addEventListener("mouseenter", () => { errorLogState.paused = true; });
     scrollWrap.addEventListener("mouseleave", () => {
       if (pauseBtn && pauseBtn.textContent.includes("Pause")) errorLogState.paused = false;
+    });
+  }
+  const listWrap = document.getElementById("el-list");
+  if (listWrap) {
+    listWrap.addEventListener("click", e => {
+      const entry = e.target.closest(".log-entry");
+      if (entry) toggleLogEntry(entry);
+    });
+    listWrap.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        const entry = e.target.closest(".log-entry");
+        if (entry) { e.preventDefault(); toggleLogEntry(entry); }
+      }
     });
   }
   startPoll(pollErrorLogs, 10000);
@@ -3548,7 +3636,7 @@ async function doDbCleanup(days) {
     invalidateCache("/api/database/stats");
     pollDatabaseManager();
   } catch (e) {
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Cleanup failed: ${escapeHtml(e.message)}</div>`;
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Cleanup failed: ${escapeHtml(friendlyMsg(e))}</div>`;
     setBtnError(btn, "Failed");
   }
 }
@@ -3628,7 +3716,7 @@ function updateMetricsUI() {
         <span class="metric-name">${s.label}</span>
         ${svgSparkline(hist, { color: s.color })}
       </div>
-      <div class="metric-value" data-color="${escapeHtml(s.color)}" aria-live="polite" aria-label="${escapeHtml(s.label)}: ${val != null ? escapeHtml(fmtNum(val, s.digits)) : '--'}">${val != null ? escapeHtml(fmtNum(val, s.digits)) : "--"}</div>
+      <div class="metric-value" data-color="${escapeHtml(s.color)}" aria-live="polite" aria-label="${escapeHtml(s.label)}: ${val != null ? escapeHtml(formatNum(val, s.digits)) : '--'}">${val != null ? escapeHtml(formatNum(val, s.digits)) : "--"}</div>
     </div>`;
   }).join("");
   grid.querySelectorAll(".metric-value[data-color]").forEach(el => {
@@ -3853,7 +3941,7 @@ async function sendBotTestMessage() {
     result.innerHTML = `<div class="inline-ok">${ICONS.check}Test message sent: ${escapeHtml(JSON.stringify(data))}</div>`;
     toast("Test message sent", "ok");
   } catch (e) {
-    result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(e.message)}</div>`;
+    result.innerHTML = `<div class="inline-error">${ICONS.x}Failed: ${escapeHtml(friendlyMsg(e))}</div>`;
   }
   btn.disabled = false;
   btn.innerHTML = original;
@@ -4019,7 +4107,7 @@ function renderLicenseRows() {
     body.innerHTML = shown.map(r => {
       const u = r._u, lic = r._lic;
       const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
-      const lastAct = r.last_activity ? relativeTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
+      const lastAct = r.last_activity ? formatRelativeTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
       return `<tr>
         <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(formatMaskedKey(r.license_key))}</td>
         <td>${escapeHtml(r.name || "--")}</td>
@@ -4285,7 +4373,7 @@ function renderSecurityContent(content) {
     ? `<tr><td colspan="5" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
     : blocked.map(b => `<tr>
         <td class="td-key" scope="row">${escapeHtml(b.ip)}</td>
-        <td>${escapeHtml(relativeTime(null))}</td>
+        <td>${escapeHtml(formatRelativeTime(null))}</td>
         <td>Rate limit exceeded</td>
         <td class="td-num">${b.remaining_seconds || 0}s</td>
         <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}" aria-label="Unblock IP ${escapeHtml(b.ip)}">Unblock</button></td>
@@ -4457,6 +4545,7 @@ function renderAuditContent(content) {
   }
 
   content.innerHTML = `
+    <div id="audit-stale-banner"></div>
     <div class="panel-toolbar">
       <select class="input filter-sel" id="audit-filter-action" aria-label="Filter by action">
         <option value="">All actions</option>
