@@ -72,6 +72,89 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
+const NF = new Intl.NumberFormat("en-US");
+const CF = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function formatNumber(n) {
+  if (n == null || isNaN(n)) return "--";
+  return NF.format(Number(n));
+}
+
+function formatCurrency(n) {
+  if (n == null || isNaN(n)) return "--";
+  const v = Number(n);
+  const sign = v < 0 ? "-$" : "$";
+  return sign + CF.format(Math.abs(v));
+}
+
+function formatPct(n) {
+  if (n == null || isNaN(n)) return "--";
+  const v = Number(n);
+  if (v <= 1 && v >= -1) return (v * 100).toFixed(1) + "%";
+  return Math.round(v) + "%";
+}
+
+function formatDuration(s) {
+  if (s == null || isNaN(s)) return "--";
+  s = Math.round(Number(s));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+  if (s < 86400) return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+  return Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h";
+}
+
+function formatLatency(ms) {
+  if (ms == null || isNaN(ms)) return "--";
+  ms = Number(ms);
+  if (ms < 1) return "<1ms";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+  return Math.floor(ms / 60000) + "m " + Math.round((ms % 60000) / 1000) + "s";
+}
+
+function formatTime(iso) {
+  if (!iso) return "--";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "--";
+  const diff = (Date.now() - t) / 1000;
+  const abs = new Date(t).toLocaleTimeString();
+  if (diff < 0) return "now (" + abs + ")";
+  if (diff < 60) return Math.round(diff) + "s ago (" + abs + ")";
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago (" + abs + ")";
+  return new Date(t).toLocaleString();
+}
+
+function formatBytes(n) {
+  if (n == null || isNaN(n)) return "--";
+  n = Number(n);
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+  return (n / 1073741824).toFixed(2) + " GB";
+}
+
+function pluralize(n, word) {
+  n = n || 0;
+  return formatNumber(n) + " " + word + (n === 1 ? "" : "s");
+}
+
+function maskKey(k) {
+  if (!k) return "--";
+  const s = String(k);
+  if (s.length <= 4) return s + "****";
+  return s.slice(0, 4) + "****";
+}
+
+function statusBadge(status) {
+  const s = String(status || "").toLowerCase();
+  let cls = "info";
+  if (["active", "ok", "healthy", "connected", "success", "executed", "running"].includes(s)) cls = "ok";
+  else if (["pending", "warn", "stale", "queued", "delivered"].includes(s)) cls = "warn";
+  else if (["failed", "error", "disabled", "expired", "rejected", "skipped", "stopped", "blocked"].includes(s)) cls = "bad";
+  else if (["info", "new"].includes(s)) cls = "info";
+  return '<span class="badge ' + cls + '"><span class="dot"></span>' + escapeHtml(status) + '</span>';
+}
+
 function isSafeUrl(url) {
   if (!url || typeof url !== "string") return false;
   const s = url.trim().toLowerCase();
@@ -689,14 +772,6 @@ let healthState = { data: null, error: null, stale: false };
 let healthActive = false;
 let healthPollStarted = false;
 
-function formatUptime(sec) {
-  if (sec == null || isNaN(sec)) return "--";
-  if (sec < 60) return `${Math.round(sec)}s`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m`;
-  return `${Math.floor(sec / 86400)}d ${Math.round((sec % 86400) / 3600)}h`;
-}
-
 function loadColor(pct) {
   if (pct == null || isNaN(pct)) return "";
   return pct < 50 ? "ok" : pct <= 80 ? "warn" : "bad";
@@ -877,13 +952,13 @@ function updateHealthCard() {
   updateGauge(cpuCell, cpu, "CPU");
   updateGauge(memCell, mem, "RAM");
   updateGauge(diskCell, diskPct, "Disk", { diskMode: true });
-  setTile("tile-uptime", formatUptime(uptimeSec), "ok");
-  setTile("tile-ea", String(eaCount), eaColor(eaCount));
+  setTile("tile-uptime", formatDuration(uptimeSec), "ok");
+  setTile("tile-ea", formatNumber(eaCount), eaColor(eaCount));
   const trades = (st && st.trades) || {};
   const sig = trades.today != null ? trades.today : null;
   const fill = trades.success_rate_7d != null ? trades.success_rate_7d : null;
-  setTile("tile-signals", sig != null ? String(sig) : "--", sig != null && sig > 0 ? "ok" : "info");
-  setTile("tile-fill", fill != null ? `${Number(fill).toFixed(1)}%` : "--", fill != null ? (fill >= 80 ? "ok" : fill >= 50 ? "warn" : "bad") : "info");
+  setTile("tile-signals", sig != null ? formatNumber(sig) : "--", sig != null && sig > 0 ? "ok" : "info");
+  setTile("tile-fill", fill != null ? formatPct(fill) : "--", fill != null ? (fill >= 80 ? "ok" : fill >= 50 ? "warn" : "bad") : "info");
 }
 
 function clearPolls() {
@@ -1223,6 +1298,7 @@ function pollOverview() {
   if (currentRoute !== "overview" || !visibilityPolling) return;
   useFetch(`${API}/setup-status`).then(({ data }) => {
     if (!data) return;
+    if (currentRoute !== "overview") return;
     const sig = JSON.stringify(data);
     if (sig !== lastSetupStatus) {
       lastSetupStatus = sig;
@@ -1862,29 +1938,6 @@ async function renderSettings(content) {
   `;
 }
 
-function formatMaskedKey(k) {
-  if (!k) return "--";
-  const s = String(k);
-  if (s.length <= 10) return s.slice(0, 4) + "...";
-  return s.slice(0, 8) + "...";
-}
-
-function formatRelativeTime(iso) {
-  if (!iso) return "--";
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "--";
-  const diff = (Date.now() - t) / 1000;
-  if (diff < 0) return "now";
-  if (diff < 60) return `${Math.round(diff)}s ago`;
-  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
-  return `${Math.round(diff / 86400)}d ago`;
-}
-
-function formatTime(iso) {
-  return formatRelativeTime(iso);
-}
-
 function statusClassFor(status) {
   if (!status) return "";
   const s = String(status).toLowerCase();
@@ -2024,7 +2077,7 @@ async function pollSignalFeed() {
   const licenseSet = new Set();
   for (const r of signalFeedState.rows) {
     const lk = r.payload && r.payload.license_key ? r.payload.license_key : (r.ip_address || "");
-    if (lk) licenseSet.add(formatMaskedKey(lk));
+    if (lk) licenseSet.add(maskKey(lk));
   }
   const licenseSel = document.getElementById("feed-filter-license");
   if (licenseSel) {
@@ -2063,13 +2116,13 @@ async function pollSignalFeed() {
 
 function feedRowHtml(r) {
     const ts = r.timestamp ? formatTime(r.timestamp) : "--";
-  const lk = r.payload && r.payload.license_key ? formatMaskedKey(r.payload.license_key) : (r.ip_address || "--");
+  const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "--");
   const action = r.action || "--";
   const sym = r.symbol || "--";
   const lots = r.volume != null ? r.volume : "--";
   const status = r.status || "--";
   const cls = statusClassFor(status);
-  const lat = r.execution_time_ms != null ? `${r.execution_time_ms}ms` : "--";
+  const lat = r.execution_time_ms != null ? formatLatency(r.execution_time_ms) : "--";
   const actionCls = action === "buy" ? "act-buy" : action === "sell" ? "act-sell" : action === "close" || action === "close_all" ? "act-close" : "act-other";
   return `<tr class="row-${cls}">
     <td class="td-time" scope="row">${escapeHtml(ts)}</td>
@@ -2088,7 +2141,7 @@ function renderFeedRows() {
   const { rows, filterLicense, filterSymbol, filterStatus } = signalFeedState;
   let filtered = rows;
   if (filterLicense) filtered = filtered.filter(r => {
-    const lk = r.payload && r.payload.license_key ? formatMaskedKey(r.payload.license_key) : (r.ip_address || "");
+    const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "");
     return lk === filterLicense;
   });
   if (filterSymbol) filtered = filtered.filter(r => (r.symbol || "").toUpperCase().includes(filterSymbol));
@@ -2101,7 +2154,7 @@ function renderFeedRows() {
     return false;
   });
   const countEl = document.getElementById("feed-count");
-  if (countEl) countEl.textContent = `${filtered.length} signals`;
+  if (countEl) countEl.textContent = pluralize(filtered.length, "signal");
   if (filtered.length === 0) {
     const isEmpty = rows.length === 0;
     body.innerHTML = `<tr><td colspan="7" class="feed-empty">${isEmpty ? emptyState(ICONS.signals, "No signals received yet. Send a test webhook to see it here.", "Send test webhook", "empty-test-webhook") : "No signals match filters"}</td></tr>`;
@@ -2185,7 +2238,7 @@ async function pollEaMap() {
     const key = lic.license_key;
     merged.push({
       license_key: key,
-      masked: formatMaskedKey(key),
+      masked: maskKey(key),
       account: lic.account || null,
       health: lic.health || null,
       open_position_count: lic.open_position_count || 0,
@@ -2223,12 +2276,12 @@ async function pollEaMap() {
     const statusCls = ageSec < 30 ? "ea-ok" : ageSec < 120 ? "ea-warn" : "ea-bad";
     const statusLabel = ageSec < 30 ? "Connected" : ageSec < 120 ? "Stale" : "Disconnected";
     const acc = ea.account || {};
-    const balance = acc.balance != null ? acc.balance.toFixed(2) : "--";
-    const equity = acc.equity != null ? acc.equity.toFixed(2) : "--";
-    const marginLevel = acc.margin_level != null ? `${acc.margin_level.toFixed(1)}%` : "--";
+    const balance = acc.balance != null ? formatCurrency(acc.balance) : "--";
+    const equity = acc.equity != null ? formatCurrency(acc.equity) : "--";
+    const marginLevel = acc.margin_level != null ? formatPct(acc.margin_level) : "--";
     const broker = acc.company || acc.server || "--";
     const positions = ea.open_position_count || 0;
-    const lat = ea.latency != null ? `${ea.latency}ms` : "--";
+    const lat = ea.latency != null ? formatLatency(ea.latency) : "--";
     const connBadge = ea.connType === "WS" ? '<span class="conn-badge ws">WS</span>' : '<span class="conn-badge http">HTTP</span>';
     return `<div class="ea-card ${statusCls}" data-key="${escapeHtml(ea.license_key)}" data-action="ea-expand" tabindex="0" role="button" aria-expanded="false" aria-label="EA ${escapeHtml(ea.masked)}, ${statusLabel}, click to view trades">
       <div class="ea-card-head">
@@ -2241,8 +2294,8 @@ async function pollEaMap() {
         <div class="ea-row"><span>Balance</span><span class="ea-num">${escapeHtml(String(balance))}</span></div>
         <div class="ea-row"><span>Equity</span><span class="ea-num">${escapeHtml(String(equity))}</span></div>
         <div class="ea-row"><span>Margin Lvl</span><span class="ea-num">${escapeHtml(String(marginLevel))}</span></div>
-        <div class="ea-row"><span>Positions</span><span class="ea-num">${positions}</span></div>
-        <div class="ea-row"><span>Last Seen</span><span>${escapeHtml(formatRelativeTime(ea.lastSeen))}</span></div>
+        <div class="ea-row"><span>Positions</span><span class="ea-num">${formatNumber(positions)}</span></div>
+        <div class="ea-row"><span>Last Seen</span><span>${escapeHtml(formatTime(ea.lastSeen))}</span></div>
         <div class="ea-row"><span>Latency</span><span class="ea-num">${escapeHtml(lat)}</span></div>
       </div>
     </div>`;
@@ -2264,20 +2317,20 @@ function toggleEaCard(card) {
 }
 
 async function loadEaTrades(key, container) {
-  container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2><div class="card-desc">Loading trade history...</div></div>`;
+  container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2><div class="card-desc">Loading trade history...</div></div>`;
   try {
     const r = await http(`/api/ea/ws-telemetry/trade-history/${encodeURIComponent(key)}`);
     const data = await r.json();
     const trades = data.deals || data.trades || [];
     if (trades.length === 0) {
-      container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2>${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}</div>`;
+      container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}</div>`;
       return;
     }
     container.innerHTML = `<div class="card">
-      <h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2>
-      <div class="card-desc">${trades.length} recent trades</div>
+      <h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2>
+      <div class="card-desc">${pluralize(trades.length, "recent trade")}</div>
       <div class="feed-scroll">
-        <table class="feed-table" aria-label="Recent trades for ${escapeHtml(formatMaskedKey(key))}">
+        <table class="feed-table" aria-label="Recent trades for ${escapeHtml(maskKey(key))}">
           <caption class="sr-only">Recent trades</caption>
           <thead><tr><th scope="col">Time</th><th scope="col">Symbol</th><th scope="col">Type</th><th scope="col">Lots</th><th scope="col">Ticket</th><th scope="col">Profit</th></tr></thead>
           <tbody>
@@ -2290,7 +2343,7 @@ async function loadEaTrades(key, container) {
               const ticket = t.ticket || t.deal_id || "--";
               const profit = t.profit != null ? t.profit : null;
               const cls = profit != null ? (profit >= 0 ? "ok" : "bad") : "info";
-              const pStr = profit != null ? (profit >= 0 ? "+" : "") + profit.toFixed(2) : "--";
+              const pStr = profit != null ? formatCurrency(profit) : "--";
               return `<tr class="row-${cls}"><td class="td-time" scope="row">${escapeHtml(tsStr)}</td><td>${escapeHtml(sym)}</td><td>${escapeHtml(String(type))}</td><td>${escapeHtml(String(lots))}</td><td>${escapeHtml(String(ticket))}</td><td class="ea-num">${escapeHtml(pStr)}</td></tr>`;
             }).join("")}
           </tbody>
@@ -2298,7 +2351,7 @@ async function loadEaTrades(key, container) {
       </div>
     </div>`;
   } catch (e) {
-    container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(formatMaskedKey(key))}</h2><div class="ea-empty">Failed to load: ${escapeHtml(friendlyMsg(e))}<br><button class="btn outline sm mt" data-action="retry-ea-trades">Retry</button></div></div>`;
+    container.innerHTML = `<div class="card"><h2 class="card-title">Recent Trades - ${escapeHtml(maskKey(key))}</h2><div class="ea-empty">Failed to load: ${escapeHtml(friendlyMsg(e))}<br><button class="btn outline sm mt" data-action="retry-ea-trades">Retry</button></div></div>`;
     const retryBtn = container.querySelector("[data-action='retry-ea-trades']");
     if (retryBtn) retryBtn.addEventListener("click", ev => { ev.preventDefault(); loadEaTrades(key, container); });
   }
@@ -2344,6 +2397,7 @@ async function pollTradeAnalytics() {
     useFetch("/api/statistics?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
     useFetch("/api/trades/admin/dashboard").catch(() => ({ data: null, error: "dashboard", stale: false })),
   ]);
+  if (currentRoute !== "analytics") return;
   const stats = statsRes.data;
   const dash = dashRes.data;
   const staleEl = document.getElementById("analytics-stale-banner");
@@ -2383,9 +2437,9 @@ async function pollTradeAnalytics() {
     }
     return;
   }
-  setStat("stat-total", String(totalTrades), totalTrades > 0 ? "ok" : "info");
-  setStat("stat-winrate", `${successRate.toFixed(1)}%`, successRate >= 60 ? "ok" : successRate >= 40 ? "warn" : "bad");
-  setStat("stat-latency", avgLatency != null ? `${avgLatency.toFixed(0)}ms` : "--", avgLatency != null && avgLatency < 100 ? "ok" : avgLatency != null && avgLatency < 500 ? "warn" : "info");
+  setStat("stat-total", formatNumber(totalTrades), totalTrades > 0 ? "ok" : "info");
+  setStat("stat-winrate", formatPct(successRate), successRate >= 60 ? "ok" : successRate >= 40 ? "warn" : "bad");
+  setStat("stat-latency", avgLatency != null ? formatLatency(avgLatency) : "--", avgLatency != null && avgLatency < 100 ? "ok" : avgLatency != null && avgLatency < 500 ? "warn" : "info");
   setStat("stat-pf", profitFactor != null ? profitFactor.toFixed(2) : "--", profitFactor != null && profitFactor >= 1.5 ? "ok" : profitFactor != null && profitFactor >= 1 ? "warn" : "info");
   drawBarChart(daily, dash);
   drawLineChart(daily);
@@ -2423,7 +2477,7 @@ function drawBarChart(daily, dash) {
     const x = pad + i * barW;
     const y = H - pad - bh;
     return `<rect x="${x + 1}" y="${y}" width="${Math.max(0, barW - 2)}" height="${Math.max(0, bh)}" fill="${PALETTE.blue}" rx="2" class="bar-rect">
-      <title>${h.hour}:00 - ${h.count} trades</title>
+      <title>${h.hour}:00 - ${formatNumber(h.count)} trades</title>
     </rect>`;
   }).join("");
   const labels = hours.filter((_, i) => i % 3 === 0).map(h => {
@@ -2514,11 +2568,11 @@ function drawDonutChart(stats, dash) {
     const large = frac > 0.5 ? 1 : 0;
     const path = `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${xi1} ${yi1} A ${innerR} ${innerR} 0 ${large} 0 ${xi2} ${yi2} Z`;
     const pct = (frac * 100).toFixed(1);
-    return `<path d="${path}" fill="${colors[i]}" stroke="${PALETTE.card}" stroke-width="1" class="donut-slice"><title>${escapeHtml(e.name)}: ${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</title></path>`;
+    return `<path d="${path}" fill="${colors[i]}" stroke="${PALETTE.card}" stroke-width="1" class="donut-slice">      <title>${escapeHtml(e.name)}: ${escapeHtml(formatNumber(e.vol))} (${escapeHtml(pct)}%)</title></path>`;
   }).join("");
   const legend = entries.map((e, i) => {
     const pct = ((e.vol / total) * 100).toFixed(1);
-    return `<div class="legend-item"><span class="legend-dot c${i}" aria-hidden="true"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</span></div>`;
+    return `<div class="legend-item"><span class="legend-dot c${i}" aria-hidden="true"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${escapeHtml(formatNumber(e.vol))} (${escapeHtml(pct)}%)</span></div>`;
   }).join("");
   const topSym = entries[0] ? entries[0].name : "none";
   const topPct = entries[0] ? ((entries[0].vol / total) * 100).toFixed(1) : "0";
@@ -2529,7 +2583,7 @@ function drawDonutChart(stats, dash) {
       <title>Top symbols by volume - ${total} total trades</title>
       <desc>${escapeHtml(descParts)}</desc>
       ${slices}
-      <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="${PALETTE.text}" font-size="16" font-weight="700">${total}</text>
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="${PALETTE.text}" font-size="16" font-weight="700">${formatNumber(total)}</text>
       <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">trades</text>
     </svg>
     <div class="legend" role="list" aria-label="Symbol legend">${legend}</div>
@@ -2591,6 +2645,7 @@ async function pollPipeline() {
     useFetch("/api/status").catch(() => ({ data: null, error: "status", stale: false })),
     fetchMetrics(),
   ]);
+  if (currentRoute !== "pipeline") return;
   const status = statusRes.data;
   const m = metricsText;
   const staleEl = document.getElementById("pipeline-stale-banner");
@@ -2627,7 +2682,7 @@ async function pollPipeline() {
   const counts = [received, queueDepth || 0, validated, delivered, acked];
   for (let i = 0; i < 5; i++) {
     const el = document.getElementById(`pipe-count-${i}`);
-    if (el) el.textContent = counts[i] != null ? String(counts[i]) : "--";
+    if (el) el.textContent = counts[i] != null ? formatNumber(counts[i]) : "--";
   }
   const queueWrap = document.getElementById("queue-gauge-wrap");
   if (queueWrap) {
@@ -2635,7 +2690,7 @@ async function pollPipeline() {
     const qPct = Math.min(100, (qd / 50) * 100);
     updateGauge(queueWrap, qPct, "Queue", { size: 120, diskMode: false });
     const valEl = queueWrap.querySelector(".gauge-value");
-    if (valEl) valEl.textContent = String(qd);
+    if (valEl) valEl.textContent = formatNumber(qd);
   }
   if (delivered > pipelineState.lastDelivered) {
     const diff = delivered - pipelineState.lastDelivered;
@@ -2651,11 +2706,11 @@ async function pollPipeline() {
   const tpEl = document.getElementById("throughput-stat");
   if (tpEl) {
     const v = tpEl.querySelector(".value");
-    if (v) v.textContent = String(perMin);
+    if (v) v.textContent = formatNumber(perMin);
     tpEl.className = `stat big-stat ${perMin > 10 ? "ok" : perMin > 0 ? "info" : "warn"}`;
   }
-  setTile("stat-dupes", String(dupes || 0), dupes > 0 ? "warn" : "ok");
-  setTile("stat-retries", String(retries || 0), retries > 0 ? "warn" : "ok");
+  setTile("stat-dupes", formatNumber(dupes || 0), dupes > 0 ? "warn" : "ok");
+  setTile("stat-retries", formatNumber(retries || 0), retries > 0 ? "warn" : "ok");
   drawHistogram();
 }
 
@@ -2684,9 +2739,9 @@ function drawHistogram() {
     const x = pad + i * barW;
     const y = H - pad - bh;
     const color = i === 0 ? PALETTE.green : i === 1 ? PALETTE.green : i === 2 ? PALETTE.amber : i === 3 ? PALETTE.amber : PALETTE.red;
-    return `<rect x="${x + 8}" y="${y}" width="${Math.max(0, barW - 16)}" height="${Math.max(2, bh)}" fill="${color}" rx="3"><title>${b.label}: ${b.count}</title></rect>
+    return `<rect x="${x + 8}" y="${y}" width="${Math.max(0, barW - 16)}" height="${Math.max(2, bh)}" fill="${color}" rx="3"><title>${b.label}: ${formatNumber(b.count)}</title></rect>
       <text x="${x + barW / 2}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${b.label}</text>
-      <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">${b.count}</text>`;
+      <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">${formatNumber(b.count)}</text>`;
   }).join("");
   const descParts = buckets.map(b => `${b.label}: ${b.count}`).join(", ");
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="Delivery latency histogram: ${totalSamples} samples, peak bucket ${peak.label} with ${peak.count} entries">
@@ -2820,17 +2875,9 @@ function svgSparkline(values, opts = {}) {
   </svg>`;
 }
 
-function formatBytes(n) {
-  if (n == null || isNaN(n)) return "--";
-  if (n < 1024) return `${n} B`;
-  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1073741824) return `${(n / 1048576).toFixed(1)} MB`;
-  return `${(n / 1073741824).toFixed(2)} GB`;
-}
-
 function formatNum(n, digits = 0) {
   if (n == null || isNaN(n)) return "--";
-  return Number(n).toFixed(digits);
+  return Number(n).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 function colorClass(c) {
@@ -2860,6 +2907,7 @@ async function pollSystemHealth() {
     useFetch("/api/system/health").catch(() => ({ data: null, error: "health", stale: false })),
     useFetch("/api/system/stats").catch(() => ({ data: null, error: "stats", stale: false })),
   ]);
+  if (currentRoute !== "sys-health") return;
   const h = hRes.data;
   const s = sRes.data;
   const staleEl = document.getElementById("sh-stale-banner");
@@ -2909,10 +2957,10 @@ function updateSystemHealthUI() {
   updateLineChart(memEl, mem, { color: PALETTE.blue, label: "Memory %", max: 100 });
   const cpuVal = h.system ? h.system.cpu_percent : null;
   const memVal = h.system ? h.system.memory_percent : null;
-  setTile("sh-cpu-val", cpuVal != null ? `${cpuVal.toFixed(1)}%` : "--", loadColor(cpuVal));
-  setTile("sh-mem-val", memVal != null ? `${memVal.toFixed(1)}%` : "--", loadColor(memVal));
-  setTile("sh-threads", h.process ? String(h.process.threads) : "--", "info");
-  setTile("sh-proc-mem", h.process ? `${h.process.memory_mb.toFixed(1)} MB` : "--", "info");
+  setTile("sh-cpu-val", cpuVal != null ? formatPct(cpuVal) : "--", loadColor(cpuVal));
+  setTile("sh-mem-val", memVal != null ? formatPct(memVal) : "--", loadColor(memVal));
+  setTile("sh-threads", h.process ? formatNumber(h.process.threads) : "--", "info");
+  setTile("sh-proc-mem", h.process ? formatBytes(h.process.memory_mb * 1048576) : "--", "info");
   const diskWrap = document.getElementById("sh-disk-gauge");
   if (diskWrap && s) {
     const diskPct = s.disk ? s.disk.percent : null;
@@ -2923,8 +2971,8 @@ function updateSystemHealthUI() {
     netEl.innerHTML = `
       <div class="row"><span class="k">Bytes sent</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_sent))}</span></div>
       <div class="row"><span class="k">Bytes recv</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_recv))}</span></div>
-      <div class="row"><span class="k">Packets sent</span><span class="v">${escapeHtml(String((s.network.packets_sent || 0).toLocaleString()))}</span></div>
-      <div class="row"><span class="k">Packets recv</span><span class="v">${escapeHtml(String((s.network.packets_recv || 0).toLocaleString()))}</span></div>`;
+      <div class="row"><span class="k">Packets sent</span><span class="v">${escapeHtml(formatNumber(s.network.packets_sent || 0))}</span></div>
+      <div class="row"><span class="k">Packets recv</span><span class="v">${escapeHtml(formatNumber(s.network.packets_recv || 0))}</span></div>`;
   }
   const poolEl = document.getElementById("sh-db-pool");
   if (poolEl && h.db_pool) {
@@ -2938,14 +2986,14 @@ function updateSystemHealthUI() {
     const oW = (overflow / total) * 100;
     poolEl.innerHTML = `
       <div class="stacked-bar">
-        <div class="seg ok" data-w="${escapeHtml(String(iW))}" title="In use: ${escapeHtml(String(inUse))}"></div>
-        <div class="seg info" data-w="${escapeHtml(String(aW))}" title="Available: ${escapeHtml(String(avail))}"></div>
-        <div class="seg warn" data-w="${escapeHtml(String(oW))}" title="Overflow: ${escapeHtml(String(overflow))}"></div>
+        <div class="seg ok" data-w="${escapeHtml(String(iW))}" title="In use: ${escapeHtml(formatNumber(inUse))}"></div>
+        <div class="seg info" data-w="${escapeHtml(String(aW))}" title="Available: ${escapeHtml(formatNumber(avail))}"></div>
+        <div class="seg warn" data-w="${escapeHtml(String(oW))}" title="Overflow: ${escapeHtml(formatNumber(overflow))}"></div>
       </div>
       <div class="stacked-legend">
-        <span class="lg ok"><span class="dot"></span>In use ${escapeHtml(String(inUse))}</span>
-        <span class="lg info"><span class="dot"></span>Available ${escapeHtml(String(avail))}</span>
-        <span class="lg warn"><span class="dot"></span>Overflow ${escapeHtml(String(overflow))}</span>
+        <span class="lg ok"><span class="dot"></span>In use ${escapeHtml(formatNumber(inUse))}</span>
+        <span class="lg info"><span class="dot"></span>Available ${escapeHtml(formatNumber(avail))}</span>
+        <span class="lg warn"><span class="dot"></span>Overflow ${escapeHtml(formatNumber(overflow))}</span>
       </div>`;
     poolEl.querySelectorAll(".seg[data-w]").forEach(seg => {
       const w = parseFloat(seg.dataset.w);
@@ -2957,10 +3005,10 @@ function updateSystemHealthUI() {
     if (h.redis_info && Object.keys(h.redis_info).length) {
       const ri = h.redis_info;
       redisEl.innerHTML = `
-        <div class="row"><span class="k">Used memory</span><span class="v">${escapeHtml(String(ri.used_memory_mb))} MB</span></div>
-        <div class="row"><span class="k">Connected clients</span><span class="v">${escapeHtml(String(ri.connected_clients))}</span></div>
-        <div class="row"><span class="k">Keyspace hits</span><span class="v">${escapeHtml(String((ri.keyspace_hits || 0).toLocaleString()))}</span></div>
-        <div class="row"><span class="k">Keyspace misses</span><span class="v">${escapeHtml(String((ri.keyspace_misses || 0).toLocaleString()))}</span></div>`;
+        <div class="row"><span class="k">Used memory</span><span class="v">${escapeHtml(formatBytes(ri.used_memory_mb * 1048576))}</span></div>
+        <div class="row"><span class="k">Connected clients</span><span class="v">${escapeHtml(formatNumber(ri.connected_clients))}</span></div>
+        <div class="row"><span class="k">Keyspace hits</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_hits || 0))}</span></div>
+        <div class="row"><span class="k">Keyspace misses</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_misses || 0))}</span></div>`;
     } else {
       redisEl.innerHTML = `<div class="empty small"><div class="msg">Redis not configured</div></div>`;
     }
@@ -3105,10 +3153,10 @@ async function pollWebhookLogs() {
 function updateWebhookStats() {
   const s = webhookLogState.stats;
   if (!s) return;
-  setTile("wl-stat-total", String(s.total || 0), "info");
-  setTile("wl-stat-success", String(s.successful || 0), "ok");
-  setTile("wl-stat-failed", String(s.failed || 0), s.failed > 0 ? "bad" : "info");
-  setTile("wl-stat-rate", s.success_rate != null ? `${s.success_rate.toFixed(1)}%` : "--", s.success_rate >= 80 ? "ok" : s.success_rate >= 50 ? "warn" : "bad");
+  setTile("wl-stat-total", formatNumber(s.total || 0), "info");
+  setTile("wl-stat-success", formatNumber(s.successful || 0), "ok");
+  setTile("wl-stat-failed", formatNumber(s.failed || 0), s.failed > 0 ? "bad" : "info");
+  setTile("wl-stat-rate", s.success_rate != null ? formatPct(s.success_rate) : "--", s.success_rate >= 80 ? "ok" : s.success_rate >= 50 ? "warn" : "bad");
 }
 
 function renderWebhookLogs(content) {
@@ -3254,13 +3302,13 @@ function renderWebhookTable() {
         <td class="mono">${escapeHtml(r.symbol || "--")}</td>
         <td class="mono td-num">${escapeHtml(String(r.volume || "--"))}</td>
         <td class="td-status"><span class="badge ${cls}"><span class="dot" aria-hidden="true"></span>${escapeHtml(String(r.response_code || "--"))}</span></td>
-        <td class="mono td-num">${escapeHtml(String(r.execution_time_ms || "--"))}</td>
+        <td class="mono td-num">${escapeHtml(formatLatency(r.execution_time_ms))}</td>
         <td class="mono trunc" title="${escapeHtml(preview)}">${escapeHtml(preview)}</td>
       </tr>`;
     }).join("");
   }
   const countEl = document.getElementById("wl-count");
-  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${start + 1}-${end} of ${rows.length}` : "0 rows";
+  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${formatNumber(start + 1)}-${formatNumber(end)} of ${formatNumber(rows.length)}` : "0 rows";
   const prevBtn = document.getElementById("wl-prev");
   const nextBtn = document.getElementById("wl-next");
   if (prevBtn) prevBtn.disabled = webhookLogState.page === 0;
@@ -3331,13 +3379,13 @@ function updateRiskUI(data) {
   }
   const rm = data.risk_metrics || {};
   const acc = data.account || {};
-  setTile("risk-daily-pnl", rm.daily_pnl != null ? `$${Number(rm.daily_pnl).toFixed(2)}` : "--", rm.daily_pnl >= 0 ? "ok" : "bad");
-  setTile("risk-max-dd", rm.max_drawdown != null ? `${Number(rm.max_drawdown).toFixed(1)}%` : "--", "warn");
+  setTile("risk-daily-pnl", rm.daily_pnl != null ? formatCurrency(rm.daily_pnl) : "--", rm.daily_pnl >= 0 ? "ok" : "bad");
+  setTile("risk-max-dd", rm.max_drawdown != null ? formatPct(rm.max_drawdown) : "--", "warn");
   setTile("risk-mode", rm.position_sizing_mode || "--", "info");
-  setTile("risk-pct", rm.risk_per_trade_pct != null ? `${Number(rm.risk_per_trade_pct).toFixed(1)}%` : "--", "info");
-  setTile("risk-balance", acc.balance != null ? `$${Number(acc.balance).toFixed(2)}` : "--", "ok");
-  setTile("risk-equity", acc.equity != null ? `$${Number(acc.equity).toFixed(2)}` : "--", "ok");
-  setTile("risk-margin", acc.margin_level != null ? `${Number(acc.margin_level).toFixed(1)}%` : "--", loadColor(acc.margin_level));
+  setTile("risk-pct", rm.risk_per_trade_pct != null ? formatPct(rm.risk_per_trade_pct) : "--", "info");
+  setTile("risk-balance", acc.balance != null ? formatCurrency(acc.balance) : "--", "ok");
+  setTile("risk-equity", acc.equity != null ? formatCurrency(acc.equity) : "--", "ok");
+  setTile("risk-margin", acc.margin_level != null ? formatPct(acc.margin_level) : "--", loadColor(acc.margin_level));
   const alertsEl = document.getElementById("risk-alerts");
   if (alertsEl) {
     const alerts = [];
@@ -3555,13 +3603,13 @@ function updateDatabaseUI(data) {
   const body = document.getElementById("db-tables");
   if (body) {
     body.innerHTML = expected.map(t => {
-      const cnt = tables[t] != null ? Number(tables[t]).toLocaleString() : "0";
+      const cnt = tables[t] != null ? formatNumber(tables[t]) : "0";
       const cls = tables[t] > 0 ? "info" : "warn";
       return `<div class="row"><span class="k mono">${t}</span><span class="v mono stat-${cls}">${cnt}</span></div>`;
     }).join("");
   }
-  setTile("db-size", data.size_mb != null ? `${Number(data.size_mb).toFixed(2)} MB` : "--", "info");
-  setTile("db-total", data.total_records != null ? Number(data.total_records).toLocaleString() : "--", "info");
+  setTile("db-size", data.size_mb != null ? formatBytes(data.size_mb * 1048576) : "--", "info");
+  setTile("db-total", data.total_records != null ? formatNumber(data.total_records) : "--", "info");
   const typeEl = document.getElementById("db-type");
   if (typeEl) {
     const v = typeEl.querySelector(".value");
@@ -3788,7 +3836,7 @@ function updateDiagnosticsUI(data) {
           <span class="probe-name">${escapeHtml(p.name)}</span>
           <span class="badge ${badgeCls}"><span class="dot"></span>${escapeHtml(p.status)}</span>
         </div>
-        <div class="probe-latency mono">${p.latency_ms != null ? escapeHtml(String(p.latency_ms.toFixed(2))) + " ms" : "-- ms"}</div>
+        <div class="probe-latency mono">${p.latency_ms != null ? escapeHtml(formatLatency(p.latency_ms)) : "-- ms"}</div>
         <div class="probe-detail trunc">${escapeHtml(p.detail || "")}</div>
       </div>`;
     }).join("");
@@ -3858,14 +3906,14 @@ function updateBotUI(data) {
   const handlerEl = document.getElementById("bot-handlers");
   if (handlerEl) {
     const v = handlerEl.querySelector(".value");
-    if (v) v.textContent = data.handler_count != null ? String(data.handler_count) : "--";
+    if (v) v.textContent = data.handler_count != null ? formatNumber(data.handler_count) : "--";
   }
   const adminEl = document.getElementById("bot-admins");
   if (adminEl) {
     const env = data.env || {};
     const admins = env.TELEGRAM_ADMIN_IDS || "";
     adminEl.innerHTML = `<div class="row"><span class="k">Admin IDs</span><span class="v mono">${escapeHtml(admins || "not set")}</span></div>
-      <div class="row"><span class="k">Token len</span><span class="v mono">${escapeHtml(String(env.TELEGRAM_BOT_TOKEN_len || 0))}</span></div>`;
+      <div class="row"><span class="k">Token len</span><span class="v mono">${escapeHtml(formatNumber(env.TELEGRAM_BOT_TOKEN_len || 0))}</span></div>`;
   }
   const usernameEl = document.getElementById("bot-username");
   if (usernameEl) {
@@ -3968,8 +4016,8 @@ async function renderLicenses(content, actions) {
     <div class="panel-toolbar">
       <input class="input search-input" id="lic-search" placeholder="Search by key, name, or email" value="${escapeHtml(licenseState.search)}" aria-label="Search licenses">
       <button class="filter-clear" id="lic-clear" type="button">Clear</button>
-      <span class="badge info">${total} users</span>
-      <span class="badge ok">${totalEAs} EAs connected</span>
+      <span class="badge info">${pluralize(total, "user")}</span>
+      <span class="badge ok">${formatNumber(totalEAs)} EAs connected</span>
     </div>
     <div class="card">
       <div class="table-wrap">
@@ -4113,29 +4161,29 @@ function renderLicenseRows() {
     body.innerHTML = shown.map(r => {
       const u = r._u, lic = r._lic;
       const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
-      const lastAct = r.last_activity ? formatRelativeTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
+      const lastAct = r.last_activity ? formatTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
       return `<tr>
-        <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(formatMaskedKey(r.license_key))}</td>
+        <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
         <td>${escapeHtml(r.name || "--")}</td>
         <td class="td-email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
         <td class="td-status"><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
         <td class="secret-cell" aria-label="Secret hidden">****</td>
         <td>${escapeHtml(expires)}</td>
-        <td class="td-num">${r.connected_eas}</td>
-        <td class="td-num">${r.total_trades}</td>
+        <td class="td-num">${formatNumber(r.connected_eas)}</td>
+        <td class="td-num">${formatNumber(r.total_trades)}</td>
         <td>${escapeHtml(lastAct)}</td>
         <td class="td-actions">
-          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit license ${escapeHtml(formatMaskedKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
-          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend license ${escapeHtml(formatMaskedKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
-          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} license ${escapeHtml(formatMaskedKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" aria-label="Force disconnect license ${escapeHtml(formatMaskedKey(r.license_key))}" title="Force disconnect">${ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" aria-label="Delete license ${escapeHtml(formatMaskedKey(r.license_key))}" title="Delete">${ICONS.trash}</button>
+          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit license ${escapeHtml(maskKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
+          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend license ${escapeHtml(maskKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
+          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} license ${escapeHtml(maskKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" aria-label="Force disconnect license ${escapeHtml(maskKey(r.license_key))}" title="Force disconnect">${ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" aria-label="Delete license ${escapeHtml(maskKey(r.license_key))}" title="Delete">${ICONS.trash}</button>
         </td>
       </tr>`;
     }).join("");
   }
   const countEl = document.getElementById("lic-count");
-  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${start + 1}-${end} of ${rows.length}` : "0 rows";
+  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${formatNumber(start + 1)}-${formatNumber(end)} of ${formatNumber(rows.length)}` : "0 rows";
   const prevBtn = document.getElementById("lic-prev");
   const nextBtn = document.getElementById("lic-next");
   if (prevBtn) prevBtn.disabled = licenseState.page === 0;
@@ -4148,7 +4196,7 @@ function handleLicenseAction(b) {
   if (action === "lic-edit") comingSoon("License editing");
   else if (action === "lic-extend") comingSoon("License extension");
   else if (action === "lic-toggle") comingSoon("Enable/disable license");
-  else if (action === "lic-disconnect") openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${formatMaskedKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
+  else if (action === "lic-disconnect") openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${maskKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
   else if (action === "lic-delete") openConfirmModal("Delete license", `Delete license for ${b.dataset.name}?`, () => comingSoon("License deletion"));
 }
 
@@ -4375,29 +4423,29 @@ function renderSecurityContent(content) {
     ? `<tr><td colspan="5" class="empty small"><div class="msg">No blocked IPs</div></td></tr>`
     : blocked.map(b => `<tr>
         <td class="td-key" scope="row">${escapeHtml(b.ip)}</td>
-        <td>${escapeHtml(formatRelativeTime(null))}</td>
+        <td>${escapeHtml(formatTime(null))}</td>
         <td>Rate limit exceeded</td>
-        <td class="td-num">${escapeHtml(String(b.remaining_seconds || 0))}s</td>
+        <td class="td-num">${escapeHtml(formatDuration(b.remaining_seconds || 0))}</td>
         <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}" aria-label="Unblock IP ${escapeHtml(b.ip)}">Unblock</button></td>
       </tr>`).join("");
 
   content.innerHTML = `
     <div id="sec-stale-banner"></div>
     <div class="stat-grid-4" role="group" aria-label="Security stats">
-      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${escapeHtml(String(blockedCount))}">
-        <div class="value">${escapeHtml(String(blockedCount))}</div>
+      <div class="sec-stat ${blockedCount > 0 ? "bad" : "ok"}" role="group" aria-label="Blocked IPs: ${escapeHtml(formatNumber(blockedCount))}">
+        <div class="value">${escapeHtml(formatNumber(blockedCount))}</div>
         <div class="label">Blocked IPs</div>
       </div>
-      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(String(failed24h))}">
-        <div class="value">${escapeHtml(String(failed24h))}</div>
+      <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(formatNumber(failed24h))}">
+        <div class="value">${escapeHtml(formatNumber(failed24h))}</div>
         <div class="label">Failed Attempts</div>
       </div>
-      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(String(rateHits))}">
-        <div class="value">${escapeHtml(String(rateHits))}</div>
+      <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(formatNumber(rateHits))}">
+        <div class="value">${escapeHtml(formatNumber(rateHits))}</div>
         <div class="label">Rate Limit Hits</div>
       </div>
-      <div class="sec-stat ${headersCls}" role="group" aria-label="Security Headers: ${escapeHtml(String(headersActive))} of ${escapeHtml(String(totalHeaders))}">
-        <div class="value">${escapeHtml(String(headersActive))}/${escapeHtml(String(totalHeaders))}</div>
+      <div class="sec-stat ${headersCls}" role="group" aria-label="Security Headers: ${escapeHtml(formatNumber(headersActive))} of ${escapeHtml(formatNumber(totalHeaders))}">
+        <div class="value">${escapeHtml(formatNumber(headersActive))}/${escapeHtml(formatNumber(totalHeaders))}</div>
         <div class="label">Security Headers</div>
       </div>
     </div>
@@ -4566,9 +4614,9 @@ function renderAuditContent(content) {
     </div>
     <div class="card">
       <h2 class="card-title">Admin Activity Timeline</h2>
-      <div class="card-desc">${filtered.length} entries - polling every 10s</div>
+      <div class="card-desc">${pluralize(filtered.length, "entry")} - polling every 10s</div>
       <div class="timeline" id="audit-timeline"></div>
-      ${auditState.hasMore ? `<div class="load-more-row"><button class="btn outline sm" id="audit-load-more" type="button">Load more (showing ${auditState.rows.length})</button></div>` : `<div class="load-more-row">End of log</div>`}
+      ${auditState.hasMore ? `<div class="load-more-row"><button class="btn outline sm" id="audit-load-more" type="button">Load more (showing ${formatNumber(auditState.rows.length)})</button></div>` : `<div class="load-more-row">End of log</div>`}
     </div>
   `;
   const tl = content.querySelector("#audit-timeline");
