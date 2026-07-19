@@ -78,6 +78,7 @@ class PineTunnelTelegramBot(
         ws_manager=None,
         test_env: bool = False,
         auth_store=None,
+        admin_logger=None,
     ):
         self.token = token
         self.admin_ids = admin_ids
@@ -90,6 +91,7 @@ class PineTunnelTelegramBot(
         self.ws_manager = ws_manager
         self._test_env = test_env
         self._auth_store = auth_store
+        self.admin_logger = admin_logger
 
         self.alerts_enabled = True
         self._load_bot_settings()

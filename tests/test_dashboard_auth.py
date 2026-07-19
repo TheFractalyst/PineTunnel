@@ -212,3 +212,71 @@ def test_put_config_after_login_writes_env(dashboard_app):
     r = client.put("/api/dashboard/config", json={"updates": {"NEW_KEY": "new_value"}}, headers=CSRF_HEADERS)
     assert r.status_code == 200
     assert "NEW_KEY" in r.json()["updated_keys"]
+
+
+def test_put_config_non_telegram_keys_no_restart(dashboard_app):
+    app, store = dashboard_app
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.put("/api/dashboard/config", json={"updates": {"FOO": "bar"}}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    assert r.json()["needs_restart"] is False
+
+
+def test_put_config_telegram_keys_signal_restart_when_no_bot(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    from apps.server import state
+
+    monkeypatch.setattr(state, "telegram_bot", None)
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.put(
+        "/api/dashboard/config",
+        json={"updates": {"TELEGRAM_BOT_TOKEN": "newtoken", "TELEGRAM_ADMIN_IDS": "456"}},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["needs_restart"] is True
+
+
+def test_put_config_telegram_keys_hot_reloads_running_bot(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    from apps.server import state
+
+    class _FakeBot:
+        def __init__(self):
+            self.token = "old"
+            self.admin_ids = [123]
+            self._started = True
+            self.stopped = False
+            self.started = False
+
+        async def stop(self):
+            self.stopped = True
+
+        async def start(self):
+            self.started = True
+            self._started = True
+
+    fake_bot = _FakeBot()
+    monkeypatch.setattr(state, "telegram_bot", fake_bot)
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.put(
+        "/api/dashboard/config",
+        json={"updates": {"TELEGRAM_BOT_TOKEN": "newtoken", "TELEGRAM_ADMIN_IDS": "456,789"}},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["needs_restart"] is False
+    assert fake_bot.token == "newtoken"
+    assert fake_bot.admin_ids == [456, 789]
+    assert fake_bot.stopped is True
+    assert fake_bot.started is True
+    import os
+
+    assert os.environ.get("TELEGRAM_BOT_TOKEN") == "newtoken"
+    assert os.environ.get("TELEGRAM_ADMIN_IDS") == "456,789"

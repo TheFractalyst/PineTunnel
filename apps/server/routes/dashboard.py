@@ -108,7 +108,14 @@ def create_dashboard_router(
     @router.put("/config")
     async def update_config(req: ConfigUpdateRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
         write_env_updates(env_path, req.updates)
-        return {"status": "ok", "updated_keys": list(req.updates.keys())}
+        needs_restart = False
+        if _TELEGRAM_RELOAD_KEYS & set(req.updates.keys()):
+            try:
+                reloaded = await _reload_telegram_bot(env_path)
+            except Exception:
+                reloaded = False
+            needs_restart = not reloaded
+        return {"status": "ok", "updated_keys": list(req.updates.keys()), "needs_restart": needs_restart}
 
     @router.post("/validate-telegram")
     async def validate_telegram(req: ValidateTelegramRequest):

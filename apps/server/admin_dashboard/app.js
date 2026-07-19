@@ -773,8 +773,13 @@ async function saveTelegram() {
     });
     btn.innerHTML = `${ICONS.check}Saved`;
     btn.classList.add("btn-success");
-    result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Send /login to your bot to test.</div>`;
-    toast("Telegram configured", "ok");
+    if (r.needs_restart) {
+      result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Restart the server for the bot to pick up the new token.</div>`;
+      toast("Telegram saved - restart required", "ok");
+    } else {
+      result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Send /login to your bot to test.</div>`;
+      toast("Telegram configured", "ok");
+    }
     setTimeout(() => advanceStep(2), 2000);
   } catch (e) {
     btn.disabled = false;
