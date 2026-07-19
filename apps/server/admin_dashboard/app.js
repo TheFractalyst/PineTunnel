@@ -37,6 +37,8 @@ let overviewRendered = false;
 let overviewSig = null;
 let visibilityPolling = true;
 
+const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="190 48 475 48" preserveAspectRatio="xMidYMid meet" class="brand-logo" aria-label="PineTunnel"><g fill="currentColor"><g transform="translate(196,91.6)"><path d="M32.25-37.94c1.38 0 2.66.34 3.81 1.03 1.16.68 2.07 1.6 2.75 2.75.68 1.15 1.02 2.42 1.02 3.81v7.58c0 1.39-.34 2.66-1.02 3.81-.68 1.15-1.6 2.07-2.75 2.75-1.15.68-2.42 1.02-3.81 1.02H9.48v15.17H1.89v-37.94zM9.48-22.77h22.77v-7.58H9.48z"/></g><g transform="translate(243,91.6)"><path d="M39.83 0H1.89v-7.59h15.19v-22.75H1.89v-7.59h37.94v7.59H24.66v22.75h15.17z"/></g><g transform="translate(290,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(338,91.6)"><path d="M39.83-37.94v7.59H9.48v7.58h30.35v7.59H9.48v7.58h30.35V0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-22.75c0-1.39.34-2.66 1.02-3.81.68-1.16 1.6-2.07 2.75-2.75 1.16-.69 2.44-1.03 3.83-1.03z"/></g><g transform="translate(385,91.6)"><path d="M39.83-37.94v7.59H24.66V0h-7.58v-30.35H1.89v-7.59z"/></g><g transform="translate(432,91.6)"><path d="M32.25 0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-30.35h7.59v30.35H32.25v-30.35h7.58v30.35c0 1.39-.34 2.66-1.02 3.81-.68 1.16-1.6 2.07-2.75 2.75-1.15.69-2.43 1.03-3.81 1.03z"/></g><g transform="translate(479,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(526,91.6)"><path d="M9.48 0H1.89v-34.14c0-1.04.37-1.93 1.11-2.67.75-.75 1.64-1.12 2.69-1.12 1.04 0 1.94.38 2.7 1.14L32.25-12.95V-37.94h7.58v34.14c0 1.04-.37 1.94-1.11 2.69-.74.74-1.63 1.11-2.67 1.11-1.05 0-1.95-.38-2.7-1.14L9.48-24.98z"/></g><g transform="translate(574,91.6)"><path d="M39.83-37.94v7.59H9.48v7.58h30.35v7.59H9.48v7.58h30.35V0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-22.75c0-1.39.34-2.66 1.02-3.81.68-1.16 1.6-2.07 2.75-2.75 1.16-.69 2.44-1.03 3.83-1.03z"/></g><g transform="translate(621,91.6)"><path d="M39.83 0H9.48c-1.39 0-2.67-.34-3.83-1.02-1.15-.69-2.07-1.6-2.75-2.75-.68-1.16-1.02-2.43-1.02-3.82v-30.35h7.59v30.35h30.35z"/></g></g></svg>';
+
 const SVG_ATTRS = ' viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"';
 const ICONS = {
   overview: '<svg' + SVG_ATTRS + '><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>',
@@ -351,7 +353,7 @@ function render() {
     <a class="skip-link" href="#content">Skip to main content</a>
     <div class="layout">
       <nav class="sidebar" aria-label="Main navigation">
-        <div class="brand"><img src="/admin/assets/logo.svg" alt="PineTunnel" class="brand-logo"></div>
+        <div class="brand">${LOGO_SVG}</div>
         ${nav.map(n => `<a class="nav-item" href="#${n.id}" data-route="${n.id}" role="button">${n.icon}<span>${n.label}</span></a>`).join("")}
         <div class="spacer"></div>
         <div class="footer"><span class="pulse-dot" aria-hidden="true"></span><span>System Online - v1.0</span></div>
@@ -478,7 +480,7 @@ async function renderOverview(content, actions) {
       <div class="card-desc">Paste this into TradingView: Alert -> Notifications -> Webhook URL</div>
       <div class="webhook-display">
         <code class="webhook-url">${escapeHtml(data.server_url || "http://127.0.0.1:8000")}</code>
-        <button class="btn primary lg" id="copy-webhook" data-action="copy-webhook">${ICONS.copy}Copy URL</button>
+        <button class="btn primary full-sm" id="copy-webhook" data-action="copy-webhook">${ICONS.copy}Copy URL</button>
       </div>
       <div class="hint mt">Only ports 80 and 443 are accepted by TradingView. Use the Cloudflare tunnel URL.</div>
       <div class="webhook-test-section mt">
@@ -657,7 +659,7 @@ function renderStep1(body, data) {
       ${tg ? `
         <div class="row"><span class="k">Status</span><span class="v">${badge("ok", "Configured")}</span></div>
         <div class="row"><span class="k">Bot Token</span><span class="v">**** (set)</span></div>
-        <button class="btn primary mt" data-action="advance-2">${ICONS.arrow}Continue to Step 2</button>
+        <button class="btn primary mt full-sm" data-action="advance-2">${ICONS.arrow}Continue to Step 2</button>
       ` : `
         <div class="field">
           <label>1. Create a bot via @BotFather on Telegram</label>
@@ -672,7 +674,7 @@ function renderStep1(body, data) {
           <div class="hint">Message @userinfobot on Telegram, it replies with your numeric ID</div>
           <input class="input" id="tg-uid" type="number" placeholder="123456789">
         </div>
-        <button class="btn primary" id="save-tg" data-action="save-telegram">${ICONS.check}Save and Verify</button>
+        <button class="btn primary full-sm" id="save-tg" data-action="save-telegram">${ICONS.check}Save and Verify</button>
         <div id="tg-result" aria-live="polite"></div>
       `}
     </div>
@@ -692,7 +694,7 @@ function renderStep2(body, data) {
       ${cf ? `
         <div class="row"><span class="k">Status</span><span class="v">${badge("ok", "Connected")}</span></div>
         <div class="row"><span class="k">URL</span><span class="v">${escapeHtml(data?.server_url || "https://...")}</span></div>
-        <button class="btn primary mt" data-action="advance-3">${ICONS.arrow}Continue to Step 3</button>
+        <button class="btn primary mt full-sm" data-action="advance-3">${ICONS.arrow}Continue to Step 3</button>
       ` : `
         <div class="field">
           <label>Option A: I have a Cloudflare domain (recommended)</label>
@@ -721,11 +723,11 @@ async function renderStep3(body, data) {
       <div class="card-desc">Copy this URL and paste it into TradingView</div>
       <div class="webhook-display">
         <code class="webhook-url" id="step3-webhook-url">${cf ? "Loading..." : "Complete Step 2 first"}</code>
-        <button class="btn primary lg" id="copy-step3" data-action="copy-step3" ${cf ? "" : "disabled"}>${ICONS.copy}Copy URL</button>
+        <button class="btn primary full-sm" id="copy-step3" data-action="copy-step3" ${cf ? "" : "disabled"}>${ICONS.copy}Copy URL</button>
       </div>
       <div class="hint mt">In TradingView: Chart -> Alert -> Notifications -> Webhook URL</div>
     </div>
-    <button class="btn outline" data-action="goto-overview">${ICONS.check}Back to Overview</button>
+    <button class="btn outline full-sm" data-action="goto-overview">${ICONS.check}Back to Overview</button>
   `;
   const copyBtn = body.querySelector("[data-action='copy-step3']");
   if (copyBtn) copyBtn.addEventListener("click", e => { e.preventDefault(); copyWebhookStep3(); });
