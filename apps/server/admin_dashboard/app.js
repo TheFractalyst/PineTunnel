@@ -1905,10 +1905,6 @@ function formatTime(iso) {
   return formatRelativeTime(iso);
 }
 
-function formatRelativeTime(iso) {
-  return formatRelativeTime(iso);
-}
-
 function statusClassFor(status) {
   if (!status) return "";
   const s = String(status).toLowerCase();
@@ -4467,11 +4463,13 @@ function renderSecurityContent(content) {
       <div class="empty small"><div class="msg">Requires audit log filtering by action - available when audit endpoints support status filtering</div></div>
     </div>
   `;
-  content.querySelectorAll("[data-action='unblock-ip']").forEach(b => b.addEventListener("click", async e => {
-    e.preventDefault();
-    const ip = b.dataset.ip;
-    comingSoon("IP unblock (Phase 3)");
-  }));
+  if (!content._secDelegated) {
+    content._secDelegated = true;
+    content.addEventListener("click", e => {
+      const btn = e.target.closest("[data-action='unblock-ip']");
+      if (btn) { e.preventDefault(); comingSoon("IP unblock (Phase 3)"); }
+    });
+  }
 }
 
 let auditState = { rows: [], filterAction: "", filterAdmin: "", filterFrom: "", filterTo: "", search: "", loading: false, hasMore: true, limit: 50 };
