@@ -86,6 +86,23 @@ class AuthMixin:
         settings_file = os.path.join(self.data_dir, "bot_settings.json")
         self._atomic_json_write(settings_file, {"alerts_enabled": self.alerts_enabled})
 
+    async def _cmd_login(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Issue a one-time dashboard login code to the admin user."""
+        user = update.effective_user
+        if user is None:
+            return
+        if not await self._check_admin(update):
+            return
+        store = getattr(self, "_auth_store", None)
+        if store is None:
+            return
+        code = await store.issue_code_async(user.id)
+        await update.message.reply_text(
+            f"Your PineTunnel dashboard login code:\n\n"
+            f"{code}\n\n"
+            f"Expires in 90 seconds. Do not share it."
+        )
+
     async def _cancel_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         for key in list(context.user_data.keys()):
             if any(prefix in key for prefix in CONVERSATION_CLEANUP_PREFIXES):

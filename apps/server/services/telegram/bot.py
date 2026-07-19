@@ -77,6 +77,7 @@ class PineTunnelTelegramBot(
         conn_manager=None,
         ws_manager=None,
         test_env: bool = False,
+        auth_store=None,
     ):
         self.token = token
         self.admin_ids = admin_ids
@@ -88,6 +89,7 @@ class PineTunnelTelegramBot(
         self.conn_manager = conn_manager
         self.ws_manager = ws_manager
         self._test_env = test_env
+        self._auth_store = auth_store
 
         self.alerts_enabled = True
         self._load_bot_settings()
@@ -243,6 +245,7 @@ class PineTunnelTelegramBot(
         app.add_handler(CommandHandler("menu", self._cmd_menu, filters=_admin_filter))
         app.add_handler(CommandHandler("help", self._cmd_help, filters=_admin_filter))
         app.add_handler(CommandHandler("monitor", self._cmd_monitor, filters=_admin_filter))
+        app.add_handler(CommandHandler("login", self._cmd_login, filters=_admin_filter))
 
         app.add_handler(CallbackQueryHandler(self._cb_handler, pattern=_CATCH_ALL_CB_PATTERN))
         app.add_error_handler(self._error_handler)
