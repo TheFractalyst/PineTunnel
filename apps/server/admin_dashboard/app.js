@@ -3376,7 +3376,7 @@ function updateSystemHealthUI() {
   const diskWrap = document.getElementById("sh-disk-gauge");
   if (diskWrap && s) {
     const diskPct = s.disk ? s.disk.percent : null;
-    updateGauge(diskWrap, diskPct, "Disk", { size: 140, diskMode: true });
+    updateGauge(diskWrap, diskPct, "Disk", { diskMode: true });
   }
   if (s && s.disk) {
     setTile("sh-disk-free", s.disk.free_mb != null ? formatBytes(s.disk.free_mb * 1048576) : (s.disk.free_gb != null ? (s.disk.free_gb.toFixed(2) + " GB") : "--"), "info");
@@ -3754,12 +3754,19 @@ function renderWebhookTable() {
   const end = Math.min(start + perPage, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty small">${webhookLogState.rows.length === 0 ? emptyState(ICONS.webhook, "No webhooks received yet.") : '<div class="msg">No matches</div>'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty small">${(webhookLogState.rows || []).length === 0 ? emptyState(ICONS.webhook, "No webhooks received yet.") : '<div class="msg">No matches</div>'}</td></tr>`;
   } else {
     tbody.innerHTML = shown.map(r => {
+      if (!r) return "";
       const cls = statusColor(r.response_code);
-      const preview = r.payload ? String(r.payload).slice(0, 60) : "";
-      const payloadStr = r.payload ? escapeHtml(JSON.stringify(r.payload)) : "";
+      let preview = "";
+      let payloadStr = "";
+      try {
+        if (r.payload) {
+          preview = String(r.payload).slice(0, 60);
+          payloadStr = escapeHtml(JSON.stringify(r.payload));
+        }
+      } catch (e) { preview = ""; payloadStr = ""; }
       return `<tr class="row-expandable" data-payload="${payloadStr}" tabindex="0" role="button" aria-expanded="false" aria-label="Webhook log at ${escapeHtml(formatTime(r.timestamp))}, status ${escapeHtml(String(r.response_code || "--"))}">
         <td class="mono" scope="row">${escapeHtml(formatTime(r.timestamp))}</td>
         <td class="mono">${escapeHtml(r.ip_address || "--")}</td>
@@ -3773,7 +3780,12 @@ function renderWebhookTable() {
     }).join("");
   }
   const countEl = document.getElementById("wl-count");
-  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${formatNumber(start + 1)}-${formatNumber(end)} of ${formatNumber(rows.length)}` : "0 rows";
+  if (countEl) {
+    const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
+    const full = rows.length > 0 ? `Showing ${formatNumber(start + 1)}-${formatNumber(end)} of ${formatNumber(rows.length)}` : "0 rows";
+    const compact = rows.length > 0 ? `${webhookLogState.page + 1}/${totalPages}` : "0";
+    countEl.innerHTML = `<span class="pager-text-full">${escapeHtml(full)}</span><span class="pager-text-compact">${escapeHtml(compact)}</span>`;
+  }
   const prevBtn = document.getElementById("wl-prev");
   const nextBtn = document.getElementById("wl-next");
   if (prevBtn) prevBtn.disabled = webhookLogState.page === 0;
@@ -4657,13 +4669,14 @@ function renderLicenseRows() {
   const end = Math.min(start + pp, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    body.innerHTML = `<tr><td colspan="10" class="empty small">${licenseState.rows.length === 0 ? emptyState(ICONS.license, "No licenses configured. Click 'Add License' to create one.", "Add License", "empty-add-license") : '<div class="msg">No matches</div>'}</td></tr>`;
-    if (licenseState.rows.length === 0) {
+    body.innerHTML = `<tr><td colspan="10" class="empty small">${(licenseState.rows || []).length === 0 ? emptyState(ICONS.license, "No licenses configured. Click 'Add License' to create one.", "Add License", "empty-add-license") : '<div class="msg">No matches</div>'}</td></tr>`;
+    if ((licenseState.rows || []).length === 0) {
       const btn = body.querySelector("[data-action='empty-add-license']");
       if (btn) btn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
     }
   } else {
     body.innerHTML = shown.map(r => {
+      if (!r) return "";
       const u = r._u, lic = r._lic;
       const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
       const lastAct = r.last_activity ? formatTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
@@ -4688,7 +4701,12 @@ function renderLicenseRows() {
     }).join("");
   }
   const countEl = document.getElementById("lic-count");
-  if (countEl) countEl.textContent = rows.length > 0 ? `Showing ${formatNumber(start + 1)}-${formatNumber(end)} of ${formatNumber(rows.length)}` : "0 rows";
+  if (countEl) {
+    const totalPages = Math.max(1, Math.ceil(rows.length / pp));
+    const full = rows.length > 0 ? `Showing ${formatNumber(start + 1)}-${formatNumber(end)} of ${formatNumber(rows.length)}` : "0 rows";
+    const compact = rows.length > 0 ? `${licenseState.page + 1}/${totalPages}` : "0";
+    countEl.innerHTML = `<span class="pager-text-full">${escapeHtml(full)}</span><span class="pager-text-compact">${escapeHtml(compact)}</span>`;
+  }
   const prevBtn = document.getElementById("lic-prev");
   const nextBtn = document.getElementById("lic-next");
   if (prevBtn) prevBtn.disabled = licenseState.page === 0;

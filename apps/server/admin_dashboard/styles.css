@@ -603,6 +603,9 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .row:last-child { border-bottom: none; }
 .row .k { font-family: var(--mono); font-size: var(--text-sm); color: var(--muted); line-height: var(--lh-mono); }
 .row .v { font-family: var(--mono); font-size: var(--text-sm); color: var(--text); line-height: var(--lh-mono); font-variant-numeric: tabular-nums; -moz-font-feature-settings: "tnum"; -webkit-font-feature-settings: "tnum"; }
+.row-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+.hist-label { font-size: 10px; fill: var(--muted2); }
+.value-label { font-size: 10px; fill: var(--muted); }
 
 .toast-container {
   position: fixed;
@@ -846,7 +849,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: var(--text-md);
+  font-size: 16px;
   font-weight: var(--fw-semibold);
   color: var(--text);
   background: var(--bg);
@@ -2577,6 +2580,13 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   .pager .pager-text { display: none; }
   .pager .btn { min-height: 36px; padding: 6px 12px; }
   .table-footer { flex-wrap: wrap; gap: 8px; }
+  .pager-text-compact { display: none; }
+  .pager-text-full { display: inline; }
+}
+
+@media (max-width: 768px) {
+  .pager-text-full { display: none; }
+  .pager-text-compact { display: inline; }
 }
 
 @media (max-width: 320px) {
