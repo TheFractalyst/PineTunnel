@@ -287,6 +287,39 @@ class MonitoringMixin:
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
+    def _fetch_audit_entries(self) -> list[dict]:
+        if self.admin_logger is not None:
+            try:
+                rows = self.admin_logger.get_recent_activity(limit=500)
+                entries: list[dict] = []
+                for row in rows:
+                    entry = dict(row)
+                    details = entry.get("details")
+                    if isinstance(details, str):
+                        try:
+                            entry["details"] = json.loads(details)
+                        except Exception:
+                            entry["details"] = {}
+                    entries.append(entry)
+                return entries
+            except Exception:
+                logger.debug("Failed to read audit log via admin_logger", exc_info=True)
+
+        log_file = os.path.join(self.data_dir, "admin_audit.log")
+        entries = []
+        try:
+            if os.path.exists(log_file):
+                with open(log_file, "r") as f:
+                    for line in f:
+                        try:
+                            entries.append(json.loads(line.strip()))
+                        except Exception:
+                            logger.debug("Failed to parse audit log entry", exc_info=True)
+                entries.reverse()
+        except Exception:
+            logger.debug("Failed to read admin_audit.log fallback", exc_info=True)
+        return entries
+
     async def _show_logs(self, update: Update, log_filter: str = "webhook", page: int = 0):
         PAGE_SIZE = 8
         total = 0
@@ -337,30 +370,31 @@ class MonitoringMixin:
 
         elif log_filter == "admin":
             lines = [f" *Admin Audit Log*\n{SEP}"]
-            log_file = os.path.join(self.data_dir, "admin_audit.log")
+            entries = self._fetch_audit_entries()
 
             try:
-                if not os.path.exists(log_file):
+                total = len(entries)
+                if total == 0:
                     lines.append("\n_No audit log entries yet._")
                 else:
-                    with open(log_file, "r") as f:
-                        all_entries = f.readlines()
-
-                    total = len(all_entries)
                     page, total_pages, start = calc_pagination(page, total, PAGE_SIZE)
-
-                    all_entries = list(reversed(all_entries))
-                    page_entries = all_entries[start : start + PAGE_SIZE]
+                    page_entries = entries[start : start + PAGE_SIZE]
 
                     lines.append(f"Page {page + 1}/{total_pages} ({total} entries)\n")
 
-                    for entry_line in page_entries:
+                    for entry in page_entries:
                         try:
-                            entry = json.loads(entry_line.strip())
-                            ts = entry.get("timestamp", "")[:16]
+                            ts = str(entry.get("timestamp", ""))[:16]
                             action = entry.get("action", "?")
-                            username = entry.get("username", "?")
+                            user = entry.get("user", "") or entry.get("username", "?")
+                            if not user.startswith("@") and user != "?":
+                                user = f"@{user}"
                             details = entry.get("details", {})
+                            if isinstance(details, str):
+                                try:
+                                    details = json.loads(details)
+                                except Exception:
+                                    details = {}
 
                             detail_str = ""
                             if isinstance(details, dict):
@@ -369,7 +403,7 @@ class MonitoringMixin:
                                     detail_str = f" `{lk[:8]}...`"
 
                             lines.append(
-                                f" {ts} | @{_escape_md(username, version=1)} | "
+                                f" {ts} | {_escape_md(user, version=1)} | "
                                 f"{_escape_md(action, version=1)}{detail_str}"
                             )
                         except Exception:
@@ -381,57 +415,51 @@ class MonitoringMixin:
 
         elif log_filter == "conn":
             lines = [f" *Connection History*\n{SEP}"]
-            log_file = os.path.join(self.data_dir, "admin_audit.log")
+            entries = self._fetch_audit_entries()
 
             try:
-                if not os.path.exists(log_file):
-                    lines.append("\n_No events recorded yet._")
+                conn_events = [
+                    e for e in entries
+                    if e.get("action", "") in (
+                        "client_connected",
+                        "client_disconnected",
+                        "force_disconnect",
+                    )
+                ]
+
+                total = len(conn_events)
+                if not conn_events:
+                    lines.append("\n_No connection events found._")
                 else:
-                    with open(log_file, "r") as f:
-                        all_entries = f.readlines()
+                    page, total_pages, start = calc_pagination(page, total, PAGE_SIZE)
+                    page_events = conn_events[start : start + PAGE_SIZE]
 
-                    conn_events = []
-                    for entry_line in reversed(all_entries):
-                        try:
-                            entry = json.loads(entry_line.strip())
-                            action = entry.get("action", "")
-                            if action in (
-                                "client_connected",
-                                "client_disconnected",
-                                "force_disconnect",
-                            ):
-                                conn_events.append(entry)
-                        except Exception:
-                            logger.debug("Failed to parse conn log entry", exc_info=True)
+                    lines.append(f"Page {page + 1}/{total_pages} ({total} events)\n")
 
-                    total = len(conn_events)
-                    if not conn_events:
-                        lines.append("\n_No connection events found._")
-                    else:
-                        page, total_pages, start = calc_pagination(page, total, PAGE_SIZE)
-                        page_events = conn_events[start : start + PAGE_SIZE]
+                    for evt in page_events:
+                        ts = str(evt.get("timestamp", ""))[:16]
+                        action = evt.get("action", "")
+                        details = evt.get("details", {})
+                        if isinstance(details, str):
+                            try:
+                                details = json.loads(details)
+                            except Exception:
+                                details = {}
+                        lic = details.get("license_key", "?")
+                        method = details.get("method", details.get("connection_type", ""))
 
-                        lines.append(f"Page {page + 1}/{total_pages} ({total} events)\n")
+                        if "connect" in action and "disconnect" not in action:
+                            emoji = "[OK]"
+                        elif "disconnect" in action:
+                            emoji = "[X]"
+                        else:
+                            emoji = ""
 
-                        for evt in page_events:
-                            ts = evt.get("timestamp", "")[:16]
-                            action = evt.get("action", "")
-                            details = evt.get("details", {})
-                            lic = details.get("license_key", "?")
-                            method = details.get("method", details.get("connection_type", ""))
-
-                            if "connect" in action and "disconnect" not in action:
-                                emoji = "[OK]"
-                            elif "disconnect" in action:
-                                emoji = "[X]"
-                            else:
-                                emoji = ""
-
-                            method_str = f" ({_escape_md(method, version=1)})" if method else ""
-                            lines.append(
-                                f"{emoji} {ts} | `{lic[:8]}...` | "
-                                f"{_escape_md(action, version=1)}{method_str}"
-                            )
+                        method_str = f" ({_escape_md(method, version=1)})" if method else ""
+                        lines.append(
+                            f"{emoji} {ts} | `{lic[:8]}...` | "
+                            f"{_escape_md(action, version=1)}{method_str}"
+                        )
 
                 text = "\n".join(lines)
             except Exception as e:

@@ -667,6 +667,7 @@ async def lifespan(app: FastAPI):
                 ws_manager=ws_manager,
                 test_env=settings.telegram.test_env,
                 auth_store=getattr(state, "_auth_store", None),
+                admin_logger=admin_logger,
             )
             tg_task = asyncio.create_task(telegram_bot.start())
 

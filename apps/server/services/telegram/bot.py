@@ -339,6 +339,22 @@ class PineTunnelTelegramBot(
             logger.warning("Unhandled callback data: %s", data)
 
     async def _log_admin_action(self, user_id: int, username: str, action: str, details: dict):
+        user = f"@{username}" if username else str(user_id)
+        enriched = dict(details)
+        enriched.setdefault("user_id", user_id)
+        enriched.setdefault("username", username)
+
+        if self.admin_logger is not None:
+            try:
+                self.admin_logger.log_activity(
+                    action=action,
+                    user=user,
+                    details=enriched,
+                )
+                return
+            except Exception as e:
+                logger.error("Failed to write audit log via admin_logger: %s", e)
+
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "user_id": user_id,
