@@ -892,6 +892,7 @@ async function fetchHealth() {
     let connections = null;
     let connError = null;
     let stats = null;
+    let botInfo = null;
     try {
       const cRes = await http("/api/connections");
       connections = await cRes.json();
@@ -900,7 +901,11 @@ async function fetchHealth() {
       const sRes = await http("/api/system/stats");
       stats = await sRes.json();
     } catch (se) {}
-    healthState = { data: { health: health || {}, connections, stats }, error: null, stale: false, connError };
+    try {
+      const bRes = await http("/api/bot/info");
+      botInfo = await bRes.json();
+    } catch (be) {}
+    healthState = { data: { health: health || {}, connections, stats, bot: botInfo }, error: null, stale: false, connError };
     hideConnectionLost();
   } catch (e) {
     healthState = { data: prev, error: friendlyMsg(e), stale: true };
@@ -944,20 +949,13 @@ function updateHealthCard() {
   if (!data && error) return;
   if (!data) return;
   const h = (data && data.health) || {};
-  const c = data && data.connections;
-  const st = data && data.stats;
-  let eaCount = 0;
-  if (c) {
-    eaCount = getEaConnectionCount(c);
-  } else if (h.connections) {
-    eaCount = h.connections.total_clients || 0;
-  }
-  setTile("tile-ea", formatNumber(eaCount), eaColor(eaCount));
-  const trades = (st && st.trades) || {};
-  const sig = trades.today != null ? trades.today : null;
-  const fill = trades.success_rate_7d != null ? trades.success_rate_7d : null;
-  setTile("tile-signals", sig != null ? formatNumber(sig) : "--", sig != null && sig > 0 ? "ok" : "info");
-  setTile("tile-fill", fill != null ? formatPct(fill) : "--", fill != null ? (fill >= 80 ? "ok" : fill >= 50 ? "warn" : "bad") : "info");
+  const bot = data && data.bot;
+  const serverOk = !error && !stale;
+  setTile("tile-server", serverOk ? "Online" : "Offline", serverOk ? "ok" : "bad");
+  const dbOk = h.services && h.services.database === "healthy";
+  setTile("tile-database", dbOk ? "Connected" : "Down", dbOk ? "ok" : "bad");
+  const botOk = bot && bot.started;
+  setTile("tile-bot", botOk ? "Connected" : "Off", botOk ? "ok" : "bad");
 }
 
 function clearPolls() {
@@ -1299,7 +1297,7 @@ function updateOverviewInPlace(tg, cf, init, allDone) {
   const small = window.innerWidth < 375;
   const actions = document.getElementById("header-actions");
   if (actions) {
-    actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Welcome"), !allDone);
+    actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Status of server"), !allDone);
   }
   const hero = document.getElementById("home-hero");
   if (hero) {
@@ -1342,7 +1340,7 @@ async function renderOverview(content, actions) {
   overviewAllDone = allDone;
   overviewRendered = true;
   const small = window.innerWidth < 375;
-  actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Welcome"), !allDone);
+  actions.innerHTML = badge(allDone ? "ok" : "info", allDone ? (small ? "OK" : "All Ready") : (small ? "Hi" : "Status of server"), !allDone);
 
   const issues = [];
   if (!tg) issues.push("Telegram bot not connected");
@@ -1443,18 +1441,18 @@ async function renderOverview(content, actions) {
       </div>
       ${heroAction}
     </div>
-    <div class="grid grid-3" id="home-metrics" role="group" aria-label="Key metrics">
-      <div class="stat info" id="tile-signals" role="group" aria-label="Signals Today">
+    <div class="grid grid-3" id="home-metrics" role="group" aria-label="System health">
+      <div class="stat info" id="tile-server" role="group" aria-label="Server Status">
         <div class="value skeleton line" aria-live="polite"></div>
-        <div class="label">Signals Today</div>
+        <div class="label">Server</div>
       </div>
-      <div class="stat info" id="tile-ea" role="group" aria-label="Active EAs">
+      <div class="stat info" id="tile-database" role="group" aria-label="Database Status">
         <div class="value skeleton line" aria-live="polite"></div>
-        <div class="label">Active EAs</div>
+        <div class="label">Database</div>
       </div>
-      <div class="stat info" id="tile-fill" role="group" aria-label="Win Rate">
+      <div class="stat info" id="tile-bot" role="group" aria-label="Bot Status">
         <div class="value skeleton line" aria-live="polite"></div>
-        <div class="label">Win Rate</div>
+        <div class="label">Bot</div>
       </div>
     </div>
     ${webhookBlock}
