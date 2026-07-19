@@ -2853,13 +2853,14 @@ function drawLineChart(daily) {
 function drawDonutChart(stats, dash) {
   const wrap = document.getElementById("donut-chart-wrap");
   if (!wrap) return;
-  const symPerf = (stats && stats.symbol_performance) || [];
-  let entries = symPerf.map(s => ({ name: s.symbol || s.name || "--", vol: s.total_trades || s.volume || 0 }))
+  const symPerf = (stats && Array.isArray(stats.symbol_performance)) ? stats.symbol_performance : [];
+  let entries = symPerf.map(s => ({ name: (s && (s.symbol || s.name)) || "--", vol: (s && (s.total_trades || s.volume)) || 0 }))
     .filter(s => s.vol > 0)
     .sort((a, b) => b.vol - a.vol)
     .slice(0, 5);
   if (entries.length === 0 && dash && dash.top_symbols) {
-    entries = Object.entries(dash.top_symbols).map(([name, vol]) => ({ name, vol }))
+    entries = Object.entries(dash.top_symbols).map(([name, vol]) => ({ name, vol: Number(vol) || 0 }))
+      .filter(s => s.vol > 0)
       .sort((a, b) => b.vol - a.vol).slice(0, 5);
   }
   if (entries.length === 0) {
@@ -2944,6 +2945,7 @@ function renderPipelineMonitor(content, actions) {
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 5s</span>`;
   pipelineState.signalHistory = [];
   pipelineState.lastDelivered = 0;
+  pipelineState.latencies = [];
   startPoll(pollPipeline, 5000);
 }
 
@@ -3116,11 +3118,11 @@ function svgLineChart(values, opts = {}) {
   const H = opts.height || 160;
   const pad = opts.pad || 24;
   const color = opts.color || PALETTE.green;
-  const max = opts.max != null ? opts.max : Math.max(100, ...values.map(v => v || 0));
+  if (!Array.isArray(values) || values.length === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(opts.label || "chart")}: no data"><title>${escapeHtml(opts.label || "chart")}</title><desc>No data available</desc></svg>`;
+  const max = opts.max != null ? opts.max : Math.max(100, ...values.map(v => (v || 0)));
   const min = opts.min || 0;
-  const range = max - min || 1;
+  const range = (max - min) || 1;
   const n = values.length;
-  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${opts.label || "chart"}: no data"><title>${escapeHtml(opts.label || "chart")}</title><desc>No data available</desc></svg>`;
   const pts = values.map((v, i) => {
     const x = pad + (i / Math.max(1, n - 1)) * (W - pad * 2);
     const norm = (v != null && !isNaN(v)) ? (v - min) / range : 0;
@@ -3177,12 +3179,13 @@ function updateLineChart(el, values, opts = {}) {
 function svgSparkline(values, opts = {}) {
   const W = 60, H = 20;
   const color = opts.color || PALETTE.green;
-  const n = values.length;
-  if (n === 0) return `<svg viewBox="0 0 ${W} ${H}" class="sparkline" aria-hidden="true" focusable="false"></svg>`;
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
+  if (!Array.isArray(values) || values.length === 0) return `<svg viewBox="0 0 ${W} ${H}" class="sparkline" aria-hidden="true" focusable="false"></svg>`;
+  const safeVals = values.map(v => (v != null && !isNaN(v)) ? Number(v) : 0);
+  const n = safeVals.length;
+  const max = Math.max(...safeVals, 1);
+  const min = Math.min(...safeVals, 0);
   const range = max - min;
-  const pts = values.map((v, i) => {
+  const pts = safeVals.map((v, i) => {
     const x = (i / Math.max(1, n - 1)) * W;
     const norm = range > 0 ? (v - min) / range : 0.5;
     const y = H - norm * H;
@@ -3871,6 +3874,7 @@ function toggleLogEntry(el) {
 }
 
 function renderErrorLogs(content) {
+  errorLogState = { entries: [], paused: false, filter: "ALL", search: "" };
   content.innerHTML = `
     <div id="el-stale-banner"></div>
     <div class="card">
@@ -4117,6 +4121,7 @@ function updateMetricsUI() {
 }
 
 function renderMetrics(content) {
+  metricsState = { history: {}, lastValues: {} };
   content.innerHTML = `
     <div id="metrics-stale-banner"></div>
     <div class="card">
