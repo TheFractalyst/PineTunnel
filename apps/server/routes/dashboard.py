@@ -24,6 +24,31 @@ logger = logging.getLogger(__name__)
 
 _TELEGRAM_RELOAD_KEYS = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_IDS"}
 
+_RESTART_REQUIRED_KEYS = {
+    "HOST",
+    "PORT",
+    "SERVER_WORKERS",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "SERVER_MAX_REQUEST_SIZE",
+    "SERVER_REQUEST_TIMEOUT",
+}
+
+_HOT_RELOAD_KEYS = {
+    "SERVER_BASE_URL",
+    "SERVER_CORS_ORIGINS",
+    "WEBHOOK_SECRET",
+    "JWT_SECRET",
+    "ADMIN_API_KEY",
+    "SIGNAL_ENCRYPTION_KEY",
+    "TRUSTED_PROXY_COUNT",
+    "TRADINGVIEW_IP_ALLOWLIST",
+    "TRADINGVIEW_IPS",
+    "ADMIN_API_KEY_PREVIOUS",
+    "PROXY_SECRET",
+    "REQUIRE_TRADE_REPORT_SECRET",
+}
+
 _ROTATABLE_PATTERNS = ("SECRET", "TOKEN", "KEY", "PASSWORD", "PASSPHRASE")
 
 _MIN_ENV_TEMPLATE = """\
@@ -66,6 +91,26 @@ _CONFIG_SCHEMA: dict[str, dict] = {
 def _is_rotatable(key: str) -> bool:
     upper = key.upper()
     return any(p in upper for p in _ROTATABLE_PATTERNS)
+
+
+def _sync_env_and_reload_settings(updates: dict[str, str]) -> None:
+    """Sync updates to os.environ and rebuild the Settings singleton.
+
+    write_env_updates() only writes the .env file. In production, Settings
+    reads from os.environ (env_file is None), so without syncing os.environ
+    the new values would be invisible. After syncing, reset the cached
+    singleton so the next get_config() re-reads everything, and publish the
+    new instance to state.settings for route modules.
+    """
+    for key, value in updates.items():
+        os.environ[key] = value
+    from apps.server.config.settings import get_config, reset_config_singleton
+
+    reset_config_singleton()
+    new_settings = get_config()
+    from apps.server import state
+
+    state.settings = new_settings
 
 
 def _generate_new_secret(key: str) -> str:

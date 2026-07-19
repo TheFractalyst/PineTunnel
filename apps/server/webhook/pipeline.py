@@ -127,6 +127,8 @@ async def deliver_signal(
         )
 
     if signal_id is None:
+        from apps.server.routes.metrics import record_webhook_signal
+        record_webhook_signal(command, "duplicate")
         return JSONResponse(
             status_code=_STATUS_OK,
             content={
@@ -156,6 +158,8 @@ async def deliver_signal(
             _ws_push_count += 1
             _ws_push_total_ms += push_ms
             if ws_sent > 0:
+                from apps.server.routes.metrics import record_ws_delivery
+                record_ws_delivery()
                 logger.debug(
                     "WS push: %s delivered to %d EA(s) in %.1fms",
                     _mask(license_key),
@@ -170,6 +174,9 @@ async def deliver_signal(
                 _mask(license_key),
                 ws_err,
             )
+
+    from apps.server.routes.metrics import record_webhook_signal
+    record_webhook_signal(command, "queued")
 
     response_data: dict[str, Any] = {
         "status": "queued",

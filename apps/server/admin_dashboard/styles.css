@@ -376,6 +376,10 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   .stat .label { font-size: 10px; }
   .card-title { font-size: var(--text-base); }
 }
+@media (min-width: 1440px) {
+  .stat .value { font-size: 22px; }
+  .card-title { font-size: var(--text-md); }
+}
 
 .welcome {
   max-width: 640px;
@@ -1002,9 +1006,9 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 
 @media (max-width: 480px) {
+  :root { --text-xl: 18px; --text-2xl: 20px; }
   body { font-size: var(--text-base); }
   .label, .field label { font-size: var(--text-xs); }
-  .card-title { font-size: var(--text-md); }
   .card-desc { font-size: var(--text-sm); }
   .header .title { font-size: var(--text-md); }
   .badge { font-size: var(--text-xs); padding: var(--sp-1) var(--sp-2); }
@@ -1021,12 +1025,21 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   .mobile-nav .tab svg { width: 22px; height: 22px; }
 }
 
-@media (max-width: 320px) {
+@media (max-width: 375px) {
   body { font-size: var(--text-base); }
+  .label, .stat .label, .field label { font-size: var(--text-xs); }
+  .card-title { font-size: var(--text-base); }
+}
+
+@media (max-width: 320px) {
+  body { font-size: var(--text-sm); }
+  .label, .stat .label, .field label { font-size: 10px; }
   .content { padding: var(--sp-3); padding-bottom: 72px; }
   .card { padding: var(--sp-3); }
   .card-title { font-size: var(--text-base); }
   .card-desc { font-size: var(--text-xs); }
+  .prog-dot { width: 24px; height: 24px; font-size: var(--text-xs); }
+  .prog-line { width: 16px; }
   .webhook-url { font-size: var(--text-base); word-break: break-all; }
   .header .title { font-size: var(--text-base); }
   .step { padding: var(--sp-3); gap: 10px; }
@@ -1775,7 +1788,7 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .metric-name { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: var(--ls-label); font-weight: var(--fw-medium); }
 .metric-value { font-size: 28px; font-weight: var(--fw-bold); font-family: var(--mono); font-variant-numeric: tabular-nums;
   -moz-font-feature-settings: "tnum";
-  -webkit-font-feature-settings: "tnum"; }
+  -webkit-font-feature-settings: "tnum"; color: var(--metric-color); }
 .metric-value.c-green { color: var(--green); }
 .metric-value.c-blue { color: var(--blue); }
 .metric-value.c-amber { color: var(--amber); }

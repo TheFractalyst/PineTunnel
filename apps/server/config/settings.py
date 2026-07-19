@@ -512,3 +512,15 @@ def get_config() -> Settings:
     if _settings is None:
         _settings = validate_settings()
     return _settings
+
+
+def reset_config_singleton() -> None:
+    """Clear the cached Settings singleton and the get_settings lru_cache.
+
+    Call this after writing to .env or os.environ so the next get_config()
+    call re-reads the updated environment. Also invalidates the lru_cache on
+    get_settings() so any independent validation passes pick up new values.
+    """
+    global _settings
+    _settings = None
+    get_settings.cache_clear()

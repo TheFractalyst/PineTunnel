@@ -177,6 +177,11 @@ function isSafeUrl(url) {
 }
 
 let setupDirty = false;
+window.addEventListener("beforeunload", () => {
+  clearPolls();
+  if (routeTimer) { clearTimeout(routeTimer); routeTimer = null; }
+  if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = null; }
+});
 window.addEventListener("beforeunload", e => {
   if (setupDirty) {
     e.preventDefault();
@@ -990,6 +995,7 @@ function clearPolls() {
   pollTimers = [];
   stopHealthPolling();
   if (eaVerifyTimer) { clearInterval(eaVerifyTimer); eaVerifyTimer = null; }
+  if (connRetryTimer) { clearTimeout(connRetryTimer); connRetryTimer = null; }
 }
 
 function toast(msg, type = "ok") {
@@ -2749,8 +2755,8 @@ async function pollTradeAnalytics() {
 function drawBarChart(daily, dash) {
   const wrap = document.getElementById("bar-chart-wrap");
   if (!wrap) return;
-  if (!daily || !Array.isArray(daily)) {
-    wrap.innerHTML = '<svg viewBox="0 0 600 200" class="chart-svg" role="img" aria-label="Trades by hour: no data"><title>Trades by hour - no data</title><desc>No trade data available.</desc></svg>';
+  if (!daily || !Array.isArray(daily) || daily.length === 0) {
+    wrap.innerHTML = '<svg viewBox="0 0 400 200" width="100%" role="img" aria-label="Trades by hour: no data"><title>Trades by hour - no data</title><text x="200" y="100" text-anchor="middle" fill="' + PALETTE.muted + '" font-size="11">No data</text></svg>';
     return;
   }
   const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
@@ -2765,7 +2771,7 @@ function drawBarChart(daily, dash) {
     }
   }
   for (const d of daily) {
-    if (!d.date) continue;
+    if (!d || !d.date) continue;
     const dd = new Date(d.date);
     if (dd.toDateString() === now.toDateString() && d.total_trades != null) {
       const spread = Math.max(1, d.total_trades);
@@ -2800,7 +2806,11 @@ function drawBarChart(daily, dash) {
 function drawLineChart(daily) {
   const wrap = document.getElementById("line-chart-wrap");
   if (!wrap) return;
-  const points = (daily || []).slice(-7).map(d => ({
+  if (!Array.isArray(daily) || daily.length === 0) {
+    wrap.innerHTML = '<svg viewBox="0 0 600 200" class="chart-svg" role="img" aria-label="7-day success rate trend: no data"><title>7-day success rate trend - no data</title><desc>No daily data available.</desc></svg>';
+    return;
+  }
+  const points = daily.slice(-7).filter(d => d && typeof d === "object").map(d => ({
     date: d.date || "",
     rate: d.success_rate != null ? d.success_rate : (d.total_trades > 0 ? (d.successful_trades / d.total_trades * 100) : 0),
   }));
@@ -3021,7 +3031,11 @@ async function pollPipeline() {
 function drawHistogram() {
   const wrap = document.getElementById("histogram-wrap");
   if (!wrap) return;
-  const lats = pipelineState.latencies;
+  const lats = (pipelineState && pipelineState.latencies) || [];
+  if (!Array.isArray(lats) || lats.length === 0) {
+    wrap.innerHTML = '<svg viewBox="0 0 600 200" class="chart-svg" role="img" aria-label="Delivery latency histogram: no data"><title>Delivery latency histogram - no data</title><desc>No latency samples yet.</desc></svg>';
+    return;
+  }
   const buckets = [
     { label: "0-10ms", max: 10, count: 0 },
     { label: "10-50ms", max: 50, count: 0 },
@@ -3341,6 +3355,7 @@ function updateSystemHealthUI() {
 }
 
 function renderSystemHealth(content) {
+  sysHealthState = { cpu: [], mem: [], disk: null, lastHealth: null, lastStats: null, procCpu: [] };
   content.innerHTML = `
     <div id="sh-stale-banner"></div>
     <div class="grid grid-2">

@@ -6,7 +6,7 @@ import hmac
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -591,42 +591,96 @@ async def get_admin_dashboard(user: dict = Depends(get_current_user)):
     """
     Admin dashboard endpoint with complete overview
     Access at /api/trades/admin/dashboard
+
+    Reads from the persistent trades DB table (same source as the Telegram
+    bot's monitoring) instead of the in-memory trade_reports deque which is
+    per-worker and lost on restart.
     """
     try:
-        # Calculate time-based statistics
+        from apps.server.state import db_manager
+
         now = datetime.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_str = today_start.strftime("%Y-%m-%d")
+        tomorrow_str = (today_start + timedelta(days=1)).strftime("%Y-%m-%d")
 
-        today_trades = [
-            t for t in trade_reports if t.get("received_at", "") >= today_start.isoformat()
-        ]
+        total_trades = 0
+        trades_today = 0
+        success_count = 0
+        symbol_counts: dict[str, int] = {}
+        recent_activity: list[dict] = []
+        active_licenses_today: set = set()
 
-        # Active licenses (traded today)
-        active_licenses_today = set(t.get("license_key") for t in today_trades)
+        if db_manager:
+            try:
+                today_expr = db_manager.sql_today()
+                rows = db_manager.execute_query(
+                    f"SELECT "
+                    f"COUNT(*) AS total_trades, "
+                    f"COUNT(CASE WHEN DATE(timestamp) = {today_expr} THEN 1 END) AS trades_today, "
+                    f"COUNT(CASE WHEN status = 'success' THEN 1 END) AS success_count "
+                    f"FROM trades"
+                )
+                row = rows[0] if rows else {}
+                total_trades = row.get("total_trades", 0) or 0
+                trades_today = row.get("trades_today", 0) or 0
+                success_count = row.get("success_count", 0) or 0
 
-        # Most active symbols
-        symbol_counts = {}
-        for trade in trade_reports:
-            symbol = trade.get("symbol", "UNKNOWN")
-            symbol_counts[symbol] = symbol_counts.get(symbol, 0) + 1
+                sym_rows = db_manager.execute_query(
+                    "SELECT symbol, COUNT(*) AS cnt "
+                    "FROM trades WHERE symbol IS NOT NULL "
+                    "GROUP BY symbol ORDER BY cnt DESC LIMIT 10"
+                )
+                for sr in sym_rows:
+                    sym = sr.get("symbol") or "UNKNOWN"
+                    cnt = sr.get("cnt", 0) or 0
+                    if cnt > 0:
+                        symbol_counts[sym] = cnt
 
-        top_symbols = sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                recent_rows = db_manager.execute_query(
+                    "SELECT timestamp, symbol, action, volume, price, status, "
+                    "client_id AS license_key, message "
+                    "FROM trades ORDER BY timestamp DESC LIMIT 20"
+                )
+                for rr in recent_rows:
+                    rec = dict(rr)
+                    rec["received_at"] = str(rec.get("timestamp", ""))
+                    if rec.get("license_key"):
+                        active_licenses_today.add(rec["license_key"])
+                    recent_activity.append(rec)
+            except Exception as e:
+                logger.warning("DB query failed in admin dashboard, falling back to in-memory: %s", e)
+
+        if total_trades == 0 and trade_reports:
+            total_trades = len(trade_reports)
+            today_trades_mem = [
+                t for t in trade_reports if t.get("received_at", "") >= today_start.isoformat()
+            ]
+            trades_today = len(today_trades_mem)
+            success_count = sum(1 for t in trade_reports if t.get("success"))
+            for trade in trade_reports:
+                symbol = trade.get("symbol", "UNKNOWN")
+                symbol_counts[symbol] = symbol_counts.get(symbol, 0) + 1
+            recent_activity = today_trades_mem[:20]
+            active_licenses_today = set(t.get("license_key") for t in today_trades_mem)
+
+        top_symbols = dict(
+            sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        )
 
         return {
             "overview": {
                 "total_licenses": len(license_stats),
                 "active_licenses_today": len(active_licenses_today),
-                "total_trades": len(trade_reports),
-                "trades_today": len(today_trades),
+                "total_trades": total_trades,
+                "trades_today": trades_today,
                 "success_rate": (
-                    sum(1 for t in trade_reports if t.get("success")) / len(trade_reports) * 100
-                    if trade_reports
-                    else 0
+                    success_count / total_trades * 100 if total_trades else 0
                 ),
             },
-            "top_symbols": dict(top_symbols),
+            "top_symbols": top_symbols,
             "active_licenses": list(active_licenses_today),
-            "recent_activity": today_trades[:20],
+            "recent_activity": recent_activity,
             "timestamp": now.isoformat(),
         }
 
