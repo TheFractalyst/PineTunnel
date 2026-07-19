@@ -3630,12 +3630,6 @@ function bindSortHeaders(scope, sortState, onSort) {
   });
 }
 
-function skeletonRowsHTML(colspan, n) {
-  return Array.from({ length: n }, () =>
-    `<tr class="sk-row">${Array.from({ length: colspan }, () => `<td><div class="sk-cell"></div></td>`).join("")}</tr>`
-  ).join("");
-}
-
 function updateScrollHint(table) {
   if (!table) return;
   const wrap = table.closest(".table-wrap") || table.closest(".feed-scroll");
@@ -3758,7 +3752,7 @@ function renderWebhookLogs(content) {
               <th scope="col">Payload</th>
             </tr>
           </thead>
-          <tbody id="wl-body">${skeletonRowsHTML(8, 5)}</tbody>
+          <tbody id="wl-body">${Array(5).fill(skeletonRow(8)).join("")}</tbody>
         </table>
       </div>
       <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
@@ -3832,7 +3826,7 @@ function renderWebhookTable() {
   const table = document.getElementById("wl-table");
   if (table) applySort(table, webhookLogState.sort);
   if (!webhookLogState.loaded) {
-    tbody.innerHTML = skeletonRowsHTML(8, 5);
+    tbody.innerHTML = Array(5).fill(skeletonRow(8)).join("");
     return;
   }
   const rows = filteredWebhookRows();
@@ -4009,6 +4003,7 @@ function renderRiskMonitor(content) {
       <div id="risk-alerts"></div>
     </div>
   `;
+  setHeaderAutoPoll(10);
   startPoll(pollRiskMonitor, 10000);
 }
 
@@ -4678,7 +4673,7 @@ async function renderLicenses(content, actions) {
               <th scope="col" class="td-actions">Actions</th>
             </tr>
           </thead>
-          <tbody id="lic-body">${skeletonRowsHTML(10, 5)}</tbody>
+          <tbody id="lic-body">${Array(5).fill(skeletonRow(10)).join("")}</tbody>
         </table>
       </div>
       <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
@@ -4791,7 +4786,7 @@ function renderLicenseRows() {
   const table = document.getElementById("lic-table");
   if (table) applySort(table, licenseState.sort);
   if (!licenseState.loaded) {
-    body.innerHTML = skeletonRowsHTML(10, 5);
+    body.innerHTML = Array(5).fill(skeletonRow(10)).join("");
     return;
   }
   const rows = filteredLicenseRows();
