@@ -1028,7 +1028,6 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 @media (max-width: 375px) {
   body { font-size: var(--text-base); }
   .label, .stat .label, .field label { font-size: var(--text-xs); }
-  .card-title { font-size: var(--text-base); }
 }
 
 @media (max-width: 320px) {

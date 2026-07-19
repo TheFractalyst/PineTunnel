@@ -494,11 +494,6 @@ const ICONS = {
   minus: '<svg' + SVG_ATTRS + '><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   search: '<svg' + SVG_ATTRS + '><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   filter: '<svg' + SVG_ATTRS + '><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
-  eye: '<svg' + SVG_ATTRS + '><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
-  "eye-off": '<svg' + SVG_ATTRS + '><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
-  "chevron-up": '<svg' + SVG_ATTRS + '><polyline points="18 15 12 9 6 15"/></svg>',
-  "chevron-down": '<svg' + SVG_ATTRS + '><polyline points="6 9 12 15 18 9"/></svg>',
-  "chevron-right": '<svg' + SVG_ATTRS + '><polyline points="9 18 15 12 9 6"/></svg>',
   stop: '<svg' + SVG_ATTRS + '><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
   download: '<svg' + SVG_ATTRS + '><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
   upload: '<svg' + SVG_ATTRS + '><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
@@ -880,13 +875,17 @@ async function fetchHealth() {
       const sRes = await http("/api/system/stats");
       stats = await sRes.json();
     } catch (se) {}
-    healthState = { data: { health, connections, stats }, error: null, stale: false, connError };
+    healthState = { data: { health: health || {}, connections, stats }, error: null, stale: false, connError };
     hideConnectionLost();
   } catch (e) {
     healthState = { data: prev, error: friendlyMsg(e), stale: true };
     if (!prev && e.status !== 401) showConnectionLost(friendlyMsg(e));
   }
-  if (healthActive) updateHealthCard();
+  try {
+    if (healthActive) updateHealthCard();
+  } catch (e) {
+    console.error("[dashboard] updateHealthCard error:", e);
+  }
 }
 
 function startHealthPolling() {
@@ -956,9 +955,9 @@ function updateHealthCard() {
     const existing = titleEl.querySelector(".partial-badge");
     if (existing) existing.remove();
   }
-  const h = data.health;
-  const c = data.connections;
-  const st = data.stats;
+  const h = (data && data.health) || {};
+  const c = data && data.connections;
+  const st = data && data.stats;
   const uptimeSec = h.uptime_seconds;
   const cpu = h.system ? h.system.cpu_percent : null;
   const mem = h.system ? h.system.memory_percent : null;
@@ -1338,21 +1337,27 @@ function pollOverview() {
   useFetch(`${API}/setup-status`).then(({ data }) => {
     if (!data) return;
     if (currentRoute !== "overview") return;
-    const sig = JSON.stringify(data);
-    if (sig !== lastSetupStatus) {
-      lastSetupStatus = sig;
-      const tg = data.telegram_configured;
-      const cf = data.cloudflare_configured;
-      const init = data.initialized;
-      const allDone = tg && cf && init;
-      if (overviewRendered && allDone === overviewAllDone) {
-        updateOverviewInPlace(tg, cf, init, allDone);
-      } else {
-        const content = document.getElementById("content");
-        const actions = document.getElementById("header-actions");
-        if (content && actions) renderOverview(content, actions);
+    try {
+      const sig = JSON.stringify(data);
+      if (sig !== lastSetupStatus) {
+        lastSetupStatus = sig;
+        const tg = !!(data && data.telegram_configured);
+        const cf = !!(data && data.cloudflare_configured);
+        const init = !!(data && data.initialized);
+        const allDone = tg && cf && init;
+        if (overviewRendered && allDone === overviewAllDone) {
+          updateOverviewInPlace(tg, cf, init, allDone);
+        } else {
+          const content = document.getElementById("content");
+          const actions = document.getElementById("header-actions");
+          if (content && actions) renderOverview(content, actions);
+        }
       }
+    } catch (e) {
+      console.error("[dashboard] pollOverview error:", e);
     }
+  }).catch(e => {
+    console.error("[dashboard] pollOverview fetch error:", e);
   });
 }
 
@@ -1410,9 +1415,9 @@ async function renderOverview(content, actions) {
     return;
   }
   const staleBannerHtml = stale ? staleBanner() : "";
-  const tg = data.telegram_configured;
-  const cf = data.cloudflare_configured;
-  const init = data.initialized;
+  const tg = !!(data && data.telegram_configured);
+  const cf = !!(data && data.cloudflare_configured);
+  const init = !!(data && data.initialized);
   const allDone = tg && cf && init;
   lastSetupStatus = JSON.stringify(data);
   overviewAllDone = allDone;
@@ -1704,7 +1709,7 @@ function renderStep1(body, data) {
         <div class="setup-form">
           <div class="field">
             <label for="tg-token">Bot token <span class="req">*</span></label>
-            <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" spellcheck="false" aria-required="true">
+            <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" spellcheck="false" inputmode="text" aria-required="true">
             <div class="hint">From @BotFather - format: 123456789:AA... (35 char secret)</div>
           </div>
           <div class="field">
@@ -1763,7 +1768,7 @@ function renderStep2(body, data) {
         <div class="setup-form hidden" id="cf-token-form">
           <div class="field">
             <label for="cf-token">Tunnel token <span class="opt">(optional)</span></label>
-            <input class="input" id="cf-token" type="password" placeholder="eyJ..." autocomplete="off" spellcheck="false" disabled>
+            <input class="input" id="cf-token" type="password" placeholder="eyJ..." autocomplete="off" spellcheck="false" inputmode="text" disabled>
             <div class="hint">Must start with eyJ - from Cloudflare Tunnel dashboard</div>
           </div>
           <div class="field">
@@ -1885,6 +1890,7 @@ async function saveTelegram() {
       headers: jsonHeaders(true),
       body: JSON.stringify({ updates: { TELEGRAM_BOT_TOKEN: token, TELEGRAM_ADMIN_IDS: uid } }),
     });
+    const data = await r.json();
     setupDirty = false;
     invalidateCache(`${API}/setup-status`);
     invalidateCache(`${API}/config`);
@@ -1896,7 +1902,7 @@ async function saveTelegram() {
     } catch {}
     setBtnSuccess(btn, "Connected", 2000);
     result.innerHTML = `<div class="inline-ok">${ICONS.check}Connected as ${escapeHtml(botName)}</div>`;
-    if (r.needs_restart) {
+    if (data.needs_restart) {
       toast("Telegram configured - restart required", "ok");
     } else {
       toast("Telegram configured", "ok");
@@ -2182,18 +2188,18 @@ function editConfigKey(key) {
 async function rotateSecret(key, btn) {
   if (!key) return;
   const result = document.getElementById("settings-result");
-  const len = key === "SIGNAL_ENCRYPTION_KEY" ? 64 : 32;
-  const newVal = generateSecret(len);
   setBtnLoading(btn, "Rotating...");
   try {
-    await http(`${API}/config`, {
-      method: "PUT",
+    const r = await http(`${API}/config/rotate`, {
+      method: "POST",
       headers: jsonHeaders(true),
-      body: JSON.stringify({ updates: { [key]: newVal } }),
+      body: JSON.stringify({ key }),
     });
+    const data = await r.json();
     setBtnSuccess(btn, "Rotated", 2000);
-    if (result) result.innerHTML = `<div class="inline-ok">${ICONS.check}${escapeHtml(key)} rotated. Restart the server for the new value to take effect.</div>`;
-    toast(`${key} rotated - restart required`, "ok");
+    const suffix = data.needs_restart ? " Restart the server for the new value to take effect." : (data.bot_reloaded ? " Bot reloaded." : "");
+    if (result) result.innerHTML = `<div class="inline-ok">${ICONS.check}${escapeHtml(key)} rotated.${suffix}</div>`;
+    toast(data.needs_restart ? `${key} rotated - restart required` : `${key} rotated`, "ok");
     invalidateCache(`${API}/config`);
     setTimeout(() => route("settings"), 1500);
   } catch (e) {
@@ -2221,8 +2227,9 @@ async function saveConfigChange() {
     });
     const data = await r.json();
     setBtnSuccess(btn, "Saved", 2000);
-    if (result) result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved ${escapeHtml(key)}.${data.needs_restart ? " Restart the server for the change to take effect." : ""}</div>`;
-    toast("Configuration saved", "ok");
+    const suffix = data.needs_restart ? " Server restart required for changes to take effect." : (data.bot_reloaded ? " Bot reloaded." : "");
+    if (result) result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved ${escapeHtml(key)}.${suffix}</div>`;
+    toast(data.needs_restart ? "Saved - restart required" : "Configuration saved", "ok");
     invalidateCache(`${API}/config`);
     keyEl.value = "";
     valEl.value = "";
@@ -2335,40 +2342,50 @@ function renderSignalFeed(content, actions) {
 
 async function pollSignalFeed() {
   if (currentRoute !== "signals" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch("/api/signals/recent?limit=50");
-  const staleEl = document.getElementById("feed-stale-banner");
-  if (staleEl) staleEl.remove();
-  if (error && !data) {
-    const body = document.getElementById("feed-body");
-    if (body) body.innerHTML = `<tr><td colspan="7" class="feed-empty feed-error">${errorPanel("signal feed", error, "retry-signals")}</td></tr>`;
-    bindRetryToScope("retry-signals", () => route("signals"));
+  let result;
+  try {
+    result = await useFetch("/api/signals/recent?limit=50");
+  } catch (e) {
+    console.error("[dashboard] pollSignalFeed fetch error:", e);
     return;
   }
-  if (stale && data) {
-    const card = document.querySelector("#feed-scroll");
-    if (card && !document.getElementById("feed-stale-banner")) {
-      const banner = document.createElement("div");
-      banner.id = "feed-stale-banner";
-      banner.innerHTML = staleBanner();
-      card.parentNode.insertBefore(banner, card);
+  if (currentRoute !== "signals") return;
+  const { data, error, stale } = result;
+  try {
+    const staleEl = document.getElementById("feed-stale-banner");
+    if (staleEl) staleEl.remove();
+    if (error && !data) {
+      const body = document.getElementById("feed-body");
+      if (body) body.innerHTML = `<tr><td colspan="7" class="feed-empty feed-error">${errorPanel("signal feed", error, "retry-signals")}</td></tr>`;
+      bindRetryToScope("retry-signals", () => route("signals"));
+      return;
     }
-  }
-  if (!data || !data.signals) return;
-  const incoming = data.signals;
-  let newRows = [];
-  for (const w of incoming) {
-    const id = w.id;
-    if (signalFeedState.seenIds.has(id)) continue;
-    newRows.push(w);
-    signalFeedState.seenIds.add(id);
-  }
-  if (newRows.length > 0) {
-    signalFeedState.rows = newRows.concat(signalFeedState.rows).slice(0, 100);
-  }
-  if (signalFeedState.rows.length === 0 && incoming.length > 0) {
-    signalFeedState.rows = incoming.slice(0, 100);
-    incoming.forEach(w => signalFeedState.seenIds.add(w.id));
-  }
+    if (stale && data) {
+      const card = document.querySelector("#feed-scroll");
+      if (card && !document.getElementById("feed-stale-banner")) {
+        const banner = document.createElement("div");
+        banner.id = "feed-stale-banner";
+        banner.innerHTML = staleBanner();
+        card.parentNode.insertBefore(banner, card);
+      }
+    }
+    if (!data || !data.signals || !Array.isArray(data.signals)) return;
+    const incoming = data.signals;
+    let newRows = [];
+    for (const w of incoming) {
+      if (!w || w.id == null) continue;
+      const id = w.id;
+      if (signalFeedState.seenIds.has(id)) continue;
+      newRows.push(w);
+      signalFeedState.seenIds.add(id);
+    }
+    if (newRows.length > 0) {
+      signalFeedState.rows = newRows.concat(signalFeedState.rows).slice(0, 100);
+    }
+    if (signalFeedState.rows.length === 0 && incoming.length > 0) {
+      signalFeedState.rows = incoming.slice(0, 100);
+      incoming.forEach(w => { if (w && w.id != null) signalFeedState.seenIds.add(w.id); });
+    }
   const licenseSet = new Set();
   for (const r of signalFeedState.rows) {
     const lk = r.license_key || "";
@@ -2406,6 +2423,9 @@ async function pollSignalFeed() {
   if (newRows.length > 0 || !signalFeedState._renderedOnce) {
     renderFeedRows();
     signalFeedState._renderedOnce = true;
+  }
+  } catch (e) {
+    console.error("[dashboard] pollSignalFeed error:", e);
   }
 }
 
@@ -2492,120 +2512,135 @@ function renderEaMap(content, actions) {
 
 async function pollEaMap() {
   if (currentRoute !== "ea-map" || !visibilityPolling) return;
-  const [overviewRes, eaCheckRes] = await Promise.all([
-    useFetch("/api/ea/ws-telemetry/overview").catch(() => ({ data: null, error: "telemetry", stale: false })),
-    useFetch("/health/ea-check").catch(() => ({ data: null, error: "ea-check", stale: false })),
-  ]);
-  const overview = overviewRes.data;
-  const eaCheck = eaCheckRes.data;
-  const grid = document.getElementById("ea-grid");
-  if (!grid) return;
-  const staleBannerEl = document.getElementById("ea-stale-banner");
-  const partials = [];
-  if (overviewRes.error && !overview) partials.push("telemetry");
-  if (eaCheckRes.error && !eaCheck) partials.push("EA health check");
-  if (staleBannerEl) {
-    if ((overviewRes.stale || eaCheckRes.stale) && (overview || eaCheck)) {
-      staleBannerEl.innerHTML = staleBanner();
-    } else if (partials.length > 0 && (overview || eaCheck)) {
-      staleBannerEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
-    } else {
-      staleBannerEl.innerHTML = "";
-    }
-  }
-  if (!overview && !eaCheck) {
-    const oe = overviewRes.error || "";
-    const ee = eaCheckRes.error || "";
-    const msg = oe && ee && oe === ee ? oe : (oe + (oe && ee ? " / " : "") + ee);
-    grid.innerHTML = errorPanel("EA connections", msg || "Server error or unreachable", "retry-ea");
-    bindRetryToScope("retry-ea", () => pollEaMap());
+  let overviewRes, eaCheckRes;
+  try {
+    [overviewRes, eaCheckRes] = await Promise.all([
+      useFetch("/api/ea/ws-telemetry/overview").catch(() => ({ data: null, error: "telemetry", stale: false })),
+      useFetch("/health/ea-check").catch(() => ({ data: null, error: "ea-check", stale: false })),
+    ]);
+  } catch (e) {
+    console.error("[dashboard] pollEaMap fetch error:", e);
     return;
   }
-  const licenses = (overview && overview.licenses) ? overview.licenses : [];
-  const dbConns = (eaCheck && eaCheck.db_connections) ? eaCheck.db_connections : [];
-  const wsCounts = (eaCheck && eaCheck.ws_connection_counts) ? eaCheck.ws_connection_counts : {};
-  const merged = [];
-  const seen = new Set();
-  for (const lic of licenses) {
-    const key = lic.license_key;
-    const wsCount = wsCounts[key] || 0;
-    merged.push({
-      license_key: key,
-      masked: maskKey(key),
-      account: lic.account || null,
-      health: lic.health || null,
-      open_position_count: lic.open_position_count || 0,
-      connType: "WS",
-      wsCount: wsCount,
-      lastSeen: lic.health && lic.health.timestamp ? lic.health.timestamp : (lic.account && lic.account.timestamp ? lic.account.timestamp : null),
-      latency: lic.health && lic.health.ws_latency_ms != null ? lic.health.ws_latency_ms : null,
-    });
-    seen.add(key);
-  }
-  for (const c of dbConns) {
-    const key = c.license_key || "--";
-    if (seen.has(key)) {
-      const existing = merged.find(m => m.license_key === key);
-      if (existing) {
-        existing.connType = "WS+HTTP";
-        if (!existing.lastSeen && c.last_seen) existing.lastSeen = c.last_seen;
+  if (currentRoute !== "ea-map") return;
+  try {
+    const overview = overviewRes ? overviewRes.data : null;
+    const eaCheck = eaCheckRes ? eaCheckRes.data : null;
+    const grid = document.getElementById("ea-grid");
+    if (!grid) return;
+    const staleBannerEl = document.getElementById("ea-stale-banner");
+    const partials = [];
+    if (overviewRes && overviewRes.error && !overview) partials.push("telemetry");
+    if (eaCheckRes && eaCheckRes.error && !eaCheck) partials.push("EA health check");
+    if (staleBannerEl) {
+      if ((overviewRes && overviewRes.stale || eaCheckRes && eaCheckRes.stale) && (overview || eaCheck)) {
+        staleBannerEl.innerHTML = staleBanner();
+      } else if (partials.length > 0 && (overview || eaCheck)) {
+        staleBannerEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+      } else {
+        staleBannerEl.innerHTML = "";
       }
-      continue;
     }
-    merged.push({
-      license_key: key,
-      masked: maskKey(key),
-      account: null,
-      health: null,
-      open_position_count: 0,
-      connType: c.type || "HTTP",
-      wsCount: 0,
-      lastSeen: c.last_seen || null,
-      latency: null,
-    });
-    seen.add(key);
+    if (!overview && !eaCheck) {
+      const oe = (overviewRes && overviewRes.error) || "";
+      const ee = (eaCheckRes && eaCheckRes.error) || "";
+      const msg = oe && ee && oe === ee ? oe : (oe + (oe && ee ? " / " : "") + ee);
+      grid.innerHTML = errorPanel("EA connections", msg || "Server error or unreachable", "retry-ea");
+      bindRetryToScope("retry-ea", () => pollEaMap());
+      return;
+    }
+    const licenses = (overview && Array.isArray(overview.licenses)) ? overview.licenses : [];
+    const dbConns = (eaCheck && Array.isArray(eaCheck.db_connections)) ? eaCheck.db_connections : [];
+    const wsCounts = (eaCheck && eaCheck.ws_connection_counts) ? eaCheck.ws_connection_counts : {};
+    const merged = [];
+    const seen = new Set();
+    for (const lic of licenses) {
+      if (!lic || !lic.license_key) continue;
+      const key = lic.license_key;
+      const wsCount = wsCounts[key] || 0;
+      merged.push({
+        license_key: key,
+        masked: maskKey(key),
+        account: lic.account || null,
+        health: lic.health || null,
+        open_position_count: lic.open_position_count || 0,
+        connType: "WS",
+        wsCount: wsCount,
+        lastSeen: (lic.health && lic.health.timestamp) ? lic.health.timestamp : ((lic.account && lic.account.timestamp) ? lic.account.timestamp : null),
+        latency: (lic.health && lic.health.ws_latency_ms != null) ? lic.health.ws_latency_ms : null,
+      });
+      seen.add(key);
+    }
+    for (const c of dbConns) {
+      if (!c) continue;
+      const key = c.license_key || "--";
+      if (seen.has(key)) {
+        const existing = merged.find(m => m.license_key === key);
+        if (existing) {
+          existing.connType = "WS+HTTP";
+          if (!existing.lastSeen && c.last_seen) existing.lastSeen = c.last_seen;
+        }
+        continue;
+      }
+      merged.push({
+        license_key: key,
+        masked: maskKey(key),
+        account: null,
+        health: null,
+        open_position_count: 0,
+        connType: c.type || "HTTP",
+        wsCount: 0,
+        lastSeen: c.last_seen || null,
+        latency: null,
+      });
+      seen.add(key);
+    }
+    if (merged.length === 0) {
+      grid.innerHTML = emptyState(ICONS.map, "No EAs connected. Install the EA on your MetaTrader to get started.", "Go to Setup", "empty-goto-setup");
+      const btn = grid.querySelector("[data-action='empty-goto-setup']");
+      if (btn) btn.addEventListener("click", e => { e.preventDefault(); route("setup"); });
+      return;
+    }
+    const now = Date.now();
+    grid.innerHTML = merged.map(ea => {
+      const lastSeenMs = ea.lastSeen ? new Date(ea.lastSeen).getTime() : 0;
+      const ageSec = ea.lastSeen ? (now - lastSeenMs) / 1000 : 999;
+      const statusCls = ageSec < 30 ? "ea-ok" : ageSec < 120 ? "ea-warn" : "ea-bad";
+      const statusLabel = ageSec < 30 ? "Connected" : ageSec < 120 ? "Stale" : "Disconnected";
+      const acc = ea.account || {};
+      const balance = acc.balance != null ? formatCurrency(acc.balance) : "--";
+      const equity = acc.equity != null ? formatCurrency(acc.equity) : "--";
+      const marginLevel = formatMarginLevel(acc.margin_level);
+      const broker = acc.company || acc.server || "--";
+      const positions = ea.open_position_count || 0;
+      const lat = ea.latency != null ? formatLatency(ea.latency) : "--";
+      const connBadge = ea.connType === "WS"
+        ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span>`
+        : ea.connType === "WS+HTTP"
+          ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span><span class="conn-badge http">HTTP</span>`
+          : '<span class="conn-badge http">HTTP</span>';
+      return `<div class="ea-card ${statusCls}" data-key="${escapeHtml(ea.license_key)}" data-action="ea-expand" tabindex="0" role="button" aria-expanded="false" aria-label="EA ${escapeHtml(ea.masked)}, ${statusLabel}, click to view trades">
+        <div class="ea-card-head">
+          <span class="ea-key">${escapeHtml(ea.masked)}</span>
+          ${connBadge}
+          <span class="ea-status ${statusCls}">${statusLabel}</span>
+        </div>
+        <div class="ea-card-body">
+          <div class="ea-row"><span>Broker</span><span>${escapeHtml(broker)}</span></div>
+          <div class="ea-row"><span>Balance</span><span class="ea-num">${escapeHtml(String(balance))}</span></div>
+          <div class="ea-row"><span>Equity</span><span class="ea-num">${escapeHtml(String(equity))}</span></div>
+          <div class="ea-row"><span>Margin Lvl</span><span class="ea-num">${escapeHtml(String(marginLevel))}</span></div>
+          <div class="ea-row"><span>Positions</span><span class="ea-num">${formatNumber(positions)}</span></div>
+          <div class="ea-row"><span>Last Seen</span><span>${escapeHtml(formatTime(ea.lastSeen))}</span></div>
+          <div class="ea-row"><span>Latency</span><span class="ea-num">${escapeHtml(lat)}</span></div>
+        </div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    console.error("[dashboard] pollEaMap error:", e);
+    const grid = document.getElementById("ea-grid");
+    if (grid) grid.innerHTML = errorPanel("EA connections", friendlyMsg(e), "retry-ea");
   }
-  if (merged.length === 0) {
-    grid.innerHTML = emptyState(ICONS.map, "No EAs connected. Install the EA on your MetaTrader to get started.", "Go to Setup", "empty-goto-setup");
-    const btn = grid.querySelector("[data-action='empty-goto-setup']");
-    if (btn) btn.addEventListener("click", e => { e.preventDefault(); route("setup"); });
-    return;
-  }
-  const now = Date.now();
-  grid.innerHTML = merged.map(ea => {
-    const lastSeenMs = ea.lastSeen ? new Date(ea.lastSeen).getTime() : 0;
-    const ageSec = ea.lastSeen ? (now - lastSeenMs) / 1000 : 999;
-    const statusCls = ageSec < 30 ? "ea-ok" : ageSec < 120 ? "ea-warn" : "ea-bad";
-    const statusLabel = ageSec < 30 ? "Connected" : ageSec < 120 ? "Stale" : "Disconnected";
-    const acc = ea.account || {};
-    const balance = acc.balance != null ? formatCurrency(acc.balance) : "--";
-    const equity = acc.equity != null ? formatCurrency(acc.equity) : "--";
-    const marginLevel = formatMarginLevel(acc.margin_level);
-    const broker = acc.company || acc.server || "--";
-    const positions = ea.open_position_count || 0;
-    const lat = ea.latency != null ? formatLatency(ea.latency) : "--";
-    const connBadge = ea.connType === "WS"
-      ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span>`
-      : ea.connType === "WS+HTTP"
-        ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span><span class="conn-badge http">HTTP</span>`
-        : '<span class="conn-badge http">HTTP</span>';
-    return `<div class="ea-card ${statusCls}" data-key="${escapeHtml(ea.license_key)}" data-action="ea-expand" tabindex="0" role="button" aria-expanded="false" aria-label="EA ${escapeHtml(ea.masked)}, ${statusLabel}, click to view trades">
-      <div class="ea-card-head">
-        <span class="ea-key">${escapeHtml(ea.masked)}</span>
-        ${connBadge}
-        <span class="ea-status ${statusCls}">${statusLabel}</span>
-      </div>
-      <div class="ea-card-body">
-        <div class="ea-row"><span>Broker</span><span>${escapeHtml(broker)}</span></div>
-        <div class="ea-row"><span>Balance</span><span class="ea-num">${escapeHtml(String(balance))}</span></div>
-        <div class="ea-row"><span>Equity</span><span class="ea-num">${escapeHtml(String(equity))}</span></div>
-        <div class="ea-row"><span>Margin Lvl</span><span class="ea-num">${escapeHtml(String(marginLevel))}</span></div>
-        <div class="ea-row"><span>Positions</span><span class="ea-num">${formatNumber(positions)}</span></div>
-        <div class="ea-row"><span>Last Seen</span><span>${escapeHtml(formatTime(ea.lastSeen))}</span></div>
-        <div class="ea-row"><span>Latency</span><span class="ea-num">${escapeHtml(lat)}</span></div>
-      </div>
-    </div>`;
-  }).join("");
 }
 
 function toggleEaCard(card) {
@@ -2699,57 +2734,67 @@ function renderTradeAnalytics(content, actions) {
 
 async function pollTradeAnalytics() {
   if (currentRoute !== "analytics" || !visibilityPolling) return;
-  const [statsRes, dashRes] = await Promise.all([
-    useFetch("/api/statistics?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
-    useFetch("/api/trades/admin/dashboard").catch(() => ({ data: null, error: "dashboard", stale: false })),
-  ]);
+  let statsRes, dashRes;
+  try {
+    [statsRes, dashRes] = await Promise.all([
+      useFetch("/api/statistics?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
+      useFetch("/api/trades/admin/dashboard").catch(() => ({ data: null, error: "dashboard", stale: false })),
+    ]);
+  } catch (e) {
+    console.error("[dashboard] pollTradeAnalytics fetch error:", e);
+    return;
+  }
   if (currentRoute !== "analytics") return;
-  const stats = statsRes.data;
-  const dash = dashRes.data;
-  const staleEl = document.getElementById("analytics-stale-banner");
-  if (staleEl) {
-    const partials = [];
-    if (statsRes.error && !stats) partials.push("statistics");
-    if (dashRes.error && !dash) partials.push("dashboard");
-    if ((statsRes.stale || dashRes.stale) && (stats || dash)) {
-      staleEl.innerHTML = staleBanner();
-    } else if (partials.length > 0 && (stats || dash)) {
-      staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
-    } else {
-      staleEl.innerHTML = "";
+  try {
+    const stats = statsRes ? statsRes.data : null;
+    const dash = dashRes ? dashRes.data : null;
+    const staleEl = document.getElementById("analytics-stale-banner");
+    if (staleEl) {
+      const partials = [];
+      if (statsRes && statsRes.error && !stats) partials.push("statistics");
+      if (dashRes && dashRes.error && !dash) partials.push("dashboard");
+      if ((statsRes && statsRes.stale || dashRes && dashRes.stale) && (stats || dash)) {
+        staleEl.innerHTML = staleBanner();
+      } else if (partials.length > 0 && (stats || dash)) {
+        staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+      } else {
+        staleEl.innerHTML = "";
+      }
     }
-  }
-  if (!stats && !dash) {
-    const content = document.getElementById("content");
-    if (content) {
-      content.innerHTML = errorPanel("analytics", "Statistics and dashboard endpoints unavailable", "retry-analytics");
-      bindRetryToScope("retry-analytics", () => route("analytics"));
+    if (!stats && !dash) {
+      const content = document.getElementById("content");
+      if (content) {
+        content.innerHTML = errorPanel("analytics", "Statistics and dashboard endpoints unavailable", "retry-analytics");
+        bindRetryToScope("retry-analytics", () => route("analytics"));
+      }
+      return;
     }
-    return;
-  }
-  const overall = (stats && stats.overall) || {};
-  const daily = (stats && stats.daily) || [];
-  const alerts = (stats && stats.alerts) || {};
-  const setStat = (id, val, cls) => setTile(id, val, cls);
-  const totalTrades = overall.total_trades || (dash && dash.overview && dash.overview.total_trades) || 0;
-  const successRate = overall.success_rate != null ? overall.success_rate : (dash && dash.overview && dash.overview.success_rate) || 0;
-  const avgLatency = alerts.avg_response_time != null ? alerts.avg_response_time : (overall.avg_latency != null ? overall.avg_latency : null);
-  const profitFactor = overall.profit_factor != null ? overall.profit_factor : null;
-  if (totalTrades === 0 && !stats) {
-    const content = document.getElementById("content");
-    if (content) {
-      const staleHtml = (statsRes.stale || dashRes.stale) ? staleBanner() : "";
-      content.innerHTML = `${staleHtml}${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}`;
+    const overall = (stats && stats.overall) || {};
+    const daily = (stats && Array.isArray(stats.daily)) ? stats.daily : [];
+    const alerts = (stats && stats.alerts) || {};
+    const setStat = (id, val, cls) => setTile(id, val, cls);
+    const totalTrades = overall.total_trades || (dash && dash.overview && dash.overview.total_trades) || 0;
+    const successRate = overall.success_rate != null ? overall.success_rate : ((dash && dash.overview && dash.overview.success_rate) || 0);
+    const avgLatency = alerts.avg_response_time != null ? alerts.avg_response_time : (overall.avg_latency != null ? overall.avg_latency : null);
+    const profitFactor = overall.profit_factor != null ? overall.profit_factor : null;
+    if (totalTrades === 0 && !stats) {
+      const content = document.getElementById("content");
+      if (content) {
+        const staleHtml = ((statsRes && statsRes.stale) || (dashRes && dashRes.stale)) ? staleBanner() : "";
+        content.innerHTML = `${staleHtml}${emptyState(ICONS.analytics, "No trades yet. Signals will appear here after the first execution.")}`;
+      }
+      return;
     }
-    return;
+    setStat("stat-total", formatNumber(totalTrades), totalTrades > 0 ? "ok" : "info");
+    setStat("stat-winrate", formatPct(successRate), successRate >= 60 ? "ok" : successRate >= 40 ? "warn" : "bad");
+    setStat("stat-latency", avgLatency != null ? formatLatency(avgLatency) : "--", avgLatency != null && avgLatency < 100 ? "ok" : avgLatency != null && avgLatency < 500 ? "warn" : "info");
+    setStat("stat-pf", profitFactor != null ? profitFactor.toFixed(2) : "--", profitFactor != null && profitFactor >= 1.5 ? "ok" : profitFactor != null && profitFactor >= 1 ? "warn" : "info");
+    drawBarChart(daily, dash);
+    drawLineChart(daily);
+    drawDonutChart(stats, dash);
+  } catch (e) {
+    console.error("[dashboard] pollTradeAnalytics error:", e);
   }
-  setStat("stat-total", formatNumber(totalTrades), totalTrades > 0 ? "ok" : "info");
-  setStat("stat-winrate", formatPct(successRate), successRate >= 60 ? "ok" : successRate >= 40 ? "warn" : "bad");
-  setStat("stat-latency", avgLatency != null ? formatLatency(avgLatency) : "--", avgLatency != null && avgLatency < 100 ? "ok" : avgLatency != null && avgLatency < 500 ? "warn" : "info");
-  setStat("stat-pf", profitFactor != null ? profitFactor.toFixed(2) : "--", profitFactor != null && profitFactor >= 1.5 ? "ok" : profitFactor != null && profitFactor >= 1 ? "warn" : "info");
-  drawBarChart(daily, dash);
-  drawLineChart(daily);
-  drawDonutChart(stats, dash);
 }
 
 function drawBarChart(daily, dash) {
@@ -2957,77 +3002,89 @@ let pipelineState = {
 
 async function pollPipeline() {
   if (currentRoute !== "pipeline" || !visibilityPolling) return;
-  const [statusRes, metricsText] = await Promise.all([
-    useFetch("/api/status").catch(() => ({ data: null, error: "status", stale: false })),
-    fetchMetrics(),
-  ]);
-  if (currentRoute !== "pipeline") return;
-  const status = statusRes.data;
-  const m = metricsText;
-  const staleEl = document.getElementById("pipeline-stale-banner");
-  if (staleEl) {
-    if (statusRes.stale && status) {
-      staleEl.innerHTML = staleBanner();
-    } else if (statusRes.error && !status && m) {
-      staleEl.innerHTML = partialWarning("status endpoint unavailable");
-    } else if (!m && status) {
-      staleEl.innerHTML = partialWarning("metrics endpoint unavailable");
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (!status && !m) {
-    const content = document.getElementById("content");
-    if (content) {
-      content.innerHTML = errorPanel("pipeline", "Status and metrics endpoints unavailable", "retry-pipeline");
-      bindRetryToScope("retry-pipeline", () => route("pipeline"));
-    }
+  let statusRes, metricsText;
+  try {
+    [statusRes, metricsText] = await Promise.all([
+      useFetch("/api/status").catch(() => ({ data: null, error: "status", stale: false })),
+      fetchMetrics(),
+    ]);
+  } catch (e) {
+    console.error("[dashboard] pollPipeline fetch error:", e);
     return;
   }
-  const webhookTotal = parsePromMetric(m, "pinetunnel_webhook_signals_total");
-  const queueDepth = parsePromMetric(m, "pinetunnel_signal_queue_depth");
-  const wsConn = parsePromMetric(m, "pinetunnel_websocket_connections");
-  const wsDelivered = parsePromMetric(m, "pinetunnel_websocket_signals_delivered_total");
-  const dupes = parsePromMetricLabeled(m, "pinetunnel_webhook_signals_total", { result: "duplicate" });
-  const retries = parsePromMetricLabeled(m, "pinetunnel_webhook_signals_total", { result: "retry" });
-  const httpDur = parseHistogram(m, "pinetunnel_http_request_duration_seconds");
-  const received = webhookTotal;
-  const delivered = wsDelivered || (status && status.connections && status.connections.total_connections) || 0;
-  const validated = received;
-  const acked = delivered;
-  const counts = [received, queueDepth || 0, validated, delivered, acked];
-  for (let i = 0; i < 5; i++) {
-    const el = document.getElementById(`pipe-count-${i}`);
-    if (el) el.textContent = counts[i] != null ? formatNumber(counts[i]) : "--";
-  }
-  const queueWrap = document.getElementById("queue-gauge-wrap");
-  if (queueWrap) {
-    const qd = queueDepth || 0;
-    const qPct = Math.min(100, (qd / 50) * 100);
-    updateGauge(queueWrap, qPct, "Queue", { diskMode: false });
-    const valEl = queueWrap.querySelector(".gauge-value");
-    if (valEl) valEl.textContent = formatNumber(qd);
-  }
-  if (delivered > pipelineState.lastDelivered) {
-    const diff = delivered - pipelineState.lastDelivered;
-    pipelineState.signalHistory.push({ t: Date.now(), n: diff });
-    if (pipelineState.lastDelivered > 0 && httpDur && httpDur.avg != null) {
-      pipelineState.latencies.push(httpDur.avg * 1000);
-      if (pipelineState.latencies.length > 100) pipelineState.latencies = pipelineState.latencies.slice(-50);
+  if (currentRoute !== "pipeline") return;
+  try {
+    const status = statusRes ? statusRes.data : null;
+    const m = metricsText;
+    const staleEl = document.getElementById("pipeline-stale-banner");
+    if (staleEl) {
+      if (statusRes && statusRes.stale && status) {
+        staleEl.innerHTML = staleBanner();
+      } else if (statusRes && statusRes.error && !status && m) {
+        staleEl.innerHTML = partialWarning("status endpoint unavailable");
+      } else if (!m && status) {
+        staleEl.innerHTML = partialWarning("metrics endpoint unavailable");
+      } else {
+        staleEl.innerHTML = "";
+      }
     }
-    pipelineState.lastDelivered = delivered;
+    if (!status && !m) {
+      const content = document.getElementById("content");
+      if (content) {
+        content.innerHTML = errorPanel("pipeline", "Status and metrics endpoints unavailable", "retry-pipeline");
+        bindRetryToScope("retry-pipeline", () => route("pipeline"));
+      }
+      return;
+    }
+    const webhookTotal = parsePromMetric(m, "pinetunnel_webhook_signals_total");
+    const queueDepth = parsePromMetric(m, "pinetunnel_signal_queue_depth");
+    const wsConn = parsePromMetric(m, "pinetunnel_websocket_connections");
+    const wsDelivered = parsePromMetric(m, "pinetunnel_websocket_signals_delivered_total");
+    const dupes = parsePromMetricLabeled(m, "pinetunnel_webhook_signals_total", { result: "duplicate" });
+    const retries = parsePromMetricLabeled(m, "pinetunnel_webhook_signals_total", { result: "retry" });
+    const wsPushLat = (status && status.ws_push_latency) || null;
+    const wsPushAvgMs = (wsPushLat && wsPushLat.ws_push_avg_ms != null) ? wsPushLat.ws_push_avg_ms : null;
+    const wsPushCount = (wsPushLat && wsPushLat.ws_push_count != null) ? wsPushLat.ws_push_count : 0;
+    const received = webhookTotal;
+    const delivered = wsDelivered || wsPushCount || (status && status.connections && status.connections.total_connections) || 0;
+    const validated = received;
+    const acked = delivered;
+    const counts = [received, queueDepth || 0, validated, delivered, acked];
+    for (let i = 0; i < 5; i++) {
+      const el = document.getElementById(`pipe-count-${i}`);
+      if (el) el.textContent = counts[i] != null ? formatNumber(counts[i]) : "--";
+    }
+    const queueWrap = document.getElementById("queue-gauge-wrap");
+    if (queueWrap) {
+      const qd = queueDepth || 0;
+      const qPct = Math.min(100, (qd / 50) * 100);
+      updateGauge(queueWrap, qPct, "Queue", { diskMode: false });
+      const valEl = queueWrap.querySelector(".gauge-value");
+      if (valEl) valEl.textContent = formatNumber(qd);
+    }
+    if (delivered > pipelineState.lastDelivered) {
+      const diff = delivered - pipelineState.lastDelivered;
+      pipelineState.signalHistory.push({ t: Date.now(), n: diff });
+      if (pipelineState.lastDelivered > 0 && httpDur && httpDur.avg != null) {
+        pipelineState.latencies.push(httpDur.avg * 1000);
+        if (pipelineState.latencies.length > 100) pipelineState.latencies = pipelineState.latencies.slice(-50);
+      }
+      pipelineState.lastDelivered = delivered;
+    }
+    pipelineState.signalHistory = (pipelineState.signalHistory || []).filter(h => h && Date.now() - h.t < 60000);
+    const perMin = pipelineState.signalHistory.reduce((s, h) => s + (h ? h.n : 0), 0);
+    const tpEl = document.getElementById("throughput-stat");
+    if (tpEl) {
+      const v = tpEl.querySelector(".value");
+      if (v) v.textContent = formatNumber(perMin);
+      tpEl.className = `stat big-stat ${perMin > 10 ? "ok" : perMin > 0 ? "info" : "warn"}`;
+    }
+    setTile("stat-dupes", formatNumber(dupes || 0), dupes > 0 ? "warn" : "ok");
+    setTile("stat-retries", formatNumber(retries || 0), retries > 0 ? "warn" : "ok");
+    drawHistogram();
+  } catch (e) {
+    console.error("[dashboard] pollPipeline error:", e);
   }
-  pipelineState.signalHistory = pipelineState.signalHistory.filter(h => Date.now() - h.t < 60000);
-  const perMin = pipelineState.signalHistory.reduce((s, h) => s + h.n, 0);
-  const tpEl = document.getElementById("throughput-stat");
-  if (tpEl) {
-    const v = tpEl.querySelector(".value");
-    if (v) v.textContent = formatNumber(perMin);
-    tpEl.className = `stat big-stat ${perMin > 10 ? "ok" : perMin > 0 ? "info" : "warn"}`;
-  }
-  setTile("stat-dupes", formatNumber(dupes || 0), dupes > 0 ? "warn" : "ok");
-  setTile("stat-retries", formatNumber(retries || 0), retries > 0 ? "warn" : "ok");
-  drawHistogram();
 }
 
 function drawHistogram() {
@@ -3224,49 +3281,59 @@ let sysHealthState = { cpu: [], mem: [], disk: null, lastHealth: null, lastStats
 
 async function pollSystemHealth() {
   if (currentRoute !== "sys-health" || !visibilityPolling) return;
-  const [hRes, sRes] = await Promise.all([
-    useFetch("/api/system/health").catch(() => ({ data: null, error: "health", stale: false })),
-    useFetch("/api/system/stats").catch(() => ({ data: null, error: "stats", stale: false })),
-  ]);
-  if (currentRoute !== "sys-health") return;
-  const h = hRes.data;
-  const s = sRes.data;
-  const staleEl = document.getElementById("sh-stale-banner");
-  if (staleEl) {
-    const partials = [];
-    if (hRes.error && !h) partials.push("health");
-    if (sRes.error && !s) partials.push("stats");
-    if ((hRes.stale || sRes.stale) && (h || s)) {
-      staleEl.innerHTML = staleBanner();
-    } else if (partials.length > 0 && (h || s)) {
-      staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (!h && !s) {
-    const content = domCache.content || document.getElementById("content");
-    if (content) {
-      content.innerHTML = errorPanel("system health", "Health and stats endpoints unavailable", "retry-sys-health");
-      bindRetryToScope("retry-sys-health", () => route("sys-health"));
-    }
+  let hRes, sRes;
+  try {
+    [hRes, sRes] = await Promise.all([
+      useFetch("/api/system/health").catch(() => ({ data: null, error: "health", stale: false })),
+      useFetch("/api/system/stats").catch(() => ({ data: null, error: "stats", stale: false })),
+    ]);
+  } catch (e) {
+    console.error("[dashboard] pollSystemHealth fetch error:", e);
     return;
   }
-  if (h) {
-    const cpu = h.system ? h.system.cpu_percent : null;
-    const mem = h.system ? h.system.memory_percent : null;
-    if (cpu != null) {
-      sysHealthState.cpu.push(cpu);
-      if (sysHealthState.cpu.length > 60) sysHealthState.cpu.shift();
+  if (currentRoute !== "sys-health") return;
+  try {
+    const h = hRes ? hRes.data : null;
+    const s = sRes ? sRes.data : null;
+    const staleEl = document.getElementById("sh-stale-banner");
+    if (staleEl) {
+      const partials = [];
+      if (hRes && hRes.error && !h) partials.push("health");
+      if (sRes && sRes.error && !s) partials.push("stats");
+      if ((hRes && hRes.stale || sRes && sRes.stale) && (h || s)) {
+        staleEl.innerHTML = staleBanner();
+      } else if (partials.length > 0 && (h || s)) {
+        staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+      } else {
+        staleEl.innerHTML = "";
+      }
     }
-    if (mem != null) {
-      sysHealthState.mem.push(mem);
-      if (sysHealthState.mem.length > 60) sysHealthState.mem.shift();
+    if (!h && !s) {
+      const content = domCache.content || document.getElementById("content");
+      if (content) {
+        content.innerHTML = errorPanel("system health", "Health and stats endpoints unavailable", "retry-sys-health");
+        bindRetryToScope("retry-sys-health", () => route("sys-health"));
+      }
+      return;
     }
-    sysHealthState.lastHealth = h;
+    if (h) {
+      const cpu = h.system ? h.system.cpu_percent : null;
+      const mem = h.system ? h.system.memory_percent : null;
+      if (cpu != null) {
+        sysHealthState.cpu.push(cpu);
+        if (sysHealthState.cpu.length > 60) sysHealthState.cpu.shift();
+      }
+      if (mem != null) {
+        sysHealthState.mem.push(mem);
+        if (sysHealthState.mem.length > 60) sysHealthState.mem.shift();
+      }
+      sysHealthState.lastHealth = h;
+    }
+    if (s) sysHealthState.lastStats = s;
+    updateSystemHealthUI();
+  } catch (e) {
+    console.error("[dashboard] pollSystemHealth error:", e);
   }
-  if (s) sysHealthState.lastStats = s;
-  updateSystemHealthUI();
 }
 
 function updateSystemHealthUI() {
@@ -3280,10 +3347,10 @@ function updateSystemHealthUI() {
   const memVal = h.system ? h.system.memory_percent : null;
   setTile("sh-cpu-val", cpuVal != null ? formatPct(cpuVal) : "--", loadColor(cpuVal));
   setTile("sh-mem-val", memVal != null ? formatPct(memVal) : "--", loadColor(memVal));
-  setTile("sh-threads", h.process ? formatNumber(h.process.threads) : "--", "info");
-  setTile("sh-proc-mem", h.process ? formatBytes(h.process.memory_mb * 1048576) : "--", "info");
-  setTile("sh-proc-cpu", h.process ? formatPct(h.process.cpu_percent) : "--", loadColor(h.process ? h.process.cpu_percent : null));
-  setTile("sh-mem-avail", h.system && h.system.memory_available_gb != null ? (h.system.memory_available_gb.toFixed(1) + " GB") : "--", "info");
+  setTile("sh-threads", (h.process && h.process.threads != null) ? formatNumber(h.process.threads) : "--", "info");
+  setTile("sh-proc-mem", (h.process && h.process.memory_mb != null) ? formatBytes(h.process.memory_mb * 1048576) : "--", "info");
+  setTile("sh-proc-cpu", (h.process && h.process.cpu_percent != null) ? formatPct(h.process.cpu_percent) : "--", loadColor(h.process ? h.process.cpu_percent : null));
+  setTile("sh-mem-avail", (h.system && h.system.memory_available_gb != null) ? (h.system.memory_available_gb.toFixed(1) + " GB") : "--", "info");
   setTile("sh-uptime", h.uptime_seconds != null ? formatDuration(h.uptime_seconds) : "--", "ok");
   const procCpu = h.process ? h.process.cpu_percent : null;
   if (procCpu != null) {
@@ -3311,8 +3378,8 @@ function updateSystemHealthUI() {
   const netEl = document.getElementById("sh-net");
   if (netEl && s && s.network) {
     netEl.innerHTML = `
-      <div class="row"><span class="k">Bytes sent</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_sent))}</span></div>
-      <div class="row"><span class="k">Bytes recv</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_recv))}</span></div>
+      <div class="row"><span class="k">Bytes sent</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_sent || 0))}</span></div>
+      <div class="row"><span class="k">Bytes recv</span><span class="v">${escapeHtml(formatBytes(s.network.bytes_recv || 0))}</span></div>
       <div class="row"><span class="k">Packets sent</span><span class="v">${escapeHtml(formatNumber(s.network.packets_sent || 0))}</span></div>
       <div class="row"><span class="k">Packets recv</span><span class="v">${escapeHtml(formatNumber(s.network.packets_recv || 0))}</span></div>`;
   }
@@ -3322,7 +3389,7 @@ function updateSystemHealthUI() {
     const inUse = p.in_use || p.used || 0;
     const avail = p.available || p.free || 0;
     const overflow = p.overflow || 0;
-    const total = inUse + avail + overflow || 1;
+    const total = (inUse + avail + overflow) || 1;
     const iW = (inUse / total) * 100;
     const aW = (avail / total) * 100;
     const oW = (overflow / total) * 100;
@@ -3347,8 +3414,8 @@ function updateSystemHealthUI() {
     if (h.redis_info && Object.keys(h.redis_info).length) {
       const ri = h.redis_info;
       redisEl.innerHTML = `
-        <div class="row"><span class="k">Used memory</span><span class="v">${escapeHtml(formatBytes(ri.used_memory_mb * 1048576))}</span></div>
-        <div class="row"><span class="k">Connected clients</span><span class="v">${escapeHtml(formatNumber(ri.connected_clients))}</span></div>
+        <div class="row"><span class="k">Used memory</span><span class="v">${escapeHtml(formatBytes((ri.used_memory_mb || 0) * 1048576))}</span></div>
+        <div class="row"><span class="k">Connected clients</span><span class="v">${escapeHtml(formatNumber(ri.connected_clients || 0))}</span></div>
         <div class="row"><span class="k">Keyspace hits</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_hits || 0))}</span></div>
         <div class="row"><span class="k">Keyspace misses</span><span class="v">${escapeHtml(formatNumber(ri.keyspace_misses || 0))}</span></div>`;
     } else {
@@ -3467,40 +3534,51 @@ function skeletonRowsHTML(colspan, n) {
 
 async function pollWebhookLogs() {
   if (currentRoute !== "sys-webhooks" || !visibilityPolling) return;
-  const [recentRes, statsRes] = await Promise.all([
-    useFetch("/api/webhooks/recent?limit=50").catch(() => ({ data: null, error: "logs", stale: false })),
-    useFetch("/api/webhooks/stats?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
-  ]);
-  const staleEl = document.getElementById("wl-stale-banner");
-  if (staleEl) {
-    const partials = [];
-    if (recentRes.error && !recentRes.data) partials.push("logs");
-    if (statsRes.error && !statsRes.data) partials.push("stats");
-    if ((recentRes.stale || statsRes.stale) && (recentRes.data || statsRes.data)) {
-      staleEl.innerHTML = staleBanner();
-    } else if (partials.length > 0 && (recentRes.data || statsRes.data)) {
-      staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (recentRes.error && !recentRes.data && !webhookLogState.loaded) {
-    const content = domCache.content || document.getElementById("content");
-    if (content) {
-      content.innerHTML = errorPanel("webhook logs", recentRes.error, "retry-sys-webhooks");
-      bindRetryToScope("retry-sys-webhooks", () => route("sys-webhooks"));
-    }
+  let recentRes, statsRes;
+  try {
+    [recentRes, statsRes] = await Promise.all([
+      useFetch("/api/webhooks/recent?limit=50").catch(() => ({ data: null, error: "logs", stale: false })),
+      useFetch("/api/webhooks/stats?days=7").catch(() => ({ data: null, error: "stats", stale: false })),
+    ]);
+  } catch (e) {
+    console.error("[dashboard] pollWebhookLogs fetch error:", e);
     return;
   }
-  if (recentRes.data && recentRes.data.webhooks) {
-    webhookLogState.rows = recentRes.data.webhooks;
-    webhookLogState.loaded = true;
+  if (currentRoute !== "sys-webhooks") return;
+  try {
+    const staleEl = document.getElementById("wl-stale-banner");
+    if (staleEl) {
+      const partials = [];
+      if (recentRes && recentRes.error && !recentRes.data) partials.push("logs");
+      if (statsRes && statsRes.error && !statsRes.data) partials.push("stats");
+      if ((recentRes && recentRes.stale || statsRes && statsRes.stale) && (recentRes.data || statsRes.data)) {
+        staleEl.innerHTML = staleBanner();
+      } else if (partials.length > 0 && (recentRes.data || statsRes.data)) {
+        staleEl.innerHTML = partialWarning(partials.join(" and ") + " unavailable");
+      } else {
+        staleEl.innerHTML = "";
+      }
+    }
+    if (recentRes && recentRes.error && !recentRes.data && !webhookLogState.loaded) {
+      const content = domCache.content || document.getElementById("content");
+      if (content) {
+        content.innerHTML = errorPanel("webhook logs", recentRes.error, "retry-sys-webhooks");
+        bindRetryToScope("retry-sys-webhooks", () => route("sys-webhooks"));
+      }
+      return;
+    }
+    if (recentRes && recentRes.data && Array.isArray(recentRes.data.webhooks)) {
+      webhookLogState.rows = recentRes.data.webhooks;
+      webhookLogState.loaded = true;
+    }
+    if (statsRes && statsRes.data) {
+      webhookLogState.stats = statsRes.data;
+      updateWebhookStats();
+    }
+    renderWebhookTable();
+  } catch (e) {
+    console.error("[dashboard] pollWebhookLogs error:", e);
   }
-  if (statsRes.data) {
-    webhookLogState.stats = statsRes.data;
-    updateWebhookStats();
-  }
-  renderWebhookTable();
 }
 
 function updateWebhookStats() {
@@ -3508,8 +3586,8 @@ function updateWebhookStats() {
   if (!s) return;
   setTile("wl-stat-total", formatNumber(s.total || 0), "info");
   setTile("wl-stat-success", formatNumber(s.successful || 0), "ok");
-  setTile("wl-stat-failed", formatNumber(s.failed || 0), s.failed > 0 ? "bad" : "info");
-  setTile("wl-stat-rate", s.success_rate != null ? formatPct(s.success_rate) : "--", s.success_rate >= 80 ? "ok" : s.success_rate >= 50 ? "warn" : "bad");
+  setTile("wl-stat-failed", formatNumber(s.failed || 0), (s.failed || 0) > 0 ? "bad" : "info");
+  setTile("wl-stat-rate", s.success_rate != null ? formatPct(s.success_rate) : "--", s.success_rate != null ? (s.success_rate >= 80 ? "ok" : s.success_rate >= 50 ? "warn" : "bad") : "info");
 }
 
 function renderWebhookLogs(content) {
@@ -3697,27 +3775,39 @@ function toggleWebhookRow(tr) {
 
 async function pollRiskMonitor() {
   if (currentRoute !== "sys-risk" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch("/api/risk-status");
-  const staleEl = document.getElementById("risk-stale-banner");
-  if (staleEl) {
-    if (stale && data) {
-      staleEl.innerHTML = staleBanner();
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (error || !data) {
-    const card = document.getElementById("risk-status-card");
-    if (card && !cache["/api/risk-status"]) {
-      card.innerHTML = errorPanel("risk monitor", error, "retry-sys-risk");
-      bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
-    } else if (card) {
-      card.innerHTML = `<div class="empty small"><div class="msg">Risk data unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-risk">${ICONS.refresh}Retry</button></div>`;
-      bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
-    }
+  let result;
+  try {
+    result = await useFetch("/api/risk-status");
+  } catch (e) {
+    console.error("[dashboard] pollRiskMonitor fetch error:", e);
     return;
   }
-  updateRiskUI(data);
+  if (currentRoute !== "sys-risk") return;
+  try {
+    const { data, error, stale } = result;
+    const staleEl = document.getElementById("risk-stale-banner");
+    if (staleEl) {
+      if (stale && data) {
+        staleEl.innerHTML = staleBanner();
+      } else {
+        staleEl.innerHTML = "";
+      }
+    }
+    if (error || !data) {
+      const card = document.getElementById("risk-status-card");
+      if (card && !cache["/api/risk-status"]) {
+        card.innerHTML = errorPanel("risk monitor", error, "retry-sys-risk");
+        bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
+      } else if (card) {
+        card.innerHTML = `<div class="empty small"><div class="msg">Risk data unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-risk">${ICONS.refresh}Retry</button></div>`;
+        bindRetryToScope("retry-sys-risk", () => route("sys-risk"));
+      }
+      return;
+    }
+    updateRiskUI(data);
+  } catch (e) {
+    console.error("[dashboard] pollRiskMonitor error:", e);
+  }
 }
 
 function updateRiskUI(data) {
@@ -3967,8 +4057,22 @@ function updateDatabaseUI(data) {
   const typeEl = document.getElementById("db-type");
   if (typeEl) {
     const v = typeEl.querySelector(".value");
-    const isPg = data.size_mb != null && data.size_mb > 0;
-    if (v) v.textContent = isPg ? "PostgreSQL" : "SQLite";
+    if (v) {
+      const raw = String(data.db_type || "").toLowerCase();
+      const label = raw === "postgresql" ? "PostgreSQL" : raw === "sqlite" ? "SQLite" : (raw || "--");
+      v.textContent = label;
+    }
+  }
+  const migEl = document.getElementById("db-migrations");
+  if (migEl) {
+    const mig = data.migration || {};
+    const rev = mig.current_revision;
+    const present = mig.tables_present || {};
+    const presentCount = Object.values(present).filter(Boolean).length;
+    const totalCount = Object.keys(present).length || expected.length;
+    const revStr = rev ? `<div class="msg">Revision: <span class="mono">${escapeHtml(rev)}</span></div>` : `<div class="msg">Alembic revision not recorded</div>`;
+    const detail = Object.entries(present).map(([t, ok]) => `<div class="row"><span class="k mono">${escapeHtml(t)}</span><span class="v mono stat-${ok ? "info" : "bad"}">${ok ? "present" : "missing"}</span></div>`).join("");
+    migEl.innerHTML = `${revStr}<div class="msg">${presentCount}/${totalCount} tables present</div>${detail || `<div class="msg">Table presence not reported</div>`}`;
   }
 }
 
@@ -4076,8 +4180,8 @@ async function pollMetrics() {
     metricsState.history[s.key].push(val);
     if (metricsState.history[s.key].length > 20) metricsState.history[s.key].shift();
   }
-  const wsPushAvg = parseHistogram(text, "pinetunnel_http_request_duration_seconds");
-  const pushVal = wsPushAvg && wsPushAvg.avg != null ? wsPushAvg.avg * 1000 : 0;
+  const wsPushAvg = parsePromMetric(text, "pinetunnel_ws_push_avg_ms");
+  const pushVal = wsPushAvg != null ? wsPushAvg : 0;
   metricsState.lastValues.ws_push_avg = pushVal;
   if (!metricsState.history.ws_push_avg) metricsState.history.ws_push_avg = [];
   metricsState.history.ws_push_avg.push(pushVal);
@@ -4550,11 +4654,102 @@ function renderLicenseRows() {
 function handleLicenseAction(b) {
   const action = b.dataset.action;
   const key = b.dataset.key;
-  if (action === "lic-edit") comingSoon("License editing");
-  else if (action === "lic-extend") comingSoon("License extension");
-  else if (action === "lic-toggle") comingSoon("Enable/disable license");
-  else if (action === "lic-disconnect") openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${maskKey(key)}? The EA will need to reconnect.`, () => comingSoon("Force disconnect"), "Disconnect");
-  else if (action === "lic-delete") openConfirmModal("Delete license", `Delete license for ${b.dataset.name}?`, () => comingSoon("License deletion"));
+  if (action === "lic-edit") openEditLicenseModal(key, b.dataset);
+  else if (action === "lic-extend") extendLicense(key, b);
+  else if (action === "lic-toggle") {
+    const enabled = b.dataset.enabled === "1";
+    if (enabled) disableLicense(key, b);
+    else enableLicense(key, b);
+  }
+  else if (action === "lic-disconnect") openConfirmModal("Force disconnect", `Force disconnect all EA sessions for license ${maskKey(key)}? The EA will need to reconnect.`, () => forceDisconnectLicense(key), "Disconnect");
+  else if (action === "lic-delete") openConfirmModal("Delete license", `Delete license for ${b.dataset.name}? This cannot be undone.`, () => deleteLicense(key), "Delete");
+}
+
+function refreshLicenses() {
+  invalidateCache(`${API}/users`);
+  if (currentRoute === "licenses") pollLicenses();
+}
+
+async function extendLicense(key, btn) {
+  if (btn) setBtnLoading(btn, "+30d...");
+  try {
+    await http(`${API}/licenses/${encodeURIComponent(key)}/extend`, {
+      method: "POST",
+      headers: jsonHeaders(true),
+      body: JSON.stringify({ days: 30 }),
+    });
+    toast("License extended by 30 days", "ok");
+    refreshLicenses();
+  } catch (e) {
+    toast(`Extend failed: ${friendlyMsg(e)}`, "bad");
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = "+30d"; }
+  }
+}
+
+async function disableLicense(key, btn) {
+  if (btn) setBtnLoading(btn, "Disabling...");
+  try {
+    await http(`${API}/licenses/${encodeURIComponent(key)}/disable`, { method: "POST", headers: jsonHeaders(true) });
+    toast("License disabled", "ok");
+    refreshLicenses();
+  } catch (e) {
+    toast(`Disable failed: ${friendlyMsg(e)}`, "bad");
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = ICONS.ban; }
+  }
+}
+
+async function enableLicense(key, btn) {
+  if (btn) setBtnLoading(btn, "Enabling...");
+  try {
+    await http(`${API}/licenses/${encodeURIComponent(key)}/enable`, { method: "POST", headers: jsonHeaders(true) });
+    toast("License enabled", "ok");
+    refreshLicenses();
+  } catch (e) {
+    toast(`Enable failed: ${friendlyMsg(e)}`, "bad");
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = ICONS.power; }
+  }
+}
+
+async function forceDisconnectLicense(key) {
+  try {
+    const r = await http(`${API}/licenses/${encodeURIComponent(key)}/force-disconnect`, { method: "POST", headers: jsonHeaders(true) });
+    const data = await parseResponse(r);
+    const n = (data && data.disconnected) || 0;
+    toast(`Disconnected ${n} EA session${n === 1 ? "" : "s"}`, n > 0 ? "ok" : "bad");
+    refreshLicenses();
+  } catch (e) {
+    toast(`Disconnect failed: ${friendlyMsg(e)}`, "bad");
+  }
+}
+
+async function deleteLicense(key) {
+  try {
+    await http(`${API}/licenses/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+      headers: jsonHeaders(true),
+      body: JSON.stringify({ confirm: true }),
+    });
+    toast("License deleted", "ok");
+    refreshLicenses();
+  } catch (e) {
+    toast(`Delete failed: ${friendlyMsg(e)}`, "bad");
+  }
+}
+
+async function regenerateLicenseSecret(key, btn) {
+  if (btn) setBtnLoading(btn, "Regenerating...");
+  try {
+    const r = await http(`${API}/licenses/${encodeURIComponent(key)}/regenerate-secret`, { method: "POST", headers: jsonHeaders(true) });
+    const data = await parseResponse(r);
+    toast(`New secret: ${data && data.new_secret ? data.new_secret : "(generated)"}`, "ok");
+  } catch (e) {
+    toast(`Regenerate failed: ${friendlyMsg(e)}`, "bad");
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = `${ICONS.refresh}Regenerate`; }
+  }
 }
 
 function comingSoon(feature) {
@@ -4631,7 +4826,7 @@ function openLicenseModal() {
   overlay.innerHTML = `<div class="modal-card">
     <button class="modal-close" data-action="modal-close" aria-label="Close">${ICONS.x}</button>
     <h2 class="modal-title">Add License</h2>
-    <div class="modal-desc">Create a new license key. CRUD endpoints arrive in Phase 3.</div>
+    <div class="modal-desc">Create a new license key.</div>
     <div class="modal-body" id="lic-modal-form">
       <div class="field">
         <label for="lic-modal-key">License Key <span class="req">*</span></label>
@@ -4664,7 +4859,7 @@ function openLicenseModal() {
     </div>
     <div class="modal-footer">
       <button class="btn outline" data-action="modal-cancel">Cancel</button>
-      <button class="btn primary" data-action="modal-save">${ICONS.check}Create (Phase 3)</button>
+      <button class="btn primary" data-action="modal-save">${ICONS.check}Create</button>
     </div>
   </div>`;
   openModal(overlay);
@@ -4675,14 +4870,115 @@ function openLicenseModal() {
   const emailEl = overlay.querySelector("#lic-modal-email");
   if (emailEl) attachValidator(emailEl, "email");
   submitOnEnter(overlay.querySelector("#lic-modal-form"), () => overlay.querySelector("[data-action='modal-save']").click());
-  overlay.querySelector("[data-action='modal-save']").addEventListener("click", e => {
+  overlay.querySelector("[data-action='modal-save']").addEventListener("click", async e => {
     e.preventDefault();
     if (emailEl) {
       const err = VALIDATORS.email(emailEl.value.trim());
       if (err) { validateInput(emailEl, "email"); emailEl.focus(); return; }
     }
-    setBtnLoading(overlay.querySelector("[data-action='modal-save']"), "Creating...");
-    setTimeout(() => { closeModal(overlay); comingSoon("License creation"); }, 600);
+    const saveBtn = overlay.querySelector("[data-action='modal-save']");
+    setBtnLoading(saveBtn, "Creating...");
+    const body = {
+      license_key: overlay.querySelector("#lic-modal-key").value.trim(),
+      name: overlay.querySelector("#lic-modal-name").value.trim(),
+      email: overlay.querySelector("#lic-modal-email").value.trim(),
+      secret_key: overlay.querySelector("#lic-modal-secret").value.trim(),
+      expires_at: overlay.querySelector("#lic-modal-expires").value.trim(),
+    };
+    try {
+      await http(`${API}/licenses`, {
+        method: "POST",
+        headers: jsonHeaders(true),
+        body: JSON.stringify(body),
+      });
+      closeModal(overlay);
+      toast("License created", "ok");
+      refreshLicenses();
+    } catch (err) {
+      setBtnError(saveBtn, "Failed");
+      toast(`Create failed: ${friendlyMsg(err)}`, "bad");
+    }
+  });
+  autofocusFirst(overlay);
+}
+
+function openEditLicenseModal(key, dataset) {
+  const row = (licenseState.rows || []).flatMap(u => (u.licenses || []).map(l => ({ u, l }))).find(x => x.l.license_key === key);
+  const lic = row ? row.l : {};
+  const u = row ? row.u : {};
+  const expires = lic.expires_at ? lic.expires_at.slice(0, 10) : "";
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Edit License");
+  overlay.innerHTML = `<div class="modal-card">
+    <button class="modal-close" data-action="modal-close" aria-label="Close">${ICONS.x}</button>
+    <h2 class="modal-title">Edit License</h2>
+    <div class="modal-desc">Update license details for ${escapeHtml(maskKey(key))}.</div>
+    <div class="modal-body" id="lic-edit-form">
+      <div class="field">
+        <label for="lic-edit-key">License Key</label>
+        <input class="input" id="lic-edit-key" value="${escapeHtml(key)}" readonly>
+      </div>
+      <div class="field">
+        <label for="lic-edit-name">Name</label>
+        <input class="input" id="lic-edit-name" value="${escapeHtml(u.name || "")}" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="lic-edit-email">Email</label>
+        <input class="input" id="lic-edit-email" type="email" value="${escapeHtml(u.email || "")}" autocomplete="email" spellcheck="false" inputmode="email">
+      </div>
+      <div class="field">
+        <label for="lic-edit-expires">Expires At</label>
+        <input class="input" id="lic-edit-expires" type="date" value="${escapeHtml(expires)}">
+      </div>
+      <div class="field">
+        <label for="lic-edit-enabled">Status</label>
+        <select class="input" id="lic-edit-enabled">
+          <option value="true"${lic.enabled !== false ? " selected" : ""}>Enabled</option>
+          <option value="false"${lic.enabled === false ? " selected" : ""}>Disabled</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn outline" data-action="modal-cancel">Cancel</button>
+      <button class="btn primary" data-action="modal-save">${ICONS.check}Save</button>
+    </div>
+  </div>`;
+  openModal(overlay);
+  overlay.querySelector("[data-action='modal-close']").addEventListener("click", () => closeModal(overlay));
+  overlay.querySelector("[data-action='modal-cancel']").addEventListener("click", () => closeModal(overlay));
+  const emailEl = overlay.querySelector("#lic-edit-email");
+  if (emailEl) attachValidator(emailEl, "email");
+  submitOnEnter(overlay.querySelector("#lic-edit-form"), () => overlay.querySelector("[data-action='modal-save']").click());
+  overlay.querySelector("[data-action='modal-save']").addEventListener("click", async e => {
+    e.preventDefault();
+    if (emailEl) {
+      const err = VALIDATORS.email(emailEl.value.trim());
+      if (err) { validateInput(emailEl, "email"); emailEl.focus(); return; }
+    }
+    const saveBtn = overlay.querySelector("[data-action='modal-save']");
+    setBtnLoading(saveBtn, "Saving...");
+    const body = {
+      name: overlay.querySelector("#lic-edit-name").value.trim(),
+      email: overlay.querySelector("#lic-edit-email").value.trim(),
+      expires_at: overlay.querySelector("#lic-edit-expires").value.trim(),
+      enabled: overlay.querySelector("#lic-edit-enabled").value === "true",
+    };
+    try {
+      await http(`${API}/licenses/${encodeURIComponent(key)}`, {
+        method: "PUT",
+        headers: jsonHeaders(true),
+        body: JSON.stringify(body),
+      });
+      closeModal(overlay);
+      toast("License updated", "ok");
+      refreshLicenses();
+    } catch (err) {
+      setBtnError(saveBtn, "Failed");
+      toast(`Update failed: ${friendlyMsg(err)}`, "bad");
+    }
   });
   autofocusFirst(overlay);
 }
@@ -4757,16 +5053,17 @@ function renderSecurityContent(content) {
   const d = securityState.data || {};
   const hdr = securityState.headers || {};
   const blocked = d.blocked_ips || [];
-  const blockedCount = blocked.length;
-  const failed24h = d.blocked_requests || 0;
+  const blockedCount = d.blocked_ip_count != null ? d.blocked_ip_count : blocked.length;
+  const failed24h = d.failed_attempts_24h != null ? d.failed_attempts_24h : 0;
   const rateHits = d.rate_limited_requests || 0;
   const headers = hdr.headers || {};
   const headerList = [
     { name: "X-Frame-Options", val: headers.x_frame_options },
     { name: "Content-Security-Policy", val: headers.content_security_policy },
     { name: "X-Content-Type-Options", val: headers.x_content_type_options },
+    { name: "X-XSS-Protection", val: headers.x_xss_protection },
     { name: "Referrer-Policy", val: headers.referrer_policy },
-    { name: "Strict-Transport-Security", val: headers.hsts },
+    { name: "Strict-Transport-Security", val: headers.strict_transport_security },
   ];
   const totalHeaders = headerList.length;
   const headersActive = headerList.filter(h => !!h.val).length;
@@ -4780,7 +5077,7 @@ function renderSecurityContent(content) {
     : blocked.map(b => `<tr>
         <td class="td-key" scope="row">${escapeHtml(b.ip)}</td>
         <td>${escapeHtml(formatTime(null))}</td>
-        <td>Rate limit exceeded</td>
+        <td>${escapeHtml(b.reason || "Blocked")}</td>
         <td class="td-num">${escapeHtml(formatDuration(b.remaining_seconds || 0))}</td>
         <td class="td-actions"><button class="btn ghost sm" data-action="unblock-ip" data-ip="${escapeHtml(b.ip)}" aria-label="Unblock IP ${escapeHtml(b.ip)}">Unblock</button></td>
       </tr>`).join("");
@@ -4794,7 +5091,7 @@ function renderSecurityContent(content) {
       </div>
       <div class="sec-stat ${failed24h > 10 ? "bad" : failed24h > 0 ? "warn" : "ok"}" role="group" aria-label="Failed Attempts: ${escapeHtml(formatNumber(failed24h))}">
         <div class="value">${escapeHtml(formatNumber(failed24h))}</div>
-        <div class="label">Failed Attempts</div>
+        <div class="label">Failed Attempts (24h)</div>
       </div>
       <div class="sec-stat ${rateHits > 50 ? "warn" : "ok"}" role="group" aria-label="Rate Limit Hits: ${escapeHtml(formatNumber(rateHits))}">
         <div class="value">${escapeHtml(formatNumber(rateHits))}</div>
@@ -4807,10 +5104,10 @@ function renderSecurityContent(content) {
     </div>
     <div class="card">
       <h2 class="card-title">Blocked IPs</h2>
-      <div class="card-desc">Currently blocked by rate limiter</div>
+      <div class="card-desc">Currently blocked by failed attempt tracker or rate limiter</div>
       <div class="table-wrap">
         <table class="data-table mgr-table" aria-label="Blocked IPs">
-          <caption class="sr-only">IPs currently blocked by rate limiter</caption>
+          <caption class="sr-only">IPs currently blocked by failed attempt tracker or rate limiter</caption>
           <thead><tr><th scope="col">IP</th><th scope="col">Blocked At</th><th scope="col">Reason</th><th scope="col" class="td-num">Remaining</th><th scope="col" class="td-actions">Action</th></tr></thead>
           <tbody>${blockedRows}</tbody>
         </table>
@@ -4818,7 +5115,7 @@ function renderSecurityContent(content) {
     </div>
     <div class="card">
       <h2 class="card-title">Security Headers</h2>
-      <div class="card-desc">HTTP security response headers</div>
+      <div class="card-desc">HTTP security response headers (verified from middleware)</div>
       <div class="headers-checklist" role="list" aria-label="Security headers checklist">
         ${headerList.map(h => {
           const ok = !!h.val;
@@ -4851,7 +5148,26 @@ function renderSecurityContent(content) {
     content._secDelegated = true;
     content.addEventListener("click", e => {
       const btn = e.target.closest("[data-action='unblock-ip']");
-      if (btn) { e.preventDefault(); comingSoon("IP unblock (Phase 3)"); }
+      if (!btn) return;
+      e.preventDefault();
+      const ip = btn.getAttribute("data-ip");
+      if (!ip) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = "Unblocking...";
+      http(`${API}/rate-limits/${encodeURIComponent(ip)}`, { method: "DELETE" })
+        .then(() => {
+          toast(`IP ${ip} unblocked`, "ok");
+          invalidateCache(`${API}/rate-limits`);
+          pollSecurity();
+        })
+        .catch(err => {
+          toast(`Failed to unblock: ${friendlyMsg(err)}`, "bad");
+        })
+        .finally(() => {
+          btn.disabled = false;
+          btn.textContent = orig;
+        });
     });
   }
 }
