@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Table Responsive Test</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  body { background: var(--bg); }
+  .test-section { margin-bottom: 24px; }
+  .test-section h2 { font-size: 14px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .content { padding: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="layout">
+    <div class="main-area">
+      <div class="header">
+        <div class="title">Table Responsive Test</div>
+        <div class="actions"><span class="badge ok"><span class="dot"></span>Online</span></div>
+      </div>
+      <div class="content" id="content"></div>
+    </div>
+  </div>
+</div>
+<script>
+  const ICONS = window.ICONS || {};
+  const sample = {
+    signals: [
+      { id: 1, timestamp: "2026-07-19T21:54:46Z", payload: { license_key: "PT-AAAA-BBBB-CCCC-DDDD-EEEE" }, action: "buy", symbol: "EURUSD", volume: 0.5, status: "success", execution_time_ms: 142 },
+      { id: 2, timestamp: "2026-07-19T21:54:41Z", payload: { license_key: "PT-FFFF-GGGG-HHHH-IIII-JJJJ" }, action: "sell", symbol: "GBPJPY", volume: 0.1, status: "pending", execution_time_ms: 88 },
+      { id: 3, timestamp: "2026-07-19T21:54:33Z", payload: { license_key: "PT-KKKK-LLLL-MMMM-NNNN-OOOO" }, action: "close", symbol: "XAUUSD", volume: 1.0, status: "failed", execution_time_ms: 301 },
+      { id: 4, timestamp: "2026-07-19T21:54:22Z", payload: { license_key: "PT-PPPP-QQQQ-RRRR-SSSS-TTTT" }, action: "buy", symbol: "USDCAD", volume: 0.25, status: "duplicate", execution_time_ms: 12 },
+      { id: 5, timestamp: "2026-07-19T21:54:10Z", payload: { license_key: "PT-UUUU-VVVV-WWWW-XXXX-YYYY" }, action: "sell", symbol: "AUDNZD", volume: 0.05, status: "success", execution_time_ms: 95 },
+    ],
+    webhooks: [
+      { timestamp: "2026-07-19T21:54:46Z", ip_address: "52.50.1.234", action: "buy", symbol: "EURUSD", volume: 0.5, response_code: 200, execution_time_ms: 142, payload: '{"action":"buy","symbol":"EURUSD","volume":0.5}' },
+      { timestamp: "2026-07-19T21:54:41Z", ip_address: "18.200.10.5", action: "sell", symbol: "GBPJPY", volume: 0.1, response_code: 202, execution_time_ms: 88, payload: '{"action":"sell","symbol":"GBPJPY"}' },
+      { timestamp: "2026-07-19T21:54:33Z", ip_address: "203.0.113.7", action: "close", symbol: "XAUUSD", volume: 1.0, response_code: 401, execution_time_ms: 301, payload: '{"action":"close"}' },
+      { timestamp: "2026-07-19T21:54:22Z", ip_address: "52.50.1.234", action: "buy", symbol: "USDCAD", volume: 0.25, response_code: 400, execution_time_ms: 12, payload: '{"action":"buy"}' },
+      { timestamp: "2026-07-19T21:54:10Z", ip_address: "18.200.10.5", action: "sell", symbol: "AUDNZD", volume: 0.05, response_code: 200, execution_time_ms: 95, payload: '{"action":"sell","symbol":"AUDNZD"}' },
+    ],
+    licenses: [
+      { license_key: "PT-AAAA-BBBB-CCCC-DDDD-EEEE", name: "Alice Anderson", email: "alice.anderson@very-long-domain-name-example.com", status: "Active", status_cls: "ok", enabled: true, expires_at: "2026-12-31", connected_eas: 2, total_trades: 1342, last_activity: "2026-07-19T21:50:00Z" },
+      { license_key: "PT-FFFF-GGGG-HHHH-IIII-JJJJ", name: "Bob Brown", email: "bob@example.com", status: "Disabled", status_cls: "bad", enabled: false, expires_at: "2026-08-15", connected_eas: 0, total_trades: 87, last_activity: "2026-07-18T10:00:00Z" },
+      { license_key: "PT-KKKK-LLLL-MMMM-NNNN-OOOO", name: "Carol Chen", email: "carol.chen@quant-firm.io", status: "Expired", status_cls: "warn", enabled: true, expires_at: "2026-06-01", connected_eas: 1, total_trades: 450, last_activity: "2026-05-30T12:00:00Z" },
+    ],
+    blocked: [
+      { ip: "203.0.113.7", remaining_seconds: 1800 },
+      { ip: "198.51.100.42", remaining_seconds: 3600 },
+    ],
+    audit: [
+      { action: "license.create", user: "telegram:admin", timestamp: "2026-07-19T21:50:00Z", ip_address: "127.0.0.1", details: '{"license_key":"PT-AAAA-BBBB","email":"alice@long-domain-example.com"}' },
+      { action: "license.disable", user: "dashboard:admin", timestamp: "2026-07-19T20:30:00Z", ip_address: "192.168.1.50", details: '{"license_key":"PT-FFFF-GGGG"}' },
+      { action: "config.update", user: "telegram:admin", timestamp: "2026-07-19T18:15:00Z", ip_address: "127.0.0.1", details: '{"keys":["TELEGRAM_BOT_TOKEN"]}' },
+      { action: "license.delete", user: "api:system", timestamp: "2026-07-19T17:00:00Z", ip_address: "10.0.0.5", details: '{"license_key":"PT-OLD-REMOVED"}' },
+    ],
+  };
+
+  function escapeHtml(s) {
+    if (s == null) return "";
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function maskKey(k) {
+    if (!k || k.length <= 8) return k;
+    return k.slice(0, 7) + "..." + k.slice(-4);
+  }
+  function formatTime(ts) {
+    if (!ts) return "--";
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  function formatNumber(n) { return (n || 0).toLocaleString(); }
+  function formatLatency(ms) { return ms == null ? "--" : `${ms}ms`; }
+  function formatDuration(s) { return s > 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; }
+  function pluralize(n, w) { return `${formatNumber(n)} ${w}${n === 1 ? "" : "s"}`; }
+  function statusClassFor(s) {
+    if (s === "success" || s === "ok") return "ok";
+    if (s === "pending" || s === "warn") return "warn";
+    if (s === "failed" || s === "bad") return "bad";
+    return "muted";
+  }
+  function statusColor(c) {
+    if (c >= 200 && c < 300) return "ok";
+    if (c >= 400 && c < 500) return "warn";
+    if (c >= 500) return "bad";
+    return "muted";
+  }
+  function auditSeverityClass(a) {
+    a = (a || "").toLowerCase();
+    if (a.includes("delete") || a.includes("disable")) return "bad";
+    if (a.includes("update") || a.includes("config") || a.includes("extend")) return "warn";
+    if (a.includes("create") || a.includes("login") || a.includes("success")) return "ok";
+    return "info";
+  }
+  function sourceBadge(u) {
+    u = (u || "").toLowerCase();
+    if (u.includes("telegram")) return '<span class="src-badge tg">Telegram</span>';
+    if (u.includes("dashboard")) return '<span class="src-badge dash">Dashboard</span>';
+    if (u.includes("api")) return '<span class="src-badge api">API</span>';
+    return "";
+  }
+  const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>';
+  const emptyState = (msg) => `<div class="empty"><div class="msg">${escapeHtml(msg)}</div></div>`;
+
+  function renderSignalFeed() {
+    return `<div class="card">
+      <h2 class="card-title">Live Signal Feed</h2>
+      <div class="card-desc">Real-time webhook signals - polling every 5s</div>
+      <div class="feed-toolbar">
+        <div class="filter-bar">
+          <select class="input filter-sel" aria-label="Filter by license"><option value="">All licenses</option></select>
+          <input class="input filter-txt" placeholder="Symbol filter" aria-label="Filter by symbol">
+          <select class="input filter-sel" aria-label="Filter by status"><option value="">All status</option></select>
+        </div>
+        <button class="btn outline sm">Pause</button>
+      </div>
+      <div class="feed-scroll" id="feed-scroll">
+        <table class="feed-table">
+          <caption class="sr-only">Live Signal Feed - real-time webhook signals</caption>
+          <thead>
+            <tr>
+              <th scope="col">Time</th>
+              <th scope="col">License</th>
+              <th scope="col">Action</th>
+              <th scope="col">Symbol</th>
+              <th scope="col" class="th-num">Lots</th>
+              <th scope="col" class="td-status">Status</th>
+              <th scope="col" class="th-num">Latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sample.signals.map(r => {
+              const cls = statusClassFor(r.status);
+              const actionCls = r.action === "buy" ? "act-buy" : r.action === "sell" ? "act-sell" : "act-close";
+              return `<tr class="row-${cls}">
+                <td class="td-time" scope="row">${escapeHtml(formatTime(r.timestamp))}</td>
+                <td class="td-key" title="${escapeHtml(r.payload.license_key)}">${escapeHtml(maskKey(r.payload.license_key))}</td>
+                <td><span class="action-tag ${actionCls}">${escapeHtml(r.action)}</span></td>
+                <td>${escapeHtml(r.symbol)}</td>
+                <td class="td-num">${escapeHtml(String(r.volume))}</td>
+                <td class="td-status"><span class="status-tag ${cls}">${escapeHtml(r.status)}</span></td>
+                <td class="td-lat">${escapeHtml(formatLatency(r.execution_time_ms))}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="feed-footer">
+        <span>${pluralize(sample.signals.length, "signal")}</span>
+        <span class="feed-hint">Hover to pause auto-scroll</span>
+      </div>
+    </div>`;
+  }
+
+  function renderWebhookLogs() {
+    return `<div class="card">
+      <h2 class="card-title">Webhook Logs</h2>
+      <div class="card-desc">Recent webhook requests - polling every 10s</div>
+      <div class="filter-bar">
+        <select class="input filter-sel"><option>Today</option></select>
+        <select class="input filter-sel"><option>All status</option></select>
+        <input class="input filter-input" placeholder="Symbol filter">
+        <input class="input filter-input" placeholder="License filter">
+        <button class="filter-clear">Clear filters</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table class="data-table" id="wl-table" aria-label="Webhook logs">
+          <caption class="sr-only">Recent webhook requests</caption>
+          <thead>
+            <tr>
+              <th scope="col" class="sortable sort-asc" data-sort="timestamp">Timestamp</th>
+              <th scope="col" class="sortable" data-sort="ip_address">Source IP</th>
+              <th scope="col" class="sortable" data-sort="action">Action</th>
+              <th scope="col" class="sortable" data-sort="symbol">Symbol</th>
+              <th scope="col" class="sortable th-num" data-sort="volume">Volume</th>
+              <th scope="col" class="sortable td-status" data-sort="response_code">Status</th>
+              <th scope="col" class="sortable th-num" data-sort="execution_time_ms">Resp ms</th>
+              <th scope="col">Payload</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sample.webhooks.map(r => {
+              const cls = statusColor(r.response_code);
+              const preview = String(r.payload).slice(0, 60);
+              return `<tr class="row-expandable">
+                <td class="mono" scope="row">${escapeHtml(formatTime(r.timestamp))}</td>
+                <td class="mono">${escapeHtml(r.ip_address)}</td>
+                <td>${escapeHtml(r.action)}</td>
+                <td class="mono">${escapeHtml(r.symbol)}</td>
+                <td class="mono td-num">${escapeHtml(String(r.volume))}</td>
+                <td class="td-status"><span class="badge ${cls}"><span class="dot"></span>${escapeHtml(String(r.response_code))}</span></td>
+                <td class="mono td-num">${escapeHtml(formatLatency(r.execution_time_ms))}</td>
+                <td class="mono trunc" title="${escapeHtml(preview)}">${escapeHtml(preview)}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
+      <div class="table-footer">
+        <span>Showing 1-${sample.webhooks.length} of ${sample.webhooks.length}</span>
+        <div class="pager">
+          <button class="btn outline sm">Prev</button>
+          <button class="btn outline sm">Next</button>
+          <button class="btn outline sm">Load More</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function renderLicenses() {
+    return `<div class="card license-stack">
+      <div class="table-wrap">
+        <table class="data-table mgr-table" id="lic-table" aria-label="Licenses">
+          <caption class="sr-only">License manager</caption>
+          <thead>
+            <tr>
+              <th scope="col" class="sortable sort-asc" data-sort="license_key">License Key</th>
+              <th scope="col" class="sortable" data-sort="name">Name</th>
+              <th scope="col" class="sortable" data-sort="email">Email</th>
+              <th scope="col" class="sortable td-status" data-sort="status">Status</th>
+              <th scope="col">Secret</th>
+              <th scope="col" class="sortable" data-sort="expires_at">Expires</th>
+              <th scope="col" class="sortable th-num" data-sort="connected_eas">EAs</th>
+              <th scope="col" class="sortable th-num" data-sort="total_trades">Trades</th>
+              <th scope="col" class="sortable" data-sort="last_activity">Last Activity</th>
+              <th scope="col" class="td-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sample.licenses.map(r => {
+              const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
+              const lastAct = r.last_activity ? formatTime(r.last_activity) : "never";
+              return `<tr>
+                <td class="td-key" scope="row" data-label="License Key" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
+                <td data-label="Name">${escapeHtml(r.name)}</td>
+                <td class="td-email" data-label="Email" title="${escapeHtml(r.email)}">${escapeHtml(r.email)}</td>
+                <td class="td-status" data-label="Status"><span class="status-pill ${r.status_cls}"><span class="dot"></span>${r.status}</span></td>
+                <td class="secret-cell" data-label="Secret">****</td>
+                <td data-label="Expires">${escapeHtml(expires)}</td>
+                <td class="td-num" data-label="EAs">${formatNumber(r.connected_eas)}</td>
+                <td class="td-num" data-label="Trades">${formatNumber(r.total_trades)}</td>
+                <td data-label="Last Activity">${escapeHtml(lastAct)}</td>
+                <td class="td-actions" data-label="Actions">
+                  <button class="btn ghost sm" title="Edit">Edit</button>
+                  <button class="btn ghost sm" title="Extend">+30d</button>
+                  <button class="btn ghost sm" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? "Disable" : "Enable"}</button>
+                  <button class="btn ghost sm" title="Delete">Delete</button>
+                </td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-scroll-hint">Swipe horizontally to see more columns</div>
+      <div class="table-footer">
+        <span>Showing 1-${sample.licenses.length} of ${sample.licenses.length}</span>
+        <div class="pager">
+          <button class="btn outline sm">Prev</button>
+          <button class="btn outline sm">Next</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function renderSecurity() {
+    const blockedRows = sample.blocked.map(b => `<tr>
+        <td class="td-key" scope="row" data-label="IP">${escapeHtml(b.ip)}</td>
+        <td data-label="Blocked At">${escapeHtml(formatTime(null))}</td>
+        <td data-label="Reason">Rate limit exceeded</td>
+        <td class="td-num" data-label="Remaining">${escapeHtml(formatDuration(b.remaining_seconds))}</td>
+        <td class="td-actions" data-label="Action"><button class="btn ghost sm">Unblock</button></td>
+      </tr>`).join("");
+    return `<div class="card">
+      <h2 class="card-title">Blocked IPs</h2>
+      <div class="card-desc">Currently blocked by rate limiter</div>
+      <div class="table-wrap">
+        <table class="data-table mgr-table" aria-label="Blocked IPs">
+          <caption class="sr-only">IPs currently blocked by rate limiter</caption>
+          <thead><tr><th scope="col">IP</th><th scope="col">Blocked At</th><th scope="col">Reason</th><th scope="col" class="td-num">Remaining</th><th scope="col" class="td-actions">Action</th></tr></thead>
+          <tbody>${blockedRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+
+  function renderAudit() {
+    return `<div class="card">
+      <h2 class="card-title">Admin Activity Timeline</h2>
+      <div class="card-desc">${pluralize(sample.audit.length, "entry")} - polling every 10s</div>
+      <div class="timeline" id="audit-timeline">
+        ${sample.audit.map(a => {
+          const sev = auditSeverityClass(a.action);
+          const ts = formatTime(a.timestamp);
+          const src = sourceBadge(a.user);
+          const details = a.details || "";
+          return `<div class="tl-entry ${sev}">
+            <div class="tl-head">
+              <span class="tl-action">${escapeHtml(a.action)}</span>
+              <span class="tl-time">${escapeHtml(ts)}</span>
+              ${src}
+            </div>
+            <div class="tl-meta">
+              <span class="tl-user">by ${escapeHtml(a.user)}</span>
+              <span class="tl-target">IP: ${escapeHtml(a.ip_address)}</span>
+            </div>
+            ${details ? `<div class="tl-details">${escapeHtml(details)}</div>` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+      <div class="load-more-row">End of log</div>
+    </div>`;
+  }
+
+  const content = document.getElementById("content");
+  content.innerHTML = `
+    <div class="test-section"><h2>1. Signal Feed (feed-table, horizontal scroll)</h2>${renderSignalFeed()}</div>
+    <div class="test-section"><h2>2. Webhook Logs (data-table, horizontal scroll)</h2>${renderWebhookLogs()}</div>
+    <div class="test-section"><h2>3. License Manager (data-table mgr-table, stacked cards)</h2>${renderLicenses()}</div>
+    <div class="test-section"><h2>4. Security Center - Blocked IPs (data-table mgr-table)</h2>${renderSecurity()}</div>
+    <div class="test-section"><h2>5. Audit Log Timeline</h2>${renderAudit()}</div>
+    <div class="test-section"><h2>6. Empty state (0 rows)</h2>
+      <div class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>Col A</th><th>Col B</th><th>Col C</th></tr></thead><tbody><tr><td colspan="3" class="empty small">${emptyState("No data available")}</td></tr></tbody></table></div></div>
+    </div>
+  `;
+</script>
+</body>
+</html>

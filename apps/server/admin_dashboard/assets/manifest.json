@@ -1,0 +1,9 @@
+{
+  "name": "PineTunnel",
+  "short_name": "PineTunnel",
+  "start_url": "/admin/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [{"src": "/admin/assets/favicon.svg", "sizes": "any", "type": "image/svg+xml"}]
+}

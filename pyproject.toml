@@ -65,7 +65,7 @@ namespaces = false
 "apps.ea.mt5" = ["*.ex5", "*.mq5", "VERSION.json", "include/*.mqh"]
 "apps.ea.pine" = ["*.pine"]
 "apps.server" = ["version.json"]
-"apps.server.admin_dashboard" = ["*.html", "*.css", "*.js", "assets/*.svg"]
+"apps.server.admin_dashboard" = ["*.html", "*.css", "*.js", "assets/*.svg", "assets/*.json"]
 "assets" = ["*.svg"]
 "migrations" = ["*.mako"]
 

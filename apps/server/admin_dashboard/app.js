@@ -1144,10 +1144,15 @@ function render() {
     });
   }
   document.querySelectorAll("[data-route]").forEach(el => {
-    el.addEventListener("click", e => { e.preventDefault(); route(el.dataset.route); closeMobileSheet(); });
+    const go = () => { route(el.dataset.route); closeMobileSheet(); };
+    el.addEventListener("click", e => { e.preventDefault(); go(); });
     el.addEventListener("keydown", e => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); route(el.dataset.route); closeMobileSheet(); }
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
     });
+  });
+  window.addEventListener("hashchange", () => {
+    const hash = window.location.hash.slice(1);
+    if (hash && hash !== currentRoute) route(hash);
   });
   document.querySelectorAll("[data-toggle]").forEach(el => {
     el.addEventListener("click", e => {
@@ -1224,6 +1229,9 @@ function route(id) {
   if (routeTimer) clearTimeout(routeTimer);
   routeTimer = setTimeout(() => {
     currentRoute = id;
+    if (window.location.hash.slice(1) !== id) {
+      window.location.hash = id;
+    }
     clearPolls();
     document.querySelectorAll("[data-route]").forEach(el => {
       const isActive = el.dataset.route === id;
@@ -1574,12 +1582,27 @@ function bindOverviewActions(scope) {
   });
 }
 
+const SETUP_STEPS = [
+  { n: 1, short: "1", label: "1. Telegram" },
+  { n: 2, short: "2", label: "2. Cloudflare" },
+  { n: 3, short: "3", label: "3. Webhook" },
+];
+const SETUP_STEP_KEY = "setup-wizard-step";
+
+function getPersistedStep() {
+  try { const v = sessionStorage.getItem(SETUP_STEP_KEY); return v ? parseInt(v, 10) : 0; } catch { return 0; }
+}
+function persistStep(n) {
+  try { sessionStorage.setItem(SETUP_STEP_KEY, String(n)); } catch {}
+}
+
 function setupStepState(data) {
   const tg = data?.telegram_configured;
   const cf = data?.cloudflare_configured;
-  if (!tg) return { step: 1, tg, cf };
-  if (!cf) return { step: 2, tg, cf };
-  return { step: 3, tg, cf };
+  const maxStep = !tg ? 1 : !cf ? 2 : 3;
+  const persisted = getPersistedStep();
+  const step = persisted >= 1 && persisted <= maxStep ? persisted : maxStep;
+  return { step, tg, cf, maxStep };
 }
 
 async function renderSetup(content) {
@@ -1594,58 +1617,98 @@ async function renderSetup(content) {
   }
   const staleBannerHtml = stale ? staleBanner() : "";
   const state = setupStepState(data);
+  persistStep(state.step);
   renderSetupStep(content, state.step, data, staleBannerHtml);
 }
 
 function renderSetupStep(content, step, data, staleBannerHtml = "") {
-  const total = 3;
-  const dots = Array.from({ length: total }, (_, i) =>
-    `<div class="prog-dot ${i + 1 < step ? "done" : i + 1 === step ? "active" : ""}">${i + 1 < step ? ICONS.check : i + 1}</div>`
-  ).join('<div class="prog-line"></div>');
+  const state = setupStepState(data);
+  const maxStep = state.maxStep;
+  const segments = SETUP_STEPS.map(s => {
+    const done = s.n < step;
+    const active = s.n === step;
+    const clickable = s.n <= maxStep && s.n !== step;
+    const cls = done ? "done" : active ? "active" : "future";
+    const inner = done ? `<span class="seg-check">${ICONS.check}</span><span class="seg-num">${s.short}</span>` : `<span class="seg-num">${s.short}</span>`;
+    if (clickable) {
+      return `<button type="button" class="prog-seg ${cls}" data-goto="${s.n}" aria-label="Go to step ${s.n}">${inner}</button>`;
+    }
+    return `<div class="prog-seg ${cls}" aria-current="${active ? "step" : "false"}">${inner}</div>`;
+  }).join("");
 
   content.innerHTML = `
     ${staleBannerHtml}
-    <div class="card setup-prog-card">
-      <div class="prog-header">
-        <div class="prog-title">Step ${step} of ${total}</div>
-        <div class="prog-dots">${dots}</div>
+    <div class="setup-wizard">
+      <div class="setup-prog">
+        <div class="prog-bar">${segments}</div>
+        <div class="prog-labels">
+          ${SETUP_STEPS.map(s => `<span class="prog-label">${escapeHtml(s.label)}</span>`).join("")}
+        </div>
       </div>
+      <div id="step-body"></div>
     </div>
-    <div id="step-body"></div>
   `;
   const body = document.getElementById("step-body");
   if (step === 1) renderStep1(body, data);
   else if (step === 2) renderStep2(body, data);
   else if (step === 3) renderStep3(body, data);
+  content.querySelectorAll("[data-goto]").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.preventDefault();
+      const target = parseInt(btn.dataset.goto, 10);
+      if (target >= 1 && target <= maxStep) {
+        persistStep(target);
+        renderSetupStep(content, target, data, staleBannerHtml);
+      }
+    });
+  });
+}
+
+function stepSummary(tg, cf, data) {
+  const parts = [];
+  if (tg) {
+    const uname = data?.bot_username || "";
+    parts.push(`<div class="step-summary"><span class="sum-check">${ICONS.check}</span><span class="sum-text">Telegram: Connected as ${escapeHtml(uname || "@yourbot")}</span></div>`);
+  }
+  if (cf) {
+    const url = data?.server_url || "https://pinetunnel.example.com";
+    parts.push(`<div class="step-summary"><span class="sum-check">${ICONS.check}</span><span class="sum-text">Cloudflare: ${escapeHtml(url)}</span></div>`);
+  }
+  return parts.length ? `<div class="step-summaries">${parts.join("")}</div>` : "";
 }
 
 function renderStep1(body, data) {
   const tg = data?.telegram_configured;
   body.innerHTML = `
-    <div class="card">
+    <div class="card setup-card">
       <h2 class="card-title">Telegram Bot</h2>
       <div class="card-desc">Required for dashboard login and trade alerts</div>
       ${tg ? `
-        <div class="row"><span class="k">Status</span><span class="v">${badge("ok", "Configured")}</span></div>
-        <div class="row"><span class="k">Bot Token</span><span class="v">**** (set)</span></div>
-        <button class="btn primary mt full-sm" data-action="advance-2">${ICONS.arrow}Continue to Step 2</button>
+        ${stepSummary(tg, false, data)}
+        <button class="btn primary full-sm" data-action="advance-2">${ICONS.arrow}Continue to Step 2</button>
       ` : `
-        <div class="field">
-          <label>1. Create a bot via @BotFather on Telegram</label>
-          <div class="hint">Open Telegram, message @BotFather, send /newbot, follow prompts</div>
+        <div class="setup-instructions">
+          <div class="instr-text">Connect your Telegram bot in three steps:</div>
+          <ol class="instr-list">
+            <li><span class="instr-n">1</span><span class="instr-body">Open Telegram and message <b>@BotFather</b></span></li>
+            <li><span class="instr-n">2</span><span class="instr-body">Send <code>/newbot</code> and follow the prompts</span></li>
+            <li><span class="instr-n">3</span><span class="instr-body">Copy the bot token and your user ID below</span></li>
+          </ol>
         </div>
-        <div class="field">
-          <label for="tg-token">2. Paste bot token <span class="req">*</span></label>
-          <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" spellcheck="false" aria-required="true">
-          <div class="hint">From @BotFather - format: 123456789:AA... (35 char secret)</div>
+        <div class="setup-form">
+          <div class="field">
+            <label for="tg-token">Bot token <span class="req">*</span></label>
+            <input class="input" id="tg-token" type="password" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" autocomplete="off" spellcheck="false" aria-required="true">
+            <div class="hint">From @BotFather - format: 123456789:AA... (35 char secret)</div>
+          </div>
+          <div class="field">
+            <label for="tg-uid">Telegram user ID <span class="req">*</span></label>
+            <input class="input" id="tg-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric" aria-required="true">
+            <div class="hint">Message @userinfobot on Telegram, it replies with your numeric ID</div>
+          </div>
+          <button class="btn primary full-sm" id="save-tg" data-action="save-telegram">${ICONS.check}Save and Verify</button>
+          <div id="tg-result" aria-live="polite"></div>
         </div>
-        <div class="field">
-          <label for="tg-uid">3. Get your Telegram user ID <span class="req">*</span></label>
-          <input class="input" id="tg-uid" type="number" placeholder="123456789" autocomplete="off" inputmode="numeric" aria-required="true">
-          <div class="hint">Message @userinfobot on Telegram, it replies with your numeric ID</div>
-        </div>
-        <button class="btn primary full-sm" id="save-tg" data-action="save-telegram">${ICONS.check}Save and Verify</button>
-        <div id="tg-result" aria-live="polite"></div>
       `}
     </div>
   `;
@@ -1671,35 +1734,68 @@ function renderStep1(body, data) {
 function renderStep2(body, data) {
   const cf = data?.cloudflare_configured;
   body.innerHTML = `
-    <div class="card">
+    <div class="card setup-card">
       <h2 class="card-title">Cloudflare Tunnel</h2>
-      <div class="card-desc">Provides public HTTPS URL for TradingView webhooks</div>
+      <div class="card-desc">Provides a public HTTPS URL for TradingView webhooks</div>
       ${cf ? `
-        <div class="row"><span class="k">Status</span><span class="v">${badge("ok", "Connected")}</span></div>
-        <div class="row"><span class="k">URL</span><span class="v">${escapeHtml(data?.server_url || "https://...")}</span></div>
-        <button class="btn primary mt full-sm" data-action="advance-3">${ICONS.arrow}Continue to Step 3</button>
+        ${stepSummary(true, cf, data)}
+        <button class="btn primary full-sm" data-action="advance-3">${ICONS.arrow}Continue to Step 3</button>
       ` : `
-        <div class="field">
-          <label>Option A: I have a Cloudflare domain (recommended)</label>
-          <div class="hint">Dashboard will create the tunnel for you. Coming in Phase 2.</div>
+        <div class="cf-options">
+          <button type="button" class="cf-option selected" data-option="domain">
+            <div class="cf-opt-title">I have a Cloudflare domain</div>
+            <div class="cf-opt-sub">Recommended - dashboard creates the tunnel for you</div>
+          </button>
+          <button type="button" class="cf-option" data-option="token">
+            <div class="cf-opt-title">I have a tunnel token</div>
+            <div class="cf-opt-sub">Paste a token from the Cloudflare dashboard</div>
+          </button>
         </div>
-        <div class="field">
-          <label for="cf-token">Option B: Tunnel token <span class="opt">(optional)</span></label>
-          <input class="input" id="cf-token" type="password" placeholder="eyJ..." autocomplete="off" spellcheck="false" disabled>
-          <div class="hint">Must start with eyJ - from Cloudflare Tunnel dashboard</div>
+        <div class="setup-form" id="cf-domain-form">
+          <div class="instr-text">Domain setup is coming in Phase 2. Use a tunnel token, or skip for now.</div>
         </div>
-        <div class="field">
-          <label for="cf-url">Tunnel URL <span class="opt">(optional)</span></label>
-          <input class="input" id="cf-url" type="url" placeholder="https://pinetunnel.example.com" autocomplete="off" spellcheck="false" disabled>
-          <div class="hint">Must start with https://</div>
+        <div class="setup-form hidden" id="cf-token-form">
+          <div class="field">
+            <label for="cf-token">Tunnel token <span class="opt">(optional)</span></label>
+            <input class="input" id="cf-token" type="password" placeholder="eyJ..." autocomplete="off" spellcheck="false" disabled>
+            <div class="hint">Must start with eyJ - from Cloudflare Tunnel dashboard</div>
+          </div>
+          <div class="field">
+            <label for="cf-url">Tunnel URL <span class="opt">(optional)</span></label>
+            <input class="input" id="cf-url" type="url" placeholder="https://pinetunnel.example.com" autocomplete="off" spellcheck="false" disabled>
+            <div class="hint">Must start with https://</div>
+          </div>
+          <button class="btn outline" disabled>${ICONS.external}Connect (Phase 2)</button>
+          <div id="cf-result" aria-live="polite"></div>
         </div>
-        <button class="btn outline" disabled>${ICONS.external}Connect (Phase 2)</button>
-        <div id="cf-result" aria-live="polite"></div>
+        <div class="cf-skip-row">
+          <a href="#" class="cf-skip-link" data-action="skip-cf">Skip for now</a>
+        </div>
       `}
     </div>
   `;
   const adv = body.querySelector("[data-action='advance-3']");
   if (adv) adv.addEventListener("click", e => { e.preventDefault(); advanceStep(3); });
+  const skipLink = body.querySelector("[data-action='skip-cf']");
+  if (skipLink) skipLink.addEventListener("click", e => { e.preventDefault(); skipCloudflare(); });
+  const optBtns = body.querySelectorAll(".cf-option");
+  optBtns.forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.preventDefault();
+      optBtns.forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      const opt = btn.dataset.option;
+      const domainForm = body.querySelector("#cf-domain-form");
+      const tokenForm = body.querySelector("#cf-token-form");
+      if (opt === "domain") {
+        if (domainForm) domainForm.classList.remove("hidden");
+        if (tokenForm) tokenForm.classList.add("hidden");
+      } else {
+        if (tokenForm) tokenForm.classList.remove("hidden");
+        if (domainForm) domainForm.classList.add("hidden");
+      }
+    });
+  });
   const cfToken = body.querySelector("#cf-token");
   const cfUrl = body.querySelector("#cf-url");
   if (cfToken && !cfToken.disabled) {
@@ -1712,23 +1808,27 @@ function renderStep2(body, data) {
 
 async function renderStep3(body, data) {
   const cf = data?.cloudflare_configured;
+  const skipped = !cf;
   body.innerHTML = `
-    <div class="card">
+    <div class="card setup-card">
       <h2 class="card-title">TradingView Webhook</h2>
-      <div class="card-desc">Copy this URL and paste it into TradingView</div>
+      <div class="card-desc">${skipped ? "Complete Cloudflare setup to get your webhook URL" : "Copy this URL and paste it into TradingView"}</div>
       <div class="webhook-display">
-        <code class="webhook-url" id="step3-webhook-url">${cf ? "Loading..." : "Complete Step 2 first"}</code>
-        <button class="btn primary full-sm" id="copy-step3" data-action="copy-step3" ${cf ? "" : "disabled"}>${ICONS.copy}Copy URL</button>
+        <code class="webhook-url" id="step3-webhook-url">${skipped ? "Complete Cloudflare setup to get your webhook URL" : "Loading..."}</code>
+        <button class="btn primary full-sm" id="copy-step3" data-action="copy-step3" ${skipped ? "disabled" : ""}>${ICONS.copy}Copy URL</button>
       </div>
-      <div class="hint mt">In TradingView: Chart -> Alert -> Notifications -> Webhook URL</div>
+      <div class="hint mt">In TradingView: Chart -&gt; Alert -&gt; Notifications -&gt; Webhook URL</div>
     </div>
-    <button class="btn outline full-sm" data-action="goto-overview">${ICONS.check}Back to Overview</button>
+    <div class="step3-actions">
+      <a class="btn outline full-sm" href="https://www.tradingview.com/chart/" target="_blank" rel="noopener" data-action="open-tv">${ICONS.external}Open TradingView</a>
+      <button class="btn primary full-sm" data-action="goto-overview">${ICONS.check}Go to Dashboard</button>
+    </div>
   `;
   const copyBtn = body.querySelector("[data-action='copy-step3']");
   if (copyBtn) copyBtn.addEventListener("click", e => { e.preventDefault(); copyWebhookStep3(); });
   const backBtn = body.querySelector("[data-action='goto-overview']");
   if (backBtn) backBtn.addEventListener("click", e => { e.preventDefault(); route("overview"); });
-  if (!cf) return;
+  if (skipped) return;
   try {
     const r = await http(`${API}/webhook-url`);
     const info = await r.json();
@@ -1742,10 +1842,23 @@ async function renderStep3(body, data) {
 
 async function advanceStep(step) {
   const content = document.getElementById("content");
+  persistStep(step);
   content.innerHTML = skeletonCard(1);
   invalidateCache(`${API}/setup-status`);
-  const { data } = await useFetch(`${API}/setup-status`);
-  renderSetupStep(content, step, data);
+  const { data, stale } = await useFetch(`${API}/setup-status`);
+  const staleBannerHtml = stale ? staleBanner() : "";
+  renderSetupStep(content, step, data, staleBannerHtml);
+}
+
+function skipCloudflare() {
+  const content = document.getElementById("content");
+  persistStep(3);
+  invalidateCache(`${API}/setup-status`);
+  useFetch(`${API}/setup-status`).then(({ data, stale }) => {
+    const staleBannerHtml = stale ? staleBanner() : "";
+    renderSetupStep(content, 3, data, staleBannerHtml);
+  });
+  toast("Skipped Cloudflare - complete later", "ok");
 }
 
 async function saveTelegram() {
@@ -1766,15 +1879,20 @@ async function saveTelegram() {
       headers: jsonHeaders(true),
       body: JSON.stringify({ updates: { TELEGRAM_BOT_TOKEN: token, TELEGRAM_ADMIN_IDS: uid } }),
     });
-    setBtnSuccess(btn, "Saved", 2000);
     setupDirty = false;
     invalidateCache(`${API}/setup-status`);
     invalidateCache(`${API}/config`);
+    let botName = "@yourbot";
+    try {
+      const infoRes = await http(`${API}/bot-info`);
+      const info = await infoRes.json();
+      if (info.username) botName = "@" + info.username;
+    } catch {}
+    setBtnSuccess(btn, "Connected", 2000);
+    result.innerHTML = `<div class="inline-ok">${ICONS.check}Connected as ${escapeHtml(botName)}</div>`;
     if (r.needs_restart) {
-      result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Restart the server for the bot to pick up the new token.</div>`;
-      toast("Telegram saved - restart required", "ok");
+      toast("Telegram configured - restart required", "ok");
     } else {
-      result.innerHTML = `<div class="inline-ok">${ICONS.check}Saved. Send /login to your bot to test.</div>`;
       toast("Telegram configured", "ok");
     }
     setTimeout(() => advanceStep(2), 2000);
@@ -2150,10 +2268,10 @@ function renderSignalFeed(content, actions) {
           <input class="input filter-txt" id="feed-filter-symbol" placeholder="Symbol filter" aria-label="Filter by symbol" value="${escapeHtml(signalFeedState.filterSymbol)}">
           <select class="input filter-sel" id="feed-filter-status" aria-label="Filter by status">
             <option value="">All status</option>
-            <option value="success" ${signalFeedState.filterStatus === "success" ? "selected" : ""}>Executed</option>
+            <option value="executed" ${signalFeedState.filterStatus === "executed" ? "selected" : ""}>Executed</option>
             <option value="pending" ${signalFeedState.filterStatus === "pending" ? "selected" : ""}>Pending</option>
+            <option value="delivered" ${signalFeedState.filterStatus === "delivered" ? "selected" : ""}>Delivered</option>
             <option value="failed" ${signalFeedState.filterStatus === "failed" ? "selected" : ""}>Failed</option>
-            <option value="duplicate" ${signalFeedState.filterStatus === "duplicate" ? "selected" : ""}>Duplicate</option>
           </select>
         </div>
         <button class="btn outline sm" id="feed-pause-btn" data-action="feed-pause" aria-pressed="false">${ICONS.pause}Pause</button>
@@ -2211,7 +2329,7 @@ function renderSignalFeed(content, actions) {
 
 async function pollSignalFeed() {
   if (currentRoute !== "signals" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch("/api/webhooks/recent?limit=50");
+  const { data, error, stale } = await useFetch("/api/signals/recent?limit=50");
   const staleEl = document.getElementById("feed-stale-banner");
   if (staleEl) staleEl.remove();
   if (error && !data) {
@@ -2229,8 +2347,8 @@ async function pollSignalFeed() {
       card.parentNode.insertBefore(banner, card);
     }
   }
-  if (!data || !data.webhooks) return;
-  const incoming = data.webhooks;
+  if (!data || !data.signals) return;
+  const incoming = data.signals;
   let newRows = [];
   for (const w of incoming) {
     const id = w.id;
@@ -2247,7 +2365,7 @@ async function pollSignalFeed() {
   }
   const licenseSet = new Set();
   for (const r of signalFeedState.rows) {
-    const lk = r.payload && r.payload.license_key ? r.payload.license_key : (r.ip_address || "");
+    const lk = r.license_key || "";
     if (lk) licenseSet.add(maskKey(lk));
   }
   const licenseSel = document.getElementById("feed-filter-license");
@@ -2287,13 +2405,13 @@ async function pollSignalFeed() {
 
 function feedRowHtml(r) {
     const ts = r.timestamp ? formatTime(r.timestamp) : "--";
-  const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "--");
+  const lk = maskKey(r.license_key || "");
   const action = r.action || "--";
   const sym = r.symbol || "--";
   const lots = r.volume != null ? r.volume : "--";
-  const status = r.status || "--";
+  const status = r.execution_status || "pending";
   const cls = statusClassFor(status);
-  const lat = r.execution_time_ms != null ? formatLatency(r.execution_time_ms) : "--";
+  const lat = r.latency_ms != null ? formatLatency(r.latency_ms) : "--";
   const actionCls = action === "buy" ? "act-buy" : action === "sell" ? "act-sell" : action === "close" || action === "close_all" ? "act-close" : "act-other";
   return `<tr class="row-${cls}">
     <td class="td-time" scope="row">${escapeHtml(ts)}</td>
@@ -2312,7 +2430,7 @@ function renderFeedRows() {
   const { rows, filterLicense, filterSymbol, filterStatus } = signalFeedState;
   let filtered = rows;
   if (filterLicense) filtered = filtered.filter(r => {
-    const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "");
+    const lk = maskKey(r.license_key || "");
     return lk === filterLicense;
   });
   if (filterSymbol) filtered = filtered.filter(r => (r.symbol || "").toUpperCase().includes(filterSymbol));
@@ -2397,16 +2515,21 @@ async function pollEaMap() {
     }
   }
   if (!overview && !eaCheck) {
-    grid.innerHTML = errorPanel("EA connections", (overviewRes.error || "") + (eaCheckRes.error || ""), "retry-ea");
+    const oe = overviewRes.error || "";
+    const ee = eaCheckRes.error || "";
+    const msg = oe && ee && oe === ee ? oe : (oe + (oe && ee ? " / " : "") + ee);
+    grid.innerHTML = errorPanel("EA connections", msg || "Server error or unreachable", "retry-ea");
     bindRetryToScope("retry-ea", () => pollEaMap());
     return;
   }
   const licenses = (overview && overview.licenses) ? overview.licenses : [];
   const dbConns = (eaCheck && eaCheck.db_connections) ? eaCheck.db_connections : [];
+  const wsCounts = (eaCheck && eaCheck.ws_connection_counts) ? eaCheck.ws_connection_counts : {};
   const merged = [];
   const seen = new Set();
   for (const lic of licenses) {
     const key = lic.license_key;
+    const wsCount = wsCounts[key] || 0;
     merged.push({
       license_key: key,
       masked: maskKey(key),
@@ -2414,25 +2537,34 @@ async function pollEaMap() {
       health: lic.health || null,
       open_position_count: lic.open_position_count || 0,
       connType: "WS",
+      wsCount: wsCount,
       lastSeen: lic.health && lic.health.timestamp ? lic.health.timestamp : (lic.account && lic.account.timestamp ? lic.account.timestamp : null),
       latency: lic.health && lic.health.ws_latency_ms != null ? lic.health.ws_latency_ms : null,
     });
     seen.add(key);
   }
   for (const c of dbConns) {
-    const maskedKey = c.license_key || "--";
-    if (seen.has(maskedKey)) continue;
+    const key = c.license_key || "--";
+    if (seen.has(key)) {
+      const existing = merged.find(m => m.license_key === key);
+      if (existing) {
+        existing.connType = "WS+HTTP";
+        if (!existing.lastSeen && c.last_seen) existing.lastSeen = c.last_seen;
+      }
+      continue;
+    }
     merged.push({
-      license_key: maskedKey,
-      masked: maskedKey,
+      license_key: key,
+      masked: maskKey(key),
       account: null,
       health: null,
       open_position_count: 0,
       connType: c.type || "HTTP",
+      wsCount: 0,
       lastSeen: c.last_seen || null,
       latency: null,
     });
-    seen.add(maskedKey);
+    seen.add(key);
   }
   if (merged.length === 0) {
     grid.innerHTML = emptyState(ICONS.map, "No EAs connected. Install the EA on your MetaTrader to get started.", "Go to Setup", "empty-goto-setup");
@@ -2453,7 +2585,11 @@ async function pollEaMap() {
     const broker = acc.company || acc.server || "--";
     const positions = ea.open_position_count || 0;
     const lat = ea.latency != null ? formatLatency(ea.latency) : "--";
-    const connBadge = ea.connType === "WS" ? '<span class="conn-badge ws">WS</span>' : '<span class="conn-badge http">HTTP</span>';
+    const connBadge = ea.connType === "WS"
+      ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span>`
+      : ea.connType === "WS+HTTP"
+        ? `<span class="conn-badge ws">WS${ea.wsCount > 1 ? " x" + ea.wsCount : ""}</span><span class="conn-badge http">HTTP</span>`
+        : '<span class="conn-badge http">HTTP</span>';
     return `<div class="ea-card ${statusCls}" data-key="${escapeHtml(ea.license_key)}" data-action="ea-expand" tabindex="0" role="button" aria-expanded="false" aria-label="EA ${escapeHtml(ea.masked)}, ${statusLabel}, click to view trades">
       <div class="ea-card-head">
         <span class="ea-key">${escapeHtml(ea.masked)}</span>
@@ -2620,10 +2756,13 @@ async function pollTradeAnalytics() {
 function drawBarChart(daily, dash) {
   const wrap = document.getElementById("bar-chart-wrap");
   if (!wrap) return;
-  if (!daily || !Array.isArray(daily)) return;
+  if (!daily || !Array.isArray(daily)) {
+    wrap.innerHTML = '<svg viewBox="0 0 600 200" class="chart-svg" role="img" aria-label="Trades by hour: no data"><title>Trades by hour - no data</title><desc>No trade data available.</desc></svg>';
+    return;
+  }
   const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
   const now = new Date();
-  const todayTrades = (dash && dash.recent_activity) || [];
+  const todayTrades = (dash && Array.isArray(dash.recent_activity)) ? dash.recent_activity : [];
   for (const t of todayTrades) {
     const ts = t.received_at || t.timestamp;
     if (!ts) continue;
