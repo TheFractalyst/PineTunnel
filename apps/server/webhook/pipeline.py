@@ -157,9 +157,12 @@ async def deliver_signal(
             global _ws_push_count, _ws_push_total_ms
             _ws_push_count += 1
             _ws_push_total_ms += push_ms
+            from apps.server.routes.metrics import record_ws_delivery, set_ws_push_avg_ms
+            set_ws_push_avg_ms(
+                round(_ws_push_total_ms / _ws_push_count, 1) if _ws_push_count > 0 else 0.0
+            )
             if ws_sent > 0:
-                from apps.server.routes.metrics import record_ws_delivery
-                record_ws_delivery()
+                record_ws_delivery(ws_sent)
                 logger.debug(
                     "WS push: %s delivered to %d EA(s) in %.1fms",
                     _mask(license_key),

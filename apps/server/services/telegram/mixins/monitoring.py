@@ -41,6 +41,7 @@ class MonitoringMixin:
                 InlineKeyboardButton("$ Accounts", callback_data="mon_account_stats"),
                 InlineKeyboardButton("[LOG] Logs", callback_data="mon_logs"),
             ],
+            [InlineKeyboardButton("[!] Security", callback_data="mon_security")],
             [InlineKeyboardButton("<= Back to Menu", callback_data="menu_main")],
         ]
 
@@ -554,6 +555,96 @@ class MonitoringMixin:
             reply_markup=InlineKeyboardMarkup(
                 [
                     [InlineKeyboardButton(" Refresh", callback_data="mon_account_stats")],
+                    [InlineKeyboardButton("<= Back", callback_data="menu_monitor")],
+                ]
+            ),
+        )
+
+    async def _show_security(self, update: Update):
+        import time as _time
+        from apps.server.config.settings import get_config
+        from apps.server.middleware.ip_validation import _TRADINGVIEW_IPS
+        from apps.server.middleware.main import failed_attempt_tracker
+        from apps.server.middleware.security import get_security_headers
+        from apps.server.state import rate_limiter
+
+        lines = [f"[!] *Security Center*\n{SEP}"]
+
+        fa_stats = {"blocked_ips": [], "blocked_ip_count": 0, "failed_attempts_24h": 0}
+        if failed_attempt_tracker is not None:
+            fa_stats = failed_attempt_tracker.get_statistics()
+
+        rl_stats: dict = {}
+        rl_blocked_count = 0
+        if rate_limiter is not None:
+            rl_stats = rate_limiter.get_statistics()
+            rl_blocked_count = len(rl_stats.get("blocked_ips", []))
+
+        fa_blocked_count = fa_stats.get("blocked_ip_count", 0)
+        total_blocked = fa_blocked_count + rl_blocked_count
+        failed_24h = fa_stats.get("failed_attempts_24h", 0)
+        rate_hits = rl_stats.get("rate_limited_requests", 0)
+
+        blocked_emoji = "[OK]" if total_blocked == 0 else "[X]"
+        lines.append(f"{blocked_emoji} Blocked IPs: {total_blocked}")
+        if fa_blocked_count > 0:
+            lines.append(f"   - Failed auth blocks (1h): {fa_blocked_count}")
+        if rl_blocked_count > 0:
+            lines.append(f"   - Rate limiter blocks (5m): {rl_blocked_count}")
+
+        failed_emoji = "[OK]" if failed_24h <= 10 else "[!]"
+        lines.append(f"{failed_emoji} Failed Attempts (24h): {failed_24h}")
+
+        rate_emoji = "[OK]" if rate_hits <= 50 else "[!]"
+        lines.append(f"{rate_emoji} Rate Limit Hits: {rate_hits}")
+
+        headers = get_security_headers()
+        active_count = len(headers)
+        headers_emoji = "[OK]" if active_count >= 6 else ("[!]" if active_count > 0 else "[X]")
+        lines.append(f"{headers_emoji} Security Headers: {active_count}/6 active")
+        for name in ("x-frame-options", "content-security-policy", "x-content-type-options",
+                     "x-xss-protection", "referrer-policy", "strict-transport-security"):
+            val = headers.get(name)
+            mark = "[OK]" if val else "[X]"
+            lines.append(f"   {mark} {name}: {val or 'missing'}")
+
+        cfg = get_config()
+        tv_env = cfg.tradingview_ip_allowlist.lower()
+        if tv_env in ("0", "false", "no"):
+            tv_on = False
+        elif tv_env in ("1", "true", "yes"):
+            tv_on = True
+        else:
+            tv_on = cfg.environment == "production"
+        env_ips = cfg.tradingview_ips
+        tv_ips = [ip.strip() for ip in env_ips.split(",") if ip.strip()] if env_ips else sorted(_TRADINGVIEW_IPS)
+        tv_emoji = "[OK]" if tv_on else "[ ]"
+        lines.append(f"{tv_emoji} TradingView IP Allowlist: {'ON' if tv_on else 'OFF'}")
+        if tv_ips:
+            lines.append(f"   IPs: {', '.join(tv_ips)}")
+
+        if total_blocked > 0:
+            all_blocked = []
+            for entry in fa_stats.get("blocked_ips", []):
+                all_blocked.append(f"   {entry['ip']} (failed auth, {entry['remaining_seconds']}s left)")
+            if rate_limiter is not None:
+                for ip, block_until in rate_limiter.blocked_ips.items():
+                    remaining = max(0, int(block_until - _time.time()))
+                    all_blocked.append(f"   {ip} (rate limit, {remaining}s left)")
+            if all_blocked:
+                lines.append("\n*Blocked IPs Detail*:")
+                lines.extend(all_blocked[:20])
+                if len(all_blocked) > 20:
+                    lines.append(f"   ... and {len(all_blocked) - 20} more")
+
+        lines.append(f"\n {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        await update.callback_query.edit_message_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(" Refresh", callback_data="mon_security")],
                     [InlineKeyboardButton("<= Back", callback_data="menu_monitor")],
                 ]
             ),

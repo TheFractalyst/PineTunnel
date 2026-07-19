@@ -16,6 +16,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
+from apps.server.routes.metrics import record_redis_op
 from apps.server.utils import mask_string as _mask
 from apps.server.ws.connection import HTTP_POLLING_TIMEOUT, ConnectionManager
 
@@ -64,12 +65,14 @@ class RedisConnectionManager(ConnectionManager):
                 },
             )
             await self._redis.expire(key, _POLL_TTL)
+            record_redis_op("hset", "ok")
             # Also keep local dict in sync for fast reads within the same worker
             self.http_polling_clients[license_key] = {
                 "last_poll": datetime.fromtimestamp(data["last_poll"]),
                 "client_info": info,
             }
         except Exception:
+            record_redis_op("hset", "error")
             logger.warning("Redis register_poll failed for %s - using local", _mask(license_key))
             # Fallback already handled by super().__init__()
 
@@ -78,7 +81,9 @@ class RedisConnectionManager(ConnectionManager):
         key = f"{_KEY_PREFIX}:poll:{license_key}"
         try:
             await self._redis.delete(key)
+            record_redis_op("delete", "ok")
         except Exception:
+            record_redis_op("delete", "error")
             logger.debug("Redis deregister_poll failed for %s", _mask(license_key))
         self.http_polling_clients.pop(license_key, None)
 
@@ -108,6 +113,7 @@ class RedisConnectionManager(ConnectionManager):
                         key = key.decode()
                     license_key = key.rsplit(":", 1)[-1]
                     last_poll_raw = await self._redis.hget(key, "last_poll")
+                    record_redis_op("hget", "ok" if last_poll_raw else "miss")
                     if last_poll_raw:
                         try:
                             last_poll = float(last_poll_raw)
@@ -115,11 +121,13 @@ class RedisConnectionManager(ConnectionManager):
                                 active.append(license_key)
                             else:
                                 await self._redis.delete(key)
+                                record_redis_op("delete", "ok")
                         except (ValueError, TypeError):
                             pass
                 if cursor == 0:
                     break
         except Exception:
+            record_redis_op("scan", "error")
             logger.warning("Redis get_active_clients failed - using local fallback")
             return super().get_active_http_clients()
 
@@ -142,7 +150,9 @@ class RedisConnectionManager(ConnectionManager):
         key = f"{_WS_KEY_PREFIX}:{license_key}:{conn_id}"
         try:
             await self._redis.setex(key, _WS_TTL, "1")
+            record_redis_op("setex", "ok")
         except Exception:
+            record_redis_op("setex", "error")
             logger.debug("Redis register_ws failed for %s", _mask(license_key))
 
     async def deregister_ws_connection(self, license_key: str, conn_id: str) -> None:
@@ -150,7 +160,9 @@ class RedisConnectionManager(ConnectionManager):
         key = f"{_WS_KEY_PREFIX}:{license_key}:{conn_id}"
         try:
             await self._redis.delete(key)
+            record_redis_op("delete", "ok")
         except Exception:
+            record_redis_op("delete", "error")
             logger.debug("Redis deregister_ws failed for %s", _mask(license_key))
 
     async def refresh_ws_heartbeat(self, license_key: str, conn_id: str) -> None:
@@ -158,7 +170,9 @@ class RedisConnectionManager(ConnectionManager):
         key = f"{_WS_KEY_PREFIX}:{license_key}:{conn_id}"
         try:
             await self._redis.expire(key, _WS_TTL)
+            record_redis_op("expire", "ok")
         except Exception:
+            record_redis_op("expire", "error")
             logger.debug("Redis refresh_ws_heartbeat failed for %s", _mask(license_key))
 
     async def get_global_ws_count_async(self) -> int:
@@ -197,7 +211,9 @@ class RedisConnectionManager(ConnectionManager):
         payload = json.dumps(signal_data or {"type": "new_signal"})
         try:
             await self._redis.publish(channel, payload)
+            record_redis_op("publish", "ok")
         except Exception:
+            record_redis_op("publish", "error")
             logger.warning("Redis publish failed for %s - queuing locally", _mask(license_key))
 
         # Also push to local asyncio.Queue so this worker's EAs get it immediately
@@ -212,7 +228,9 @@ class RedisConnectionManager(ConnectionManager):
         channel = f"{_NOTIFY_PREFIX}:{license_key}"
         try:
             await self._subscriber.subscribe(channel)
+            record_redis_op("subscribe", "ok")
         except Exception:
+            record_redis_op("subscribe", "error")
             logger.warning("Redis subscribe failed for %s", _mask(license_key))
 
     async def unsubscribe_from_signals(self, license_key: str) -> None:
@@ -223,7 +241,9 @@ class RedisConnectionManager(ConnectionManager):
         channel = f"{_NOTIFY_PREFIX}:{license_key}"
         try:
             await self._subscriber.unsubscribe(channel)
+            record_redis_op("unsubscribe", "ok")
         except Exception:
+            record_redis_op("unsubscribe", "error")
             logger.debug("Redis unsubscribe failed for %s", _mask(license_key))
 
     async def _listen_for_signals(self) -> None:

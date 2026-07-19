@@ -225,6 +225,75 @@ def test_put_config_non_telegram_keys_no_restart(dashboard_app):
     assert r.json()["needs_restart"] is False
 
 
+def test_put_config_syncs_os_environ_and_reloads_settings(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    import os
+
+    monkeypatch.delenv("WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("APP_ENV", "development")
+    r = client.put(
+        "/api/dashboard/config",
+        json={"updates": {"WEBHOOK_SECRET": "new-hot-reloaded-secret-value-1234567890"}},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    assert os.environ.get("WEBHOOK_SECRET") == "new-hot-reloaded-secret-value-1234567890"
+    from apps.server.config.settings import get_config
+    from apps.server import state
+
+    assert state.settings is not None
+    assert get_config().webhook_secret == "new-hot-reloaded-secret-value-1234567890"
+    assert state.settings.webhook_secret == "new-hot-reloaded-secret-value-1234567890"
+
+
+def test_put_config_restart_required_keys_set_needs_restart(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.put(
+        "/api/dashboard/config",
+        json={"updates": {"PORT": "9000"}},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["needs_restart"] is True
+
+
+def test_put_config_returns_bot_reloaded_flag(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    from apps.server import state
+
+    class _FakeBot:
+        def __init__(self):
+            self.token = "old"
+            self.admin_ids = [123]
+            self._started = True
+
+        async def stop(self):
+            pass
+
+        async def start(self):
+            self._started = True
+
+    monkeypatch.setattr(state, "telegram_bot", _FakeBot())
+    code = store.issue_code(user_id=123)
+    client = TestClient(app)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+    r = client.put(
+        "/api/dashboard/config",
+        json={"updates": {"TELEGRAM_BOT_TOKEN": "newtoken", "TELEGRAM_ADMIN_IDS": "456"}},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["needs_restart"] is False
+    assert data["bot_reloaded"] is True
+
+
 def test_put_config_telegram_keys_signal_restart_when_no_bot(dashboard_app, monkeypatch):
     app, store = dashboard_app
     from apps.server import state
@@ -400,6 +469,51 @@ def test_rotate_telegram_bot_token_triggers_reload(dashboard_app, monkeypatch):
     assert r.json()["needs_restart"] is True
 
 
+def test_rotate_syncs_os_environ_and_reloads_settings(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    env_path = app.__pinetunnel_env_path  # type: ignore[attr-defined]
+    client = TestClient(app)
+    _login(client, store)
+    client.put("/api/dashboard/config", json={"updates": {"WEBHOOK_SECRET": "old-secret-value-123"}}, headers=CSRF_HEADERS)
+    monkeypatch.delenv("WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("APP_ENV", "development")
+    r = client.post("/api/dashboard/config/rotate", json={"key": "WEBHOOK_SECRET"}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    import os
+
+    new_env_val = os.environ.get("WEBHOOK_SECRET", "")
+    assert new_env_val and new_env_val != "old-secret-value-123"
+    from apps.server.config.settings import get_config
+
+    assert get_config().webhook_secret == new_env_val
+
+
+def test_rotate_returns_bot_reloaded_flag(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    from apps.server import state
+
+    class _FakeBot:
+        def __init__(self):
+            self.token = "old"
+            self.admin_ids = [123]
+            self._started = True
+
+        async def stop(self):
+            pass
+
+        async def start(self):
+            self._started = True
+
+    monkeypatch.setattr(state, "telegram_bot", _FakeBot())
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/config/rotate", json={"key": "TELEGRAM_BOT_TOKEN"}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["needs_restart"] is False
+    assert data["bot_reloaded"] is True
+
+
 def test_reset_requires_auth(dashboard_app):
     app, _ = dashboard_app
     client = TestClient(app)
@@ -447,3 +561,21 @@ def test_reset_regenerates_minimal_env(dashboard_app):
     assert len(env["SIGNAL_ENCRYPTION_KEY"]) == 64
     assert env["TELEGRAM_BOT_TOKEN"] == ""
     assert env["TELEGRAM_ADMIN_IDS"] == ""
+
+
+def test_reset_syncs_os_environ_and_reloads_settings(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    monkeypatch.setenv("WEBHOOK_SECRET", "stale-old-value")
+    monkeypatch.setenv("APP_ENV", "development")
+    from apps.server.config.settings import get_config, reset_config_singleton
+
+    reset_config_singleton()
+    r = client.post("/api/dashboard/config/reset", json={"confirm": True}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    import os
+
+    new_secret = os.environ.get("WEBHOOK_SECRET", "")
+    assert new_secret and new_secret != "stale-old-value"
+    assert get_config().webhook_secret == new_secret

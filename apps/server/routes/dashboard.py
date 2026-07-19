@@ -94,20 +94,24 @@ def _is_rotatable(key: str) -> bool:
 
 
 def _sync_env_and_reload_settings(updates: dict[str, str]) -> None:
-    """Sync updates to os.environ and rebuild the Settings singleton.
+    """Sync updates to os.environ and invalidate the Settings singleton.
 
     write_env_updates() only writes the .env file. In production, Settings
     reads from os.environ (env_file is None), so without syncing os.environ
     the new values would be invisible. After syncing, reset the cached
     singleton so the next get_config() re-reads everything, and publish the
-    new instance to state.settings for route modules.
+    fresh instance to state.settings for route modules.
     """
     for key, value in updates.items():
         os.environ[key] = value
     from apps.server.config.settings import get_config, reset_config_singleton
 
     reset_config_singleton()
-    new_settings = get_config()
+    try:
+        new_settings = get_config()
+    except Exception:
+        reset_config_singleton()
+        return
     from apps.server import state
 
     state.settings = new_settings
@@ -201,6 +205,29 @@ class TestWebhookRequest(BaseModel):
     tp: str | None = None
 
 
+class LicenseCreateRequest(BaseModel):
+    license_key: str = ""
+    name: str = ""
+    email: str = ""
+    secret_key: str = ""
+    expires_at: str = ""
+
+
+class LicenseUpdateRequest(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    expires_at: str | None = None
+    enabled: bool | None = None
+
+
+class LicenseDeleteRequest(BaseModel):
+    confirm: bool = False
+
+
+class LicenseExtendRequest(BaseModel):
+    days: int = 30
+
+
 async def require_csrf(x_admin_csrf: str | None = Header(default=None)) -> None:
     if x_admin_csrf != "1":
         raise HTTPException(status_code=403, detail="Missing CSRF header")
@@ -263,14 +290,24 @@ def create_dashboard_router(
     @router.put("/config")
     async def update_config(req: ConfigUpdateRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
         write_env_updates(env_path, req.updates)
-        needs_restart = False
-        if _TELEGRAM_RELOAD_KEYS & set(req.updates.keys()):
+        _sync_env_and_reload_settings(req.updates)
+        updated_keys = set(req.updates.keys())
+        needs_restart = bool(_RESTART_REQUIRED_KEYS & updated_keys)
+        bot_reloaded = False
+        if _TELEGRAM_RELOAD_KEYS & updated_keys:
             try:
                 reloaded = await _reload_telegram_bot(env_path)
             except Exception:
                 reloaded = False
-            needs_restart = not reloaded
-        return {"status": "ok", "updated_keys": list(req.updates.keys()), "needs_restart": needs_restart}
+            bot_reloaded = reloaded
+            if not reloaded:
+                needs_restart = True
+        return {
+            "status": "ok",
+            "updated_keys": list(updated_keys),
+            "needs_restart": needs_restart,
+            "bot_reloaded": bot_reloaded,
+        }
 
     @router.get("/config/schema")
     async def get_config_schema(_=Depends(require_auth)):
@@ -292,18 +329,23 @@ def create_dashboard_router(
         new_value = _generate_new_secret(key)
         updates[key] = new_value
         write_env_updates(env_path, updates)
-        needs_restart = False
+        _sync_env_and_reload_settings(updates)
+        needs_restart = key in _RESTART_REQUIRED_KEYS
+        bot_reloaded = False
         if key == "TELEGRAM_BOT_TOKEN":
             try:
                 reloaded = await _reload_telegram_bot(env_path)
             except Exception:
                 reloaded = False
-            needs_restart = not reloaded
+            bot_reloaded = reloaded
+            if not reloaded:
+                needs_restart = True
         return {
             "status": "ok",
             "key": key,
             "new_value": redact_value(key, new_value),
             "needs_restart": needs_restart,
+            "bot_reloaded": bot_reloaded,
         }
 
     @router.post("/config/reset")
@@ -328,6 +370,8 @@ def create_dashboard_router(
             os.chmod(env_path, 0o600)
         except OSError:
             pass
+        fresh_env = read_env(env_path)
+        _sync_env_and_reload_settings(fresh_env)
         return {"status": "ok", "message": "Settings reset. Restart the server for changes to take effect."}
 
     @router.post("/validate-telegram")
@@ -547,6 +591,182 @@ def create_dashboard_router(
             }
 
         return {"total_users": len(users), "users": list(users.values())}
+
+    def _mask_key(key: str) -> str:
+        if not key or len(key) <= 8:
+            return "****"
+        return key[:4] + "..." + key[-4:]
+
+    def _log_license_action(request: Request, action: str, license_key: str, details: dict | None = None) -> None:
+        from apps.server.state import admin_logger
+
+        if admin_logger is None:
+            return
+        try:
+            admin_logger.log_activity(
+                action=f"license.{action}",
+                user=_mask_key(license_key),
+                ip_address=_get_client_ip(request),
+                details=details or {"license_key": _mask_key(license_key)},
+            )
+        except Exception:
+            pass
+
+    @router.post("/licenses")
+    async def create_license(req: LicenseCreateRequest, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import client_manager
+        from apps.server.services.client_manager import generate_license_key, generate_secret_key
+
+        if not client_manager:
+            raise HTTPException(status_code=503, detail="Client manager not available")
+        license_key = req.license_key.strip() or generate_license_key()
+        if license_key in client_manager.clients:
+            raise HTTPException(status_code=409, detail="License key already exists")
+        secret_key = req.secret_key.strip() or generate_secret_key()
+        expires_at = req.expires_at.strip() or None
+        client_data = {
+            "name": req.name.strip(),
+            "email": req.email.strip(),
+            "secret_key": secret_key,
+            "status": "active",
+            "enabled": True,
+            "expires_at": expires_at,
+            "last_activity": None,
+        }
+        if not client_manager.add_client(license_key, client_data):
+            raise HTTPException(status_code=500, detail="Failed to persist license")
+        _log_license_action(request, "create", license_key, {"name": req.name, "email": req.email})
+        return {
+            "status": "ok",
+            "license": {
+                "license_key": license_key,
+                "name": client_data["name"],
+                "email": client_data["email"],
+                "status": "active",
+                "enabled": True,
+                "expires_at": expires_at,
+                "secret_key": secret_key,
+            },
+        }
+
+    @router.put("/licenses/{key}")
+    async def update_license(key: str, req: LicenseUpdateRequest, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import client_manager
+
+        if not client_manager:
+            raise HTTPException(status_code=503, detail="Client manager not available")
+        if key not in client_manager.clients:
+            raise HTTPException(status_code=404, detail="License not found")
+        fields: dict = {}
+        if req.name is not None:
+            fields["name"] = req.name
+        if req.email is not None:
+            fields["email"] = req.email
+        if req.expires_at is not None:
+            fields["expires_at"] = req.expires_at.strip() or None
+        if req.enabled is not None:
+            fields["enabled"] = req.enabled
+        if not client_manager.update_client(key, **fields):
+            raise HTTPException(status_code=500, detail="Failed to update license")
+        _log_license_action(request, "update", key, fields)
+        return {"status": "ok"}
+
+    @router.delete("/licenses/{key}")
+    async def delete_license(key: str, req: LicenseDeleteRequest, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import client_manager
+
+        if not client_manager:
+            raise HTTPException(status_code=503, detail="Client manager not available")
+        if not req.confirm:
+            raise HTTPException(status_code=400, detail="confirm must be true to delete a license")
+        if key not in client_manager.clients:
+            raise HTTPException(status_code=404, detail="License not found")
+        if not client_manager.remove_client(key):
+            raise HTTPException(status_code=500, detail="Failed to delete license")
+        _log_license_action(request, "delete", key)
+        return {"status": "ok"}
+
+    @router.post("/licenses/{key}/extend")
+    async def extend_license(key: str, req: LicenseExtendRequest, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import client_manager
+
+        if not client_manager:
+            raise HTTPException(status_code=503, detail="Client manager not available")
+        if key not in client_manager.clients:
+            raise HTTPException(status_code=404, detail="License not found")
+        new_expiry = client_manager.extend_client(key, req.days)
+        if new_expiry is None:
+            raise HTTPException(status_code=500, detail="Failed to extend license")
+        _log_license_action(request, "extend", key, {"days": req.days, "new_expires_at": new_expiry})
+        return {"status": "ok", "new_expires_at": new_expiry}
+
+    @router.post("/licenses/{key}/disable")
+    async def disable_license(key: str, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import client_manager
+
+        if not client_manager:
+            raise HTTPException(status_code=503, detail="Client manager not available")
+        if key not in client_manager.clients:
+            raise HTTPException(status_code=404, detail="License not found")
+        if not client_manager.set_status(key, "disabled", enabled=False):
+            raise HTTPException(status_code=500, detail="Failed to disable license")
+        _log_license_action(request, "disable", key)
+        return {"status": "ok"}
+
+    @router.post("/licenses/{key}/enable")
+    async def enable_license(key: str, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import client_manager
+
+        if not client_manager:
+            raise HTTPException(status_code=503, detail="Client manager not available")
+        if key not in client_manager.clients:
+            raise HTTPException(status_code=404, detail="License not found")
+        if not client_manager.set_status(key, "active", enabled=True):
+            raise HTTPException(status_code=500, detail="Failed to enable license")
+        _log_license_action(request, "enable", key)
+        return {"status": "ok"}
+
+    @router.post("/licenses/{key}/force-disconnect")
+    async def force_disconnect_license(key: str, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import ws_manager
+
+        if not ws_manager:
+            return {"status": "ok", "disconnected": 0}
+        conns = []
+        if hasattr(ws_manager, "get_connections_for_key"):
+            conns = ws_manager.get_connections_for_key(key)
+        elif hasattr(ws_manager, "_connections"):
+            conns = list(ws_manager._connections.get(key, []))
+        disconnected = 0
+        for ws in conns:
+            try:
+                import asyncio as _asyncio
+                _asyncio.create_task(ws.close(code=4002, reason="Force disconnect by admin"))
+            except Exception:
+                pass
+            disconnected += 1
+            try:
+                ws_manager.remove(key, ws)
+            except Exception:
+                pass
+        _log_license_action(request, "force_disconnect", key, {"disconnected": disconnected})
+        return {"status": "ok", "disconnected": disconnected}
+
+    @router.post("/licenses/{key}/regenerate-secret")
+    async def regenerate_secret(key: str, request: Request, _=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server.state import client_manager
+        from apps.server.services.client_manager import generate_secret_key
+
+        if not client_manager:
+            raise HTTPException(status_code=503, detail="Client manager not available")
+        if key not in client_manager.clients:
+            raise HTTPException(status_code=404, detail="License not found")
+        new_secret = generate_secret_key()
+        if not client_manager.update_client(key, secret_key=new_secret):
+            raise HTTPException(status_code=500, detail="Failed to regenerate secret")
+        redacted = new_secret[:4] + "****" if len(new_secret) > 4 else new_secret + "****"
+        _log_license_action(request, "regenerate_secret", key)
+        return {"status": "ok", "new_secret": f"{redacted} ({len(new_secret)} chars)"}
 
     @router.get("/rate-limits")
     async def dashboard_rate_limits(_=Depends(require_auth)):

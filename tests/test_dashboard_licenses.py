@@ -19,13 +19,70 @@ class _FakeClientManager:
     def __init__(self, clients):
         self.clients = clients
 
+    def add_client(self, license_key, client_data):
+        self.clients[license_key] = client_data
+        return True
+
+    def update_client(self, license_key, **fields):
+        c = self.clients.get(license_key)
+        if c is None:
+            return False
+        for k, v in fields.items():
+            if v is not None:
+                c[k] = v
+        return True
+
+    def remove_client(self, license_key):
+        if license_key not in self.clients:
+            return False
+        del self.clients[license_key]
+        return True
+
+    def extend_client(self, license_key, days):
+        c = self.clients.get(license_key)
+        if c is None:
+            return None
+        from datetime import datetime, timedelta
+        from dateutil import parser as dp
+        base = datetime.now()
+        cur = c.get("expires_at")
+        if cur:
+            try:
+                base = dp.parse(cur)
+            except Exception:
+                base = datetime.now()
+        new_iso = (base + timedelta(days=days)).isoformat()
+        c["expires_at"] = new_iso
+        return new_iso
+
+    def set_status(self, license_key, status, enabled=None):
+        c = self.clients.get(license_key)
+        if c is None:
+            return False
+        c["status"] = status
+        if enabled is not None:
+            c["enabled"] = enabled
+        return True
+
 
 class _FakeWSManager:
     def __init__(self, counts):
         self._counts = counts
+        self._conns = {}
 
     def get_connection_count(self, key):
         return self._counts.get(key, 0)
+
+    def get_connections_for_key(self, key):
+        return list(self._conns.get(key, []))
+
+    def remove(self, key, ws):
+        conns = self._conns.get(key, [])
+        if ws in conns:
+            conns.remove(ws)
+
+    def _add_conn(self, key, ws):
+        self._conns.setdefault(key, []).append(ws)
 
 
 class _FakeDBManager:
@@ -246,3 +303,235 @@ def test_users_endpoint_empty_clients(dashboard_app, monkeypatch):
     data = r.json()
     assert data["total_users"] == 0
     assert data["users"] == []
+
+
+def _make_client():
+    return {
+        "name": "Alice",
+        "email": "alice@example.com",
+        "status": "active",
+        "enabled": True,
+        "expires_at": "2026-12-31T23:59:59",
+        "secret_key": "secretkey1234",
+        "last_activity": None,
+    }
+
+
+def test_create_license(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post(
+        "/api/dashboard/licenses",
+        json={"license_key": "NEWKEY0001", "name": "Bob", "email": "bob@x.com", "secret_key": "sec1", "expires_at": "2027-01-01"},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert data["license"]["license_key"] == "NEWKEY0001"
+    assert data["license"]["name"] == "Bob"
+    assert "NEWKEY0001" in cm.clients
+
+
+def test_create_license_auto_generates_key(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses", json={"name": "Auto"}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    key = r.json()["license"]["license_key"]
+    assert key and len(key) == 24
+    assert key in cm.clients
+
+
+def test_create_license_duplicate_409(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    _setup_state(monkeypatch, {"DUPKEY00001": _make_client()})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses", json={"license_key": "DUPKEY00001"}, headers=CSRF_HEADERS)
+    assert r.status_code == 409
+
+
+def test_create_license_requires_csrf(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    _setup_state(monkeypatch, {})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses", json={})
+    assert r.status_code == 403
+
+
+def test_update_license(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {"UPKEY000001": _make_client()})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.put(
+        "/api/dashboard/licenses/UPKEY000001",
+        json={"name": "Alice2", "enabled": False},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    assert cm.clients["UPKEY000001"]["name"] == "Alice2"
+    assert cm.clients["UPKEY000001"]["enabled"] is False
+
+
+def test_update_license_not_found_404(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    _setup_state(monkeypatch, {})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.put("/api/dashboard/licenses/NOPE", json={"name": "X"}, headers=CSRF_HEADERS)
+    assert r.status_code == 404
+
+
+def test_delete_license(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {"DELKEY00001": _make_client()})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.request(
+        "DELETE",
+        "/api/dashboard/licenses/DELKEY00001",
+        json={"confirm": True},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 200
+    assert "DELKEY00001" not in cm.clients
+
+
+def test_delete_license_requires_confirm(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {"DELKEY00002": _make_client()})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.request(
+        "DELETE",
+        "/api/dashboard/licenses/DELKEY00002",
+        json={"confirm": False},
+        headers=CSRF_HEADERS,
+    )
+    assert r.status_code == 400
+    assert "DELKEY00002" in cm.clients
+
+
+def test_delete_license_not_found_404(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    _setup_state(monkeypatch, {})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.request("DELETE", "/api/dashboard/licenses/NOPE", json={"confirm": True}, headers=CSRF_HEADERS)
+    assert r.status_code == 404
+
+
+def test_extend_license(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {"EXTKEY00001": _make_client()})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/EXTKEY00001/extend", json={"days": 30}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert "new_expires_at" in data
+    assert cm.clients["EXTKEY00001"]["expires_at"] == data["new_expires_at"]
+
+
+def test_extend_license_not_found_404(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    _setup_state(monkeypatch, {})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/NOPE/extend", json={"days": 30}, headers=CSRF_HEADERS)
+    assert r.status_code == 404
+
+
+def test_disable_license(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {"DISKEY00001": _make_client()})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/DISKEY00001/disable", headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    assert cm.clients["DISKEY00001"]["status"] == "disabled"
+    assert cm.clients["DISKEY00001"]["enabled"] is False
+
+
+def test_enable_license(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {"ENBKEY00001": _make_client()})
+    cm.clients["ENBKEY00001"]["status"] = "disabled"
+    cm.clients["ENBKEY00001"]["enabled"] = False
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/ENBKEY00001/enable", headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    assert cm.clients["ENBKEY00001"]["status"] == "active"
+    assert cm.clients["ENBKEY00001"]["enabled"] is True
+
+
+def test_force_disconnect_license(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    _, ws, _ = _setup_state(monkeypatch, {"FCKEY000001": _make_client()})
+    ws._add_conn("FCKEY000001", object())
+    ws._add_conn("FCKEY000001", object())
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/FCKEY000001/force-disconnect", headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert data["disconnected"] == 2
+
+
+def test_force_disconnect_no_ws_manager(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    from apps.server import state
+    _setup_state(monkeypatch, {"FCKEY000002": _make_client()})
+    monkeypatch.setattr(state, "ws_manager", None)
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/FCKEY000002/force-disconnect", headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    assert r.json()["disconnected"] == 0
+
+
+def test_regenerate_secret(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    cm, _, _ = _setup_state(monkeypatch, {"RGKEY000001": _make_client()})
+    old_secret = cm.clients["RGKEY000001"]["secret_key"]
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/RGKEY000001/regenerate-secret", headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert cm.clients["RGKEY000001"]["secret_key"] != old_secret
+    assert "****" in data["new_secret"]
+
+
+def test_regenerate_secret_not_found_404(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    _setup_state(monkeypatch, {})
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/licenses/NOPE/regenerate-secret", headers=CSRF_HEADERS)
+    assert r.status_code == 404
+
+
+def test_license_endpoints_require_auth(dashboard_app, monkeypatch):
+    app, _ = dashboard_app
+    _setup_state(monkeypatch, {"AUTHKEY0001": _make_client()})
+    client = TestClient(app)
+    assert client.post("/api/dashboard/licenses", json={}, headers=CSRF_HEADERS).status_code == 401
+    assert client.put("/api/dashboard/licenses/AUTHKEY0001", json={}, headers=CSRF_HEADERS).status_code == 401
+    assert client.request("DELETE", "/api/dashboard/licenses/AUTHKEY0001", json={"confirm": True}, headers=CSRF_HEADERS).status_code == 401
+    assert client.post("/api/dashboard/licenses/AUTHKEY0001/extend", json={"days": 30}, headers=CSRF_HEADERS).status_code == 401
+    assert client.post("/api/dashboard/licenses/AUTHKEY0001/disable", headers=CSRF_HEADERS).status_code == 401
+    assert client.post("/api/dashboard/licenses/AUTHKEY0001/enable", headers=CSRF_HEADERS).status_code == 401
+    assert client.post("/api/dashboard/licenses/AUTHKEY0001/force-disconnect", headers=CSRF_HEADERS).status_code == 401
+    assert client.post("/api/dashboard/licenses/AUTHKEY0001/regenerate-secret", headers=CSRF_HEADERS).status_code == 401

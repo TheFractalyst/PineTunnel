@@ -35,6 +35,7 @@ _webhook_signals: dict[str, int] = defaultdict(int)
 _signal_queue_depth: int = 0
 _ws_connections: int = 0
 _ws_signals_delivered: int = 0
+_ws_push_avg_ms: float = 0.0
 _redis_ops: dict[str, int] = defaultdict(int)
 _db_queries: int = 0
 
@@ -66,10 +67,16 @@ def set_ws_connections(count: int) -> None:
         _ws_connections = count
 
 
-def record_ws_delivery() -> None:
+def record_ws_delivery(count: int = 1) -> None:
     global _ws_signals_delivered
     with _lock:
-        _ws_signals_delivered += 1
+        _ws_signals_delivered += count
+
+
+def set_ws_push_avg_ms(avg_ms: float) -> None:
+    global _ws_push_avg_ms
+    with _lock:
+        _ws_push_avg_ms = avg_ms
 
 
 def record_redis_op(operation: str, result: str) -> None:
@@ -166,6 +173,11 @@ def _build_metrics() -> str:
         lines.append("# HELP pinetunnel_websocket_signals_delivered_total Total signals delivered via WebSocket")
         lines.append("# TYPE pinetunnel_websocket_signals_delivered_total counter")
         lines.append(f'pinetunnel_websocket_signals_delivered_total {_ws_signals_delivered}')
+
+        lines.append("")
+        lines.append("# HELP pinetunnel_ws_push_avg_ms Average WebSocket push latency in milliseconds")
+        lines.append("# TYPE pinetunnel_ws_push_avg_ms gauge")
+        lines.append(f'pinetunnel_ws_push_avg_ms {_ws_push_avg_ms}')
 
         lines.append("")
         lines.append("# HELP pinetunnel_redis_operations_total Total Redis operations by type/result")

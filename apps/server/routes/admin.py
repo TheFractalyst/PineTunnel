@@ -261,6 +261,67 @@ async def get_error_logs(
 # Database stats API
 # ---------------------------------------------------------------------------
 
+_EXPECTED_TABLES = (
+    "trades",
+    "alert_history",
+    "signal_queue",
+    "ea_connections",
+    "ws_signal_log",
+    "ws_account_stats",
+    "ws_open_positions",
+    "ws_trade_history",
+    "ws_health",
+    "ws_health_telemetry",
+)
+
+
+def _count_table(db_manager, table: str) -> int:
+    try:
+        rows = db_manager.execute_query(f"SELECT COUNT(*) as cnt FROM {table}")
+        return rows[0]["cnt"] if rows else 0
+    except Exception:
+        return 0
+
+
+def _table_exists(db_manager, table: str) -> bool:
+    try:
+        db_manager.execute_query(f"SELECT 1 FROM {table} LIMIT 1")
+        return True
+    except Exception:
+        return False
+
+
+def _database_size_mb(db_manager) -> float:
+    dialect = getattr(db_manager, "dialect", "")
+    try:
+        if dialect == "sqlite":
+            import os
+
+            db_path = getattr(db_manager, "db_path", "")
+            if db_path and os.path.exists(db_path):
+                return round(os.path.getsize(db_path) / 1024.0 / 1024.0, 2)
+            return 0.0
+        size_rows = db_manager.execute_query(
+            "SELECT pg_database_size(current_database()) / 1024.0 / 1024.0 as size_mb"
+        )
+        if size_rows:
+            return round(float(size_rows[0]["size_mb"]), 2)
+    except Exception:
+        logger.debug("Could not query database size")
+    return 0.0
+
+
+def _migration_info(db_manager) -> dict:
+    revision = None
+    try:
+        rows = db_manager.execute_query("SELECT version_num FROM alembic_version LIMIT 1")
+        if rows:
+            revision = str(rows[0].get("version_num", ""))
+    except Exception:
+        revision = None
+    tables_present = {t: _table_exists(db_manager, t) for t in _EXPECTED_TABLES}
+    return {"current_revision": revision, "tables_present": tables_present}
+
 
 @router.get("/api/database/stats")
 async def get_database_stats(_username: str = Depends(_require_auth)):
@@ -268,42 +329,19 @@ async def get_database_stats(_username: str = Depends(_require_auth)):
     from apps.server.state import db_manager
 
     try:
-        # Get table sizes
-        tables = {}
+        def _gather():
+            tables = {t: _count_table(db_manager, t) for t in _EXPECTED_TABLES}
+            return {
+                "tables": tables,
+                "total_records": sum(tables.values()),
+                "size_mb": _database_size_mb(db_manager),
+                "db_type": getattr(db_manager, "dialect", "unknown"),
+                "migration": _migration_info(db_manager),
+            }
 
-        # Trades table
-        trades_rows = await asyncio.to_thread(
-            db_manager.execute_query, "SELECT COUNT(*) as cnt FROM trades"
-        )
-        tables["trades"] = trades_rows[0]["cnt"] if trades_rows else 0
-
-        # Try to get alert_history table (stores webhook logs)
-        try:
-            alert_rows = await asyncio.to_thread(
-                db_manager.execute_query, "SELECT COUNT(*) as cnt FROM alert_history"
-            )
-            tables["alert_history"] = alert_rows[0]["cnt"] if alert_rows else 0
-        except Exception:
-            tables["alert_history"] = 0
-
-        # Database size from PostgreSQL
-        db_size_mb = 0.0
-        try:
-            size_rows = await asyncio.to_thread(
-                db_manager.execute_query,
-                "SELECT pg_database_size(current_database()) / 1024.0 / 1024.0 as size_mb",
-            )
-            if size_rows:
-                db_size_mb = round(float(size_rows[0]["size_mb"]), 2)
-        except Exception:
-            logger.debug("Could not query database size (permission denied is common)")
-
-        return {
-            "tables": tables,
-            "total_records": sum(tables.values()),
-            "size_mb": db_size_mb,
-            "timestamp": datetime.now().isoformat(),
-        }
+        payload = await asyncio.to_thread(_gather)
+        payload["timestamp"] = datetime.now().isoformat()
+        return payload
     except Exception as e:
         logger.error("Failed to get database stats: %s", e)
         return {"error": "Failed to retrieve database stats"}
@@ -342,10 +380,23 @@ async def get_audit_trail(
 async def cleanup_database(
     days_to_keep: int = Query(90, ge=1), _username: str = Depends(_require_auth)
 ):
-    """Cleanup old database records"""
+    """Cleanup old database records.
+
+    Aligns with the background cleanup task in lifespan.py by running the
+    same operations (cleanup_old_signals, cleanup_old_account_stats) plus
+    cleanup_old_data for trades/alerts so the button cleans everything.
+    """
     from apps.server.state import db_manager
 
-    result = await asyncio.to_thread(db_manager.cleanup_old_data, days_to_keep)
+    def _run() -> dict:
+        result: dict = {}
+        result.update(db_manager.cleanup_old_data(days_to_keep=days_to_keep))
+        result.update(db_manager.cleanup_old_signals(days_to_keep=7, stale_hours=24))
+        db_manager.cleanup_old_account_stats(days_to_keep=30)
+        result["account_stats_deleted"] = result.get("account_stats_deleted", 0)
+        return result
+
+    result = await asyncio.to_thread(_run)
     return {"status": "success", "result": result}
 
 

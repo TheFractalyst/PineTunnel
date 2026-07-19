@@ -185,6 +185,51 @@ class ClientManager:
             logger.error("Failed to add client %s: %s: %s", license_key, type(e).__name__, e)
             return False
 
+    def update_client(self, license_key: str, **fields: Any) -> bool:
+        """Update fields on an existing client. Returns False if not found."""
+        client = self._cache.get(license_key)
+        if client is None:
+            return False
+        for k, v in fields.items():
+            if v is not None:
+                client[k] = v
+        return self._save_to_file()
+
+    def remove_client(self, license_key: str) -> bool:
+        """Remove a client license. Returns False if not found."""
+        if license_key not in self._cache:
+            return False
+        del self._cache[license_key]
+        return self._save_to_file()
+
+    def extend_client(self, license_key: str, days: int) -> str | None:
+        """Extend a client's expires_at by N days. Returns new expires_at or None."""
+        client = self._cache.get(license_key)
+        if client is None:
+            return None
+        current = client.get("expires_at")
+        base = datetime.now()
+        if current:
+            try:
+                base = date_parser.parse(current)
+            except Exception:
+                base = datetime.now()
+        new_expiry = base + timedelta(days=days)
+        new_iso = new_expiry.isoformat()
+        client["expires_at"] = new_iso
+        self._save_to_file()
+        return new_iso
+
+    def set_status(self, license_key: str, status: str, enabled: bool | None = None) -> bool:
+        """Set a client's status (and optionally enabled flag). Returns False if not found."""
+        client = self._cache.get(license_key)
+        if client is None:
+            return False
+        client["status"] = status
+        if enabled is not None:
+            client["enabled"] = enabled
+        return self._save_to_file()
+
     def save_clients(self) -> bool:
         """Persist clients to file."""
         return self._save_to_file()

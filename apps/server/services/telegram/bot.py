@@ -312,6 +312,8 @@ class PineTunnelTelegramBot(
             await self._show_account_stats(update)
         elif data == "mon_logs":
             await self._show_logs(update)
+        elif data == "mon_security":
+            await self._show_security(update)
         elif data == "log_webhook":
             await self._show_logs(update, log_filter="webhook")
         elif data == "log_admin":

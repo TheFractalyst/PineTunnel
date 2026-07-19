@@ -3866,6 +3866,7 @@ async function pollRiskMonitor() {
 }
 
 function updateRiskUI(data) {
+  if (!data || typeof data !== "object") return;
   const card = document.getElementById("risk-status-card");
   if (card) {
     const ok = data.can_trade;
@@ -3937,39 +3938,52 @@ let errorLogState = { entries: [], paused: false, filter: "ALL", search: "" };
 
 async function pollErrorLogs() {
   if (currentRoute !== "sys-errors" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch("/api/logs/errors?limit=100");
-  const staleEl = document.getElementById("el-stale-banner");
-  if (staleEl) {
-    if (stale && data) {
-      staleEl.innerHTML = staleBanner();
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (error && !data && errorLogState.entries.length === 0) {
-    const wrap = document.getElementById("el-list");
-    if (wrap) {
-      wrap.innerHTML = errorPanel("error logs", error, "retry-sys-errors");
-      bindRetryToScope("retry-sys-errors", () => route("sys-errors"));
-    }
+  let result;
+  try {
+    result = await useFetch("/api/logs/errors?limit=100");
+  } catch (e) {
+    console.error("[dashboard] pollErrorLogs fetch error:", e);
     return;
   }
-  if (!data || !data.errors) return;
-  const newEntries = data.errors.map(e => {
-    const text = typeof e === "string" ? e : (e.message || JSON.stringify(e));
-    const level = typeof e === "object" && e.level ? e.level : (text.includes("ERROR") ? "ERROR" : text.includes("WARNING") ? "WARN" : "INFO");
-    const ts = typeof e === "object" && e.timestamp ? e.timestamp : "";
-    return { timestamp: ts, level, message: text, full: text };
-  });
-  const existingIds = new Set(errorLogState.entries.map(e => e.message));
-  for (const e of newEntries.reverse()) {
-    if (!existingIds.has(e.message)) {
-      errorLogState.entries.push(e);
-      existingIds.add(e.message);
+  if (currentRoute !== "sys-errors") return;
+  try {
+    const { data, error, stale } = result;
+    const staleEl = document.getElementById("el-stale-banner");
+    if (staleEl) {
+      if (stale && data) {
+        staleEl.innerHTML = staleBanner();
+      } else {
+        staleEl.innerHTML = "";
+      }
     }
+    if (error && !data && errorLogState.entries.length === 0) {
+      const wrap = document.getElementById("el-list");
+      if (wrap) {
+        wrap.innerHTML = errorPanel("error logs", error, "retry-sys-errors");
+        bindRetryToScope("retry-sys-errors", () => route("sys-errors"));
+      }
+      return;
+    }
+    if (!data || !data.errors || !Array.isArray(data.errors)) return;
+    const newEntries = data.errors.map(e => {
+      if (!e) return { timestamp: "", level: "INFO", message: "", full: "" };
+      const text = typeof e === "string" ? e : (e.message || JSON.stringify(e));
+      const level = typeof e === "object" && e.level ? e.level : (text.includes("ERROR") ? "ERROR" : text.includes("WARNING") ? "WARN" : "INFO");
+      const ts = typeof e === "object" && e.timestamp ? e.timestamp : "";
+      return { timestamp: ts, level, message: text, full: text };
+    });
+    const existingIds = new Set(errorLogState.entries.map(e => e.message));
+    for (const e of newEntries.reverse()) {
+      if (!existingIds.has(e.message)) {
+        errorLogState.entries.push(e);
+        existingIds.add(e.message);
+      }
+    }
+    if (errorLogState.entries.length > 200) errorLogState.entries = errorLogState.entries.slice(-200);
+    renderErrorLogList();
+  } catch (e) {
+    console.error("[dashboard] pollErrorLogs error:", e);
   }
-  if (errorLogState.entries.length > 200) errorLogState.entries = errorLogState.entries.slice(-200);
-  renderErrorLogList();
 }
 
 function renderErrorLogList() {
@@ -4075,28 +4089,41 @@ function renderErrorLogs(content) {
 
 async function pollDatabaseManager() {
   if (currentRoute !== "sys-database" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch("/api/database/stats");
-  const staleEl = document.getElementById("db-stale-banner");
-  if (staleEl) {
-    if (stale && data) {
-      staleEl.innerHTML = staleBanner();
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (error && !data) {
-    const content = domCache.content || document.getElementById("content");
-    if (content && !cache["/api/database/stats"]) {
-      content.innerHTML = errorPanel("database", error, "retry-sys-database");
-      bindRetryToScope("retry-sys-database", () => route("sys-database"));
-    }
+  let result;
+  try {
+    result = await useFetch("/api/database/stats");
+  } catch (e) {
+    console.error("[dashboard] pollDatabaseManager fetch error:", e);
     return;
   }
-  if (!data) return;
-  updateDatabaseUI(data);
+  if (currentRoute !== "sys-database") return;
+  try {
+    const { data, error, stale } = result;
+    const staleEl = document.getElementById("db-stale-banner");
+    if (staleEl) {
+      if (stale && data) {
+        staleEl.innerHTML = staleBanner();
+      } else {
+        staleEl.innerHTML = "";
+      }
+    }
+    if (error && !data) {
+      const content = domCache.content || document.getElementById("content");
+      if (content && !cache["/api/database/stats"]) {
+        content.innerHTML = errorPanel("database", error, "retry-sys-database");
+        bindRetryToScope("retry-sys-database", () => route("sys-database"));
+      }
+      return;
+    }
+    if (!data) return;
+    updateDatabaseUI(data);
+  } catch (e) {
+    console.error("[dashboard] pollDatabaseManager error:", e);
+  }
 }
 
 function updateDatabaseUI(data) {
+  if (!data || typeof data !== "object") return;
   const tables = data.tables || {};
   const expected = ["trades", "alert_history", "signal_queue", "ea_connections", "ws_signal_log", "ws_account_stats", "ws_open_positions", "ws_trade_history", "ws_health"];
   const body = document.getElementById("db-tables");
@@ -4200,48 +4227,59 @@ let metricsState = { history: {}, lastValues: {} };
 
 async function pollMetrics() {
   if (currentRoute !== "sys-metrics" || !visibilityPolling) return;
-  const text = await fetchMetrics();
-  const staleEl = document.getElementById("metrics-stale-banner");
-  if (staleEl) {
-    if (!text && metricsState.lastValues && Object.keys(metricsState.lastValues).length > 0) {
-      staleEl.innerHTML = staleBanner();
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (!text) {
-    if (!metricsState.lastValues || Object.keys(metricsState.lastValues).length === 0) {
-      const content = domCache.content || document.getElementById("content");
-      if (content) {
-        content.innerHTML = errorPanel("metrics", "Metrics endpoint unavailable", "retry-sys-metrics");
-        bindRetryToScope("retry-sys-metrics", () => route("sys-metrics"));
-      }
-    }
+  let text;
+  try {
+    text = await fetchMetrics();
+  } catch (e) {
+    console.error("[dashboard] pollMetrics fetch error:", e);
     return;
   }
-  const specs = [
-    { key: "webhook_total", name: "pinetunnel_webhook_signals_total", label: "Webhook Signals Total", color: PALETTE.green },
-    { key: "ws_delivered", name: "pinetunnel_websocket_signals_delivered_total", label: "WS Signals Delivered", color: PALETTE.blue },
-    { key: "queue_depth", name: "pinetunnel_signal_queue_depth", label: "Signal Queue Depth", color: PALETTE.amber },
-    { key: "redis_ops", name: "pinetunnel_redis_operations_total", label: "Redis Ops Total", color: PALETTE.blue },
-  ];
-  for (const s of specs) {
-    let val = parsePromMetric(text, s.name);
-    if (s.key === "redis_ops" || s.key === "webhook_total") {
-      val = parsePromMetricSum(text, s.name);
+  if (currentRoute !== "sys-metrics") return;
+  try {
+    const staleEl = document.getElementById("metrics-stale-banner");
+    if (staleEl) {
+      if (!text && metricsState.lastValues && Object.keys(metricsState.lastValues).length > 0) {
+        staleEl.innerHTML = staleBanner();
+      } else {
+        staleEl.innerHTML = "";
+      }
     }
-    metricsState.lastValues[s.key] = val;
-    if (!metricsState.history[s.key]) metricsState.history[s.key] = [];
-    metricsState.history[s.key].push(val);
-    if (metricsState.history[s.key].length > 20) metricsState.history[s.key].shift();
+    if (!text) {
+      if (!metricsState.lastValues || Object.keys(metricsState.lastValues).length === 0) {
+        const content = domCache.content || document.getElementById("content");
+        if (content) {
+          content.innerHTML = errorPanel("metrics", "Metrics endpoint unavailable", "retry-sys-metrics");
+          bindRetryToScope("retry-sys-metrics", () => route("sys-metrics"));
+        }
+      }
+      return;
+    }
+    const specs = [
+      { key: "webhook_total", name: "pinetunnel_webhook_signals_total", label: "Webhook Signals Total", color: PALETTE.green },
+      { key: "ws_delivered", name: "pinetunnel_websocket_signals_delivered_total", label: "WS Signals Delivered", color: PALETTE.blue },
+      { key: "queue_depth", name: "pinetunnel_signal_queue_depth", label: "Signal Queue Depth", color: PALETTE.amber },
+      { key: "redis_ops", name: "pinetunnel_redis_operations_total", label: "Redis Ops Total", color: PALETTE.blue },
+    ];
+    for (const s of specs) {
+      let val = parsePromMetric(text, s.name);
+      if (s.key === "redis_ops" || s.key === "webhook_total") {
+        val = parsePromMetricSum(text, s.name);
+      }
+      metricsState.lastValues[s.key] = val;
+      if (!metricsState.history[s.key]) metricsState.history[s.key] = [];
+      metricsState.history[s.key].push(val);
+      if (metricsState.history[s.key].length > 20) metricsState.history[s.key].shift();
+    }
+    const wsPushAvg = parsePromMetric(text, "pinetunnel_ws_push_avg_ms");
+    const pushVal = wsPushAvg != null ? wsPushAvg : 0;
+    metricsState.lastValues.ws_push_avg = pushVal;
+    if (!metricsState.history.ws_push_avg) metricsState.history.ws_push_avg = [];
+    metricsState.history.ws_push_avg.push(pushVal);
+    if (metricsState.history.ws_push_avg.length > 20) metricsState.history.ws_push_avg.shift();
+    updateMetricsUI();
+  } catch (e) {
+    console.error("[dashboard] pollMetrics error:", e);
   }
-  const wsPushAvg = parsePromMetric(text, "pinetunnel_ws_push_avg_ms");
-  const pushVal = wsPushAvg != null ? wsPushAvg : 0;
-  metricsState.lastValues.ws_push_avg = pushVal;
-  if (!metricsState.history.ws_push_avg) metricsState.history.ws_push_avg = [];
-  metricsState.history.ws_push_avg.push(pushVal);
-  if (metricsState.history.ws_push_avg.length > 20) metricsState.history.ws_push_avg.shift();
-  updateMetricsUI();
 }
 
 function parsePromMetricSum(text, name) {
@@ -4298,32 +4336,45 @@ function renderMetrics(content) {
 
 async function pollDiagnostics() {
   if (currentRoute !== "sys-diag" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch("/api/diagnostics");
-  const staleEl = document.getElementById("diag-stale-banner");
-  if (staleEl) {
-    if (stale && data) {
-      staleEl.innerHTML = staleBanner();
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (error || !data) {
-    const overall = document.getElementById("diag-overall");
-    if (overall) {
-      if (!cache["/api/diagnostics"]) {
-        overall.innerHTML = errorPanel("diagnostics", error, "retry-sys-diag");
-        bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
-      } else {
-        overall.innerHTML = `<div class="empty small"><div class="msg">Diagnostics unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-diag">${ICONS.refresh}Retry</button></div>`;
-        bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
-      }
-    }
+  let result;
+  try {
+    result = await useFetch("/api/diagnostics");
+  } catch (e) {
+    console.error("[dashboard] pollDiagnostics fetch error:", e);
     return;
   }
-  updateDiagnosticsUI(data);
+  if (currentRoute !== "sys-diag") return;
+  try {
+    const { data, error, stale } = result;
+    const staleEl = document.getElementById("diag-stale-banner");
+    if (staleEl) {
+      if (stale && data) {
+        staleEl.innerHTML = staleBanner();
+      } else {
+        staleEl.innerHTML = "";
+      }
+    }
+    if (error || !data) {
+      const overall = document.getElementById("diag-overall");
+      if (overall) {
+        if (!cache["/api/diagnostics"]) {
+          overall.innerHTML = errorPanel("diagnostics", error, "retry-sys-diag");
+          bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
+        } else {
+          overall.innerHTML = `<div class="empty small"><div class="msg">Diagnostics unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-diag">${ICONS.refresh}Retry</button></div>`;
+          bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
+        }
+      }
+      return;
+    }
+    updateDiagnosticsUI(data);
+  } catch (e) {
+    console.error("[dashboard] pollDiagnostics error:", e);
+  }
 }
 
 function updateDiagnosticsUI(data) {
+  if (!data || typeof data !== "object") return;
   const overall = document.getElementById("diag-overall");
   if (overall) {
     const status = data.overall_status;
@@ -4373,36 +4424,49 @@ function renderDiagnostics(content) {
 
 async function pollBotStatus() {
   if (currentRoute !== "sys-bot" || !visibilityPolling) return;
-  const { data, error, stale } = await useFetch(`${API}/bot-info`);
-  const staleEl = document.getElementById("bot-stale-banner");
-  if (staleEl) {
-    if (stale && data) {
-      staleEl.innerHTML = staleBanner();
-    } else {
-      staleEl.innerHTML = "";
-    }
-  }
-  if (error || !data) {
-    const card = document.getElementById("bot-status-card");
-    if (card) {
-      if (!cache[`${API}/bot-info`]) {
-        card.innerHTML = errorPanel("bot status", error, "retry-sys-bot");
-        bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
-      } else {
-        card.innerHTML = `<div class="empty small"><div class="msg">Bot status unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-bot">${ICONS.refresh}Retry</button></div>`;
-        bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
-      }
-    }
+  let result;
+  try {
+    result = await useFetch(`${API}/bot-info`);
+  } catch (e) {
+    console.error("[dashboard] pollBotStatus fetch error:", e);
     return;
   }
-  updateBotUI(data);
+  if (currentRoute !== "sys-bot") return;
+  try {
+    const { data, error, stale } = result;
+    const staleEl = document.getElementById("bot-stale-banner");
+    if (staleEl) {
+      if (stale && data) {
+        staleEl.innerHTML = staleBanner();
+      } else {
+        staleEl.innerHTML = "";
+      }
+    }
+    if (error || !data) {
+      const card = document.getElementById("bot-status-card");
+      if (card) {
+        if (!cache[`${API}/bot-info`]) {
+          card.innerHTML = errorPanel("bot status", error, "retry-sys-bot");
+          bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
+        } else {
+          card.innerHTML = `<div class="empty small"><div class="msg">Bot status unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-bot">${ICONS.refresh}Retry</button></div>`;
+          bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
+        }
+      }
+      return;
+    }
+    updateBotUI(data);
+  } catch (e) {
+    console.error("[dashboard] pollBotStatus error:", e);
+  }
 }
 
 function updateBotUI(data) {
-  const started = data.started;
-  const hasApp = data.has_app;
-  const tokenSet = data.token_set;
-  const updaterRunning = data.updater_running;
+  if (!data || typeof data !== "object") return;
+  const started = !!data.started;
+  const hasApp = !!data.has_app;
+  const tokenSet = !!data.token_set;
+  const updaterRunning = !!data.updater_running;
   const appRunning = data.app_running;
   const alertsEnabled = data.alerts_enabled;
   const card = document.getElementById("bot-status-card");
