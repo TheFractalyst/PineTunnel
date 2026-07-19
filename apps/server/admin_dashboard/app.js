@@ -1111,7 +1111,7 @@ function render() {
       <nav class="sidebar" aria-label="Main navigation">
         <div class="brand">${LOGO_SVG}</div>
         <div class="nav-scroll">${sidebarItems}</div>
-        <div class="footer"><svg class="pulse-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg><span>System Online - v1.0</span></div>
+        <div class="footer"><svg class="status-dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3"/></svg><span>System Online - v1.0</span></div>
       </nav>
       <div class="main-area">
         <header class="header" role="banner">
@@ -1220,30 +1220,12 @@ function route(id) {
       else if (currentRouteId === "sys-health") renderSystemHealth(content);
       else if (currentRouteId === "licenses") renderLicenses(content, actions);
       else if (currentRouteId === "audit") renderAuditTimeline(content, actions);
-      if (content && !prefersReducedMotion()) {
-        content.classList.remove("panel-fade-in");
-        void content.offsetWidth;
-        content.classList.add("panel-fade-in");
-        const tok = (content._cardsTok = (content._cardsTok || 0) + 1);
-        content.classList.add("cards-enter");
-        setTimeout(() => { if (content._cardsTok === tok) content.classList.remove("cards-enter"); }, 900);
-      }
       if (pageTitle) {
         pageTitle.setAttribute("tabindex", "-1");
         pageTitle.focus({ preventScroll: true });
       }
     };
-    if (content && !prefersReducedMotion() && content.innerHTML.trim()) {
-      content.classList.remove("panel-fade-in");
-      content.classList.add("panel-fade-out");
-      setTimeout(() => {
-        content.classList.remove("panel-fade-out");
-        renderPanel();
-      }, 100);
-    } else {
-      content.classList.remove("panel-fade-out", "panel-fade-in");
-      renderPanel();
-    }
+    renderPanel();
   }, 100);
 }
 
