@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from .auth import _verify_admin_key
+from .auth import _require_auth, _verify_admin_key
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +178,8 @@ async def _run_all_probes() -> dict[str, Any]:
 
 
 @router.get("/api/diagnostics")
-async def diagnostics(_admin: None = Depends(_verify_admin_key)) -> dict[str, Any]:
-    """Run full system diagnostics. Requires admin API key.
+async def diagnostics(_username: str = Depends(_require_auth)) -> dict[str, Any]:
+    """Run full system diagnostics. Requires session auth.
 
     Probes: database, redis, websocket hub, signal queue, rate limiter,
     client manager, disk usage, memory usage.

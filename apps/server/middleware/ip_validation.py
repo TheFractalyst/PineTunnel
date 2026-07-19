@@ -172,20 +172,21 @@ class TradingViewIPMiddleware:
     def _is_enabled(self) -> bool:
         if self._enabled is not None:
             return self._enabled
-        env_val = os.environ.get("TRADINGVIEW_IP_ALLOWLIST", "").lower()
+        cfg = get_config()
+        env_val = cfg.tradingview_ip_allowlist.lower()
         if env_val in ("0", "false", "no"):
             self._enabled = False
         elif env_val in ("1", "true", "yes"):
             self._enabled = True
         else:
-            cfg = get_config()
             self._enabled = cfg.environment == "production"
         return self._enabled
 
     def _get_allowed_ips(self) -> frozenset[str]:
         if self._allowed_ips is not None:
             return self._allowed_ips
-        env_ips = os.environ.get("TRADINGVIEW_IPS", "")
+        cfg = get_config()
+        env_ips = cfg.tradingview_ips
         if env_ips:
             self._allowed_ips = frozenset(ip.strip() for ip in env_ips.split(",") if ip.strip())
         else:

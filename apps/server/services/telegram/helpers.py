@@ -25,6 +25,16 @@ def generate_license_key() -> str:
     return "".join(str(_secrets.randbelow(10)) for _ in range(13))
 
 
+def mask_secret(secret: str) -> str:
+    """Mask a secret key for display: show first 4 chars + ****."""
+    if not secret:
+        return "****"
+    s = str(secret)
+    if len(s) <= 4:
+        return s + "****"
+    return s[:4] + "****"
+
+
 def format_license_info(key: str, data: dict) -> str:
     """Format license data for Telegram admin display."""
     status = data.get("status", "unknown")
@@ -50,12 +60,13 @@ def format_license_info(key: str, data: dict) -> str:
 
     features = _escape_md(", ".join(data.get("features", [])) or "None", version=1)
     secret_key = data.get("secret_key", "")
+    masked_secret = mask_secret(secret_key)
     user_id = data.get("user_id", 0)
 
     return (
         f"{status_icon} *{_escape_md(data.get('name', 'Unknown'), version=1)}*\n"
         f"| License ID: `{key}`\n"
-        f"| Secret Key: `{secret_key}`\n"
+        f"| Secret Key: `{masked_secret}`\n"
         f"| User ID: {user_id}\n"
         f"| Email: {_escape_md(data.get('email', 'N/A'), version=1)}\n"
         f"| Status: {status}\n"

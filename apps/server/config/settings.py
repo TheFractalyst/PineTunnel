@@ -327,6 +327,23 @@ class Settings(BaseSettings):
         repr=False,
         validation_alias=AliasChoices("ADMIN_API_KEY_PREVIOUS"),
     )
+    tradingview_ip_allowlist: str = Field(
+        default="",
+        description=(
+            "Enable TradingView IP allowlist for webhook endpoints. "
+            "Values: 1/true/yes = on, 0/false/no = off, empty = auto "
+            "(on in production, off in development)."
+        ),
+        validation_alias=AliasChoices("TRADINGVIEW_IP_ALLOWLIST"),
+    )
+    tradingview_ips: str = Field(
+        default="",
+        description=(
+            "Comma-separated TradingView egress IPs allowed to send webhooks. "
+            "Empty = use built-in defaults from TradingViewIPMiddleware."
+        ),
+        validation_alias=AliasChoices("TRADINGVIEW_IPS"),
+    )
 
     # Render platform environment variables (auto-set by Render)
     is_render: bool = Field(

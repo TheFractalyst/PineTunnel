@@ -144,20 +144,31 @@ async def health_ready():
 async def health_ea_check(_: None = Depends(_verify_admin_key)):
     """Show all EA connection state from PostgreSQL (single source of truth).
 
-    Requires admin API key - exposes connection metadata (masked keys).
+    Requires admin API key - exposes connection metadata.
+
+    The threshold for "active" matches HTTP_POLLING_TIMEOUT so the dashboard
+    shows the same live/non-live split as the Telegram bot's /connections.
+    Full license keys are returned (both endpoints here are admin-authenticated,
+    same as /api/ea/ws-telemetry/overview) so the frontend can deduplicate
+    entries across the overview and ea-check payloads by real key.
     """
     from apps.server.state import conn_manager, db_manager, ws_manager
+    from apps.server.ws.connection import HTTP_POLLING_TIMEOUT
 
-    # Local in-memory state (per-worker)
     ws_keys = ws_manager.get_connected_license_keys() if ws_manager else []
     http_clients = conn_manager.get_active_http_clients() if conn_manager else []
 
-    # Global state from PostgreSQL (single source of truth, cross-worker)
-    db_connections = []
-    if db_manager and hasattr(db_manager, "get_active_ea_connections"):
-        db_connections = db_manager.get_active_ea_connections()
+    ws_connection_counts: dict[str, int] = {}
+    if ws_manager:
+        for lic_key in ws_keys:
+            ws_connection_counts[lic_key] = ws_manager.get_connection_count(lic_key)
 
-    # Aggregate unique license keys from DB
+    db_connections: list[dict] = []
+    if db_manager and hasattr(db_manager, "get_active_ea_connections"):
+        db_connections = db_manager.get_active_ea_connections(
+            stale_seconds=HTTP_POLLING_TIMEOUT
+        )
+
     db_license_keys = list({c["license_key"] for c in db_connections})
     db_by_type: dict[str, int] = {}
     for c in db_connections:
@@ -166,19 +177,19 @@ async def health_ea_check(_: None = Depends(_verify_admin_key)):
 
     return {
         "pid": os.getpid(),
-        # In-memory (per-worker, may be 0 if request hits different worker)
         "ws_total": ws_manager.get_total_connections() if ws_manager else 0,
         "ws_license_keys": [k[:8] + "..." for k in ws_keys],
+        "ws_connection_counts": ws_connection_counts,
         "http_active": len(http_clients),
         "http_keys": [k[:8] + "..." for k in http_clients],
-        # PostgreSQL (single source of truth, cross-worker)
+        "http_polling_timeout_sec": HTTP_POLLING_TIMEOUT,
         "db_total": len(db_connections),
         "db_unique_licenses": len(db_license_keys),
         "db_license_keys": [k[:8] + "..." for k in db_license_keys],
         "db_by_type": db_by_type,
         "db_connections": [
             {
-                "license_key": c["license_key"][:8] + "...",
+                "license_key": c["license_key"],
                 "type": c.get("connection_type", ""),
                 "last_seen": str(c.get("last_seen", ""))[:19],
             }

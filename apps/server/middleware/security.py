@@ -137,9 +137,49 @@ class FailedAttemptTracker:
             except Exception as e:
                 logger.debug("Redis reset_async failed for %s: %s", ip, e)
         self.attempts.pop(ip, None)
+        self.blocked_ips.pop(ip, None)
+
+    def get_blocked_ips(self) -> list[dict]:
+        """Return currently blocked IPs with remaining seconds (local state only)."""
+        now = time.time()
+        result = []
+        for ip, block_until in self.blocked_ips.items():
+            remaining = max(0, block_until - now)
+            if remaining > 0:
+                result.append({"ip": ip, "remaining_seconds": int(remaining)})
+        return result
+
+    def get_failed_attempt_count_24h(self) -> int:
+        """Return total failed attempts in the last 24 hours (local state only)."""
+        now = time.time()
+        cutoff = now - 86400
+        total = 0
+        for timestamps in self.attempts.values():
+            total += sum(1 for t in timestamps if t > cutoff)
+        return total
+
+    def get_statistics(self) -> dict:
+        """Return a statistics snapshot for monitoring (local state only)."""
+        return {
+            "blocked_ips": self.get_blocked_ips(),
+            "blocked_ip_count": len(self.get_blocked_ips()),
+            "failed_attempts_24h": self.get_failed_attempt_count_24h(),
+        }
 
 
 failed_attempt_tracker = FailedAttemptTracker()
+
+
+def get_security_headers() -> dict[str, str]:
+    """Return the active security headers set by SecurityHeadersMiddleware.
+
+    Canonical source for monitoring - the dashboard and bot read from here
+    to verify the headers are actually configured (not hardcoded elsewhere).
+    """
+    return {
+        key.decode("latin-1"): value.decode("latin-1")
+        for key, value in SecurityHeadersMiddleware._SECURITY_HEADERS
+    }
 
 
 class SecurityHeadersMiddleware:

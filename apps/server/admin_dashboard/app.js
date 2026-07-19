@@ -5033,7 +5033,9 @@ window.sendTestWebhook = sendTestWebhook;
 (async function init() {
   await useFetch(`${API}/setup-status`);
   render();
-  route("overview");
+  const hash = window.location.hash.slice(1);
+  const validRoutes = ["overview","signals","ea-map","analytics","pipeline","setup","licenses","security","audit","settings","sys-health","sys-webhooks","sys-risk","sys-errors","sys-database","sys-metrics","sys-diag","sys-bot"];
+  route(validRoutes.includes(hash) ? hash : "overview");
 })();
 
 let resizeTimer = null;

@@ -247,6 +247,7 @@ class PineTunnelTelegramBot(
         app.add_handler(CommandHandler("menu", self._cmd_menu, filters=_admin_filter))
         app.add_handler(CommandHandler("help", self._cmd_help, filters=_admin_filter))
         app.add_handler(CommandHandler("monitor", self._cmd_monitor, filters=_admin_filter))
+        app.add_handler(CommandHandler("licenses", self._cmd_licenses, filters=_admin_filter))
         app.add_handler(CommandHandler("login", self._cmd_login, filters=_admin_filter))
 
         app.add_handler(CallbackQueryHandler(self._cb_handler, pattern=_CATCH_ALL_CB_PATTERN))
@@ -294,6 +295,14 @@ class PineTunnelTelegramBot(
             await self._show_main_menu(update)
         elif data == "menu_monitor":
             await self._show_monitor_menu(update)
+        elif data == "menu_licenses":
+            await self._show_licenses(update, page=0)
+        elif data.startswith("lic_page_"):
+            try:
+                page = int(data.replace("lic_page_", ""))
+            except ValueError:
+                page = 0
+            await self._show_licenses(update, page=page)
 
         elif data == "mon_status":
             await self._show_status(update)

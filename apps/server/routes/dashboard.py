@@ -188,10 +188,23 @@ def create_dashboard_router(
     @router.get("/setup-status")
     async def setup_status():
         env = read_env(env_path)
+        from apps.server.state import settings as _settings
+
+        tg_settings = getattr(_settings, "telegram", None) if _settings else None
+        server_settings = getattr(_settings, "server", None) if _settings else None
+        if tg_settings is not None:
+            telegram_configured = bool(tg_settings.is_configured)
+        else:
+            telegram_configured = bool(env.get("TELEGRAM_BOT_TOKEN")) and bool(env.get("TELEGRAM_ADMIN_IDS"))
+        if server_settings is not None:
+            base_url = getattr(server_settings, "base_url", "") or ""
+        else:
+            base_url = env.get("SERVER_BASE_URL", "")
         return {
             "initialized": env.get("PINETUNNEL_INITIALIZED") == "true",
-            "telegram_configured": bool(env.get("TELEGRAM_BOT_TOKEN")) and bool(env.get("TELEGRAM_ADMIN_IDS")),
-            "cloudflare_configured": env.get("SERVER_BASE_URL", "").startswith("https://"),
+            "telegram_configured": telegram_configured,
+            "cloudflare_configured": base_url.startswith("https://"),
+            "server_url": base_url,
         }
 
     @router.get("/config")
@@ -296,8 +309,14 @@ def create_dashboard_router(
 
     @router.get("/webhook-url")
     async def webhook_url():
-        env = read_env(env_path)
-        base = env.get("SERVER_BASE_URL", "")
+        from apps.server.state import settings as _settings
+
+        server_settings = getattr(_settings, "server", None) if _settings else None
+        if server_settings is not None:
+            base = getattr(server_settings, "base_url", "") or ""
+        else:
+            env = read_env(env_path)
+            base = env.get("SERVER_BASE_URL", "")
         ready = base.startswith("https://")
         url = base + "/" if base and not base.endswith("/") else base
         message = None if ready else "Complete Cloudflare setup first"
@@ -484,37 +503,96 @@ def create_dashboard_router(
     @router.get("/rate-limits")
     async def dashboard_rate_limits(_=Depends(require_auth)):
         import time as _time
+        from apps.server.middleware.main import failed_attempt_tracker
         from apps.server.state import rate_limiter
 
-        stats = rate_limiter.get_statistics()
-        blocked = []
-        for ip, block_until in rate_limiter.blocked_ips.items():
-            remaining = max(0, block_until - _time.time())
-            blocked.append({"ip": ip, "remaining_seconds": int(remaining)})
-        stats["blocked_ips"] = blocked
-        return stats
+        rl_stats: dict = {}
+        rl_blocked: list[dict] = []
+        if rate_limiter is not None:
+            rl_stats = rate_limiter.get_statistics()
+            for ip, block_until in rate_limiter.blocked_ips.items():
+                remaining = max(0, block_until - _time.time())
+                rl_blocked.append({
+                    "ip": ip,
+                    "remaining_seconds": int(remaining),
+                    "source": "rate_limiter",
+                    "reason": "Rate limit violations (20+ in 5min)",
+                })
+
+        fa_stats: dict = {"blocked_ips": [], "blocked_ip_count": 0, "failed_attempts_24h": 0}
+        if failed_attempt_tracker is not None:
+            fa_stats = failed_attempt_tracker.get_statistics()
+
+        fa_blocked: list[dict] = []
+        for entry in fa_stats.get("blocked_ips", []):
+            fa_blocked.append({
+                "ip": entry["ip"],
+                "remaining_seconds": entry["remaining_seconds"],
+                "source": "failed_attempt_tracker",
+                "reason": "Failed auth attempts (10+ in 1hr)",
+            })
+
+        merged_blocked = fa_blocked + rl_blocked
+
+        return {
+            "total_requests": rl_stats.get("total_requests", 0),
+            "blocked_requests": rl_stats.get("blocked_requests", 0),
+            "rate_limited_requests": rl_stats.get("rate_limited_requests", 0),
+            "passed_requests": rl_stats.get("passed_requests", 0),
+            "active_identifiers": rl_stats.get("active_identifiers", 0),
+            "pass_rate": rl_stats.get("pass_rate", 100),
+            "blocked_ips": merged_blocked,
+            "blocked_ip_count": len(merged_blocked),
+            "failed_attempts_24h": fa_stats.get("failed_attempts_24h", 0),
+            "rate_limiter_blocked_count": len(rl_blocked),
+            "failed_attempt_blocked_count": len(fa_blocked),
+        }
+
+    @router.delete("/rate-limits/{ip}")
+    async def dashboard_unblock_ip(ip: str, _=Depends(require_auth), _c=Depends(require_csrf)):
+        import asyncio
+        from apps.server.middleware.main import failed_attempt_tracker
+        from apps.server.state import rate_limiter
+
+        unblocked_any = False
+        if rate_limiter is not None and ip in rate_limiter.blocked_ips:
+            rate_limiter.unblock_identifier(ip)
+            unblocked_any = True
+        if failed_attempt_tracker is not None:
+            await failed_attempt_tracker.reset_async(ip)
+            unblocked_any = True
+        if not unblocked_any:
+            return {"success": False, "message": f"IP {ip} is not blocked"}
+        logger.info("Dashboard: unblocked IP %s", ip)
+        return {"success": True, "message": f"IP {ip} unblocked"}
 
     @router.get("/security-headers")
     async def dashboard_security_headers(_=Depends(require_auth)):
-        tv_env = os.environ.get("TRADINGVIEW_IP_ALLOWLIST", "").lower()
+        from apps.server.config.settings import get_config
+        from apps.server.middleware.ip_validation import _TRADINGVIEW_IPS
+        from apps.server.middleware.security import get_security_headers
+
+        cfg = get_config()
+        tv_env = cfg.tradingview_ip_allowlist.lower()
         if tv_env in ("0", "false", "no"):
             tv_allowlist_on = False
         elif tv_env in ("1", "true", "yes"):
             tv_allowlist_on = True
         else:
-            tv_allowlist_on = True
-        headers = {
-            "x_frame_options": "DENY",
-            "content_security_policy": "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'",
-            "x_content_type_options": "nosniff",
-            "referrer_policy": "strict-origin-when-cross-origin",
-            "hsts": "max-age=15552000; includeSubDomains; preload",
-            "x_xss_protection": "1; mode=block",
-        }
+            tv_allowlist_on = cfg.environment == "production"
+
+        env_ips = cfg.tradingview_ips
+        if env_ips:
+            tv_ips = [ip.strip() for ip in env_ips.split(",") if ip.strip()]
+        else:
+            tv_ips = sorted(_TRADINGVIEW_IPS)
+
+        headers = get_security_headers()
         return {
             "headers": headers,
+            "headers_active": len(headers),
             "tradingview_ip_allowlist": tv_allowlist_on,
-            "tradingview_ips": [ip.strip() for ip in os.environ.get("TRADINGVIEW_IPS", "").split(",") if ip.strip()] or ["52.89.214.238", "108.61.173.174", "52.89.214.238", "34.224.81.244"],
+            "tradingview_ips": tv_ips,
         }
 
     @router.get("/audit-actions")
@@ -546,6 +624,10 @@ def create_dashboard_router(
         if bot is None:
             return {
                 "started": False,
+                "has_app": False,
+                "token_set": False,
+                "updater_running": False,
+                "app_running": False,
                 "username": None,
                 "first_name": None,
                 "handler_count": 0,
@@ -555,8 +637,12 @@ def create_dashboard_router(
         admin_ids = list(getattr(bot, "admin_ids", []) or [])
         alerts_enabled = bool(getattr(bot, "alerts_enabled", False))
         started = bool(getattr(bot, "_started", False))
-        handler_count = 0
+        token_set = bool(getattr(bot, "token", ""))
         app = getattr(bot, "app", None)
+        has_app = app is not None
+        updater_running = bool(app and getattr(app, "updater", None) and getattr(app.updater, "running", False))
+        app_running = bool(app and getattr(app, "running", False))
+        handler_count = 0
         if app is not None:
             handlers = getattr(app, "handlers", None)
             if isinstance(handlers, dict):
@@ -576,6 +662,10 @@ def create_dashboard_router(
                 pass
         return {
             "started": started,
+            "has_app": has_app,
+            "token_set": token_set,
+            "updater_running": updater_running,
+            "app_running": app_running,
             "username": username,
             "first_name": first_name,
             "handler_count": handler_count,

@@ -107,6 +107,72 @@ async def get_webhook_logs(
         return {"webhooks": [], "count": 0}
 
 
+@router.get("/api/signals/recent")
+async def get_recent_signals(
+    limit: int = Query(50, ge=1, le=500), _username: str = Depends(_require_auth)
+):
+    """Get recent signals from ws_signal_log (signal delivery lifecycle).
+
+    This is the same data the Telegram bot monitors via signal_queue
+    (pending/acknowledged) but with the full lifecycle from ws_signal_log:
+    pending -> delivered -> executed/failed.
+    """
+    from apps.server.state import db_manager
+
+    try:
+        rows = await asyncio.to_thread(
+            db_manager.execute_query,
+            """
+            SELECT id, license_key, timestamp, signal_id, action, symbol, volume,
+                   delivered_via, acknowledged, acknowledged_at,
+                   execution_status, execution_detail, executed_at
+            FROM ws_signal_log
+            ORDER BY timestamp DESC
+            LIMIT :limit
+            """,
+            {"limit": limit},
+        )
+
+        signals_list = []
+        for r in rows:
+            ts = r["timestamp"]
+            ack_at = r.get("acknowledged_at")
+            exec_at = r.get("executed_at")
+            latency_ms = None
+            if exec_at and ts:
+                delta = (exec_at - ts).total_seconds() * 1000.0
+                latency_ms = round(delta, 1) if delta >= 0 else None
+            elif ack_at and ts:
+                delta = (ack_at - ts).total_seconds() * 1000.0
+                latency_ms = round(delta, 1) if delta >= 0 else None
+            signals_list.append(
+                {
+                    "id": r["id"],
+                    "timestamp": ts,
+                    "license_key": r["license_key"],
+                    "signal_id": r["signal_id"],
+                    "action": r["action"],
+                    "symbol": r["symbol"],
+                    "volume": r["volume"],
+                    "delivered_via": r["delivered_via"],
+                    "acknowledged": bool(r.get("acknowledged", 0)),
+                    "execution_status": r["execution_status"],
+                    "execution_detail": r["execution_detail"],
+                    "executed_at": exec_at,
+                    "latency_ms": latency_ms,
+                }
+            )
+
+        return {
+            "signals": signals_list,
+            "count": len(signals_list),
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.warning("Recent signals not available: %s", e)
+        return {"signals": [], "count": 0}
+
+
 @router.get("/api/webhooks/stats")
 async def get_webhook_stats(days: int = 7, _username: str = Depends(_require_auth)):
     """Get webhook statistics"""
