@@ -4001,7 +4001,7 @@ async function renderLicenses(content, actions) {
               <th scope="col" class="sortable" data-sort="license_key">License Key</th>
               <th scope="col" class="sortable" data-sort="name">Name</th>
               <th scope="col" class="sortable" data-sort="email">Email</th>
-              <th scope="col" class="sortable" data-sort="status">Status</th>
+              <th scope="col" class="sortable td-status" data-sort="status">Status</th>
               <th scope="col">Secret</th>
               <th scope="col" class="sortable" data-sort="expires_at">Expires</th>
               <th scope="col" class="sortable th-num" data-sort="connected_eas">EAs</th>
