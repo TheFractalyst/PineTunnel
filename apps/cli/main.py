@@ -10,6 +10,7 @@ Commands:
 """
 
 import argparse
+import importlib
 import os
 import platform
 import re
@@ -23,6 +24,75 @@ from pathlib import Path
 from apps.cli import __version__
 from apps.lib.env_manager import generate_secret, read_env, write_env_updates
 from apps.lib.service import is_running, start_daemon, stop_daemon
+
+_REQUIRED_PACKAGES = [
+    ("fastapi", "fastapi"),
+    ("uvicorn", "uvicorn"),
+    ("pydantic", "pydantic"),
+    ("sqlalchemy", "sqlalchemy"),
+    ("alembic", "alembic"),
+    ("redis", "redis"),
+    ("httpx", "httpx"),
+    ("psutil", "psutil"),
+    ("telegram", "python-telegram-bot"),
+]
+
+
+def _clean_corrupted_installs():
+    """Remove ~-prefixed corrupted distributions left by interrupted pip installs."""
+    import site
+    cleaned = []
+    for site_dir in site.getsitepackages() + [site.getusersitepackages()]:
+        p = Path(site_dir)
+        if not p.exists():
+            continue
+        for item in p.iterdir():
+            name = item.name
+            if name.startswith("~") and "inetunnel" in name.lower():
+                try:
+                    if item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        item.unlink(missing_ok=True)
+                    cleaned.append(str(item))
+                except Exception:
+                    pass
+    return cleaned
+
+
+def _check_dependencies():
+    """Check if all required packages are importable. Returns list of missing."""
+    missing = []
+    for import_name, display_name in _REQUIRED_PACKAGES:
+        try:
+            importlib.import_module(import_name)
+        except ImportError:
+            missing.append(display_name)
+    return missing
+
+
+def _post_install_check():
+    """Run on every CLI invocation: clean corrupted installs, check deps."""
+    cleaned = _clean_corrupted_installs()
+    if cleaned:
+        print("[pinetunnel] Cleaned up corrupted install from previous update:")
+        for c in cleaned:
+            print(f"  - {c}")
+        print()
+
+    missing = _check_dependencies()
+    if missing:
+        print("[pinetunnel] Missing dependencies detected:")
+        for m in missing:
+            print(f"  - {m}")
+        print()
+        print("This can happen after a failed or interrupted update.")
+        print("Fix it with:")
+        print()
+        print("  pip install --force-reinstall pinetunnel")
+        print()
+        return False
+    return True
 
 _MIN_ENV_TEMPLATE = """\
 HOST=127.0.0.1
@@ -477,6 +547,8 @@ _KNOWN_COMMANDS = {"start", "stop", "status", "version", "setup"}
 
 
 def main() -> int:
+    if not _post_install_check():
+        return 1
     first = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
     if first is not None and first not in _KNOWN_COMMANDS:
         print(f"Unknown command '{first}'. Run 'pinetunnel --help' for options.")
