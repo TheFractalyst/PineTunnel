@@ -278,13 +278,13 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .card-title {
   font-size: var(--text-md);
   font-weight: var(--fw-semibold);
-  margin-bottom: var(--sp-1);
+  margin-bottom: var(--sp-2);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   letter-spacing: var(--ls-body);
 }
-.card-desc { font-size: var(--text-sm); color: var(--muted); margin-bottom: var(--sp-4); }
+.card-desc { font-size: var(--text-sm); color: var(--muted); margin-bottom: var(--sp-5); }
 
 .grid { display: grid; gap: var(--sp-3); }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }

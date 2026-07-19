@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from apps.server.middleware.main import failed_attempt_tracker
@@ -18,7 +18,7 @@ from apps.server.webhook.signal_queue import (
     get_pending_signals_async,
 )
 
-from .auth import _verify_admin_key, verify_signal_request
+from .auth import _require_auth, _verify_admin_key, verify_signal_request
 
 logger = logging.getLogger(__name__)
 
