@@ -446,6 +446,10 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
   from { opacity: 1; transform: translateY(0); }
   to { opacity: 0; transform: translateY(12px); }
 }
+@media (max-width: 768px) {
+  .toast-container { left: 50%; right: auto; transform: translateX(-50%); max-width: 90vw; }
+  .toast { min-width: 0; max-width: 90vw; }
+}
 
 .skeleton {
   position: relative;
@@ -1101,6 +1105,11 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 .legend { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 160px; }
 .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.legend-dot.c0 { background: #5e6ad2; }
+.legend-dot.c1 { background: #4cb782; }
+.legend-dot.c2 { background: #f2994a; }
+.legend-dot.c3 { background: #eb5757; }
+.legend-dot.c4 { background: #82828b; }
 .legend-name { font-family: var(--mono); flex: 1; }
 .legend-val { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
@@ -1295,6 +1304,13 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 }
 .metric-name { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; font-weight: 500; }
 .metric-value { font-size: 28px; font-weight: 700; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.metric-value.c-green { color: #4cb782; }
+.metric-value.c-blue { color: #5e6ad2; }
+.metric-value.c-amber { color: #f2994a; }
+.metric-value.c-red { color: #eb5757; }
+.metric-value.c-muted { color: #82828b; }
+.allowlist-status .status-on { color: var(--green); }
+.allowlist-status .status-off { color: var(--muted-2); }
 
 .probe-card { padding: 16px; border-left: 3px solid var(--border); }
 .probe-card.ok { border-left-color: var(--green); }
@@ -1707,11 +1723,19 @@ h1.title, h2.title, h3.title { font-size: inherit; font-weight: inherit; margin:
 
 .sk-row td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .sk-cell {
+  position: relative;
   height: 12px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--card) 25%, var(--card-2) 50%, var(--card) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  background: var(--card);
+  overflow: hidden;
+}
+.sk-cell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--card-2) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: shimmer 1.5s var(--ease-default) infinite;
 }
 
 .filter-clear {

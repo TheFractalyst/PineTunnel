@@ -1,3 +1,5 @@
+(function() {
+"use strict";
 const API = "/api/dashboard";
 const POLL_INTERVAL = 10000;
 const FETCH_TIMEOUT = 10000;
@@ -1891,6 +1893,27 @@ async function pollSignalFeed() {
   renderFeedRows();
 }
 
+function feedRowHtml(r) {
+  const ts = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "--";
+  const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "--");
+  const action = r.action || "--";
+  const sym = r.symbol || "--";
+  const lots = r.volume != null ? r.volume : "--";
+  const status = r.status || "--";
+  const cls = statusClassFor(status);
+  const lat = r.execution_time_ms != null ? `${r.execution_time_ms}ms` : "--";
+  const actionCls = action === "buy" ? "act-buy" : action === "sell" ? "act-sell" : action === "close" || action === "close_all" ? "act-close" : "act-other";
+  return `<tr class="row-${cls}">
+    <td class="td-time">${escapeHtml(ts)}</td>
+    <td class="td-key">${escapeHtml(lk)}</td>
+    <td><span class="action-tag ${actionCls}">${escapeHtml(action)}</span></td>
+    <td>${escapeHtml(sym)}</td>
+    <td>${escapeHtml(String(lots))}</td>
+    <td><span class="status-tag ${cls}">${escapeHtml(status)}</span></td>
+    <td class="td-lat">${escapeHtml(lat)}</td>
+  </tr>`;
+}
+
 function renderFeedRows() {
   const body = document.getElementById("feed-body");
   if (!body) return;
@@ -1916,26 +1939,7 @@ function renderFeedRows() {
     body.innerHTML = `<tr><td colspan="7" class="feed-empty">${isEmpty ? emptyState("No signals yet", "Incoming TradingView webhooks will appear here in real time", "signals") : "No signals match filters"}</td></tr>`;
     return;
   }
-  body.innerHTML = filtered.map(r => {
-    const ts = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "--";
-    const lk = r.payload && r.payload.license_key ? maskKey(r.payload.license_key) : (r.ip_address || "--");
-    const action = r.action || "--";
-    const sym = r.symbol || "--";
-    const lots = r.volume != null ? r.volume : "--";
-    const status = r.status || "--";
-    const cls = statusClassFor(status);
-    const lat = r.execution_time_ms != null ? `${r.execution_time_ms}ms` : "--";
-    const actionCls = action === "buy" ? "act-buy" : action === "sell" ? "act-sell" : action === "close" || action === "close_all" ? "act-close" : "act-other";
-    return `<tr class="row-${cls}">
-      <td class="td-time">${escapeHtml(ts)}</td>
-      <td class="td-key">${escapeHtml(lk)}</td>
-      <td><span class="action-tag ${actionCls}">${escapeHtml(action)}</span></td>
-      <td>${escapeHtml(sym)}</td>
-      <td>${escapeHtml(String(lots))}</td>
-      <td><span class="status-tag ${cls}">${escapeHtml(status)}</span></td>
-      <td class="td-lat">${escapeHtml(lat)}</td>
-    </tr>`;
-  }).join("");
+  body.innerHTML = filtered.map(feedRowHtml).join("");
   if (!signalFeedState.paused) {
     const scroll = document.getElementById("feed-scroll");
     if (scroll) scroll.scrollTop = 0;
@@ -2229,6 +2233,8 @@ function drawBarChart(daily, dash) {
     }
   }
   const maxVal = Math.max(1, ...hours.map(h => h.count));
+  const totalTrades = hours.reduce((s, h) => s + h.count, 0);
+  const peakHour = hours.reduce((a, h) => h.count > a.count ? h : a, { hour: 0, count: 0 });
   const W = 600, H = 200, pad = 30, barW = (W - pad * 2) / 24;
   const bars = hours.map((h, i) => {
     const bh = (h.count / maxVal) * (H - pad * 2);
@@ -2242,7 +2248,7 @@ function drawBarChart(daily, dash) {
     const x = pad + h.hour * barW + barW / 2;
     return `<text x="${x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${h.hour}</text>`;
   }).join("");
-  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg">
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="Trades by hour: ${totalTrades} trades today, peak at ${peakHour.hour}:00 with ${peakHour.count} trades">
     <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     ${bars}${labels}
@@ -2273,7 +2279,11 @@ function drawLineChart(daily) {
     return `<text x="${coords[i].x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${lbl}</text>`;
   }).join("");
   const gid = "lineGrad-" + Math.random().toString(36).slice(2, 8);
-  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg">
+  const avgRate = points.reduce((s, p) => s + p.rate, 0) / points.length;
+  const latestRate = points[points.length - 1].rate;
+  const minRate = Math.min(...points.map(p => p.rate));
+  const maxRate = Math.max(...points.map(p => p.rate));
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="7-day success rate trend: latest ${latestRate.toFixed(1)}%, average ${avgRate.toFixed(1)}%, range ${minRate.toFixed(1)}% to ${maxRate.toFixed(1)}%">
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${PALETTE.green}" stop-opacity="0.3"/>
       <stop offset="100%" stop-color="${PALETTE.green}" stop-opacity="0"/>
@@ -2318,19 +2328,22 @@ function drawDonutChart(stats, dash) {
     const large = frac > 0.5 ? 1 : 0;
     const path = `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${xi1} ${yi1} A ${innerR} ${innerR} 0 ${large} 0 ${xi2} ${yi2} Z`;
     const pct = (frac * 100).toFixed(1);
-    return `<path d="${path}" fill="${colors[i]}" stroke="#131318" stroke-width="1"><title>${escapeHtml(e.name)}: ${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</title></path>`;
+    return `<path d="${path}" fill="${colors[i]}" stroke="${PALETTE.card}" stroke-width="1"><title>${escapeHtml(e.name)}: ${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</title></path>`;
   }).join("");
   const legend = entries.map((e, i) => {
     const pct = ((e.vol / total) * 100).toFixed(1);
-    return `<div class="legend-item"><span class="legend-dot" style="background:${colors[i]}"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</span></div>`;
+    return `<div class="legend-item"><span class="legend-dot" style="background:${colors[i]}" aria-hidden="true"></span><span class="legend-name">${escapeHtml(e.name)}</span><span class="legend-val">${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</span></div>`;
   }).join("");
+  const topSym = entries[0] ? entries[0].name : "none";
+  const topPct = entries[0] ? ((entries[0].vol / total) * 100).toFixed(1) : "0";
+  const ariaLbl = `Top symbols by volume: ${total} total trades, top symbol ${topSym} at ${topPct}%`;
   wrap.innerHTML = `<div class="donut-wrap">
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg donut-svg">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg donut-svg" role="img" aria-label="${escapeHtml(ariaLbl)}">
       ${slices}
       <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="${PALETTE.text}" font-size="16" font-weight="700">${total}</text>
       <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">trades</text>
     </svg>
-    <div class="legend">${legend}</div>
+    <div class="legend" role="list" aria-label="Symbol legend">${legend}</div>
   </div>`;
 }
 
@@ -2475,6 +2488,8 @@ function drawHistogram() {
     }
   }
   const maxC = Math.max(1, ...buckets.map(b => b.count));
+  const totalSamples = lats.length;
+  const peak = buckets.reduce((a, b) => b.count > a.count ? b : a, { label: "none", count: 0 });
   const W = 600, H = 200, pad = 30, barW = (W - pad * 2) / buckets.length;
   const bars = buckets.map((b, i) => {
     const bh = (b.count / maxC) * (H - pad * 2);
@@ -2485,7 +2500,7 @@ function drawHistogram() {
       <text x="${x + barW / 2}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${b.label}</text>
       <text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">${b.count}</text>`;
   }).join("");
-  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg">
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="Delivery latency histogram: ${totalSamples} samples, peak bucket ${peak.label} with ${peak.count} entries">
     <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     ${bars}
@@ -3241,11 +3256,12 @@ function renderDatabaseManager(content) {
       <h2 class="card-title">Cleanup Tool</h2>
       <div class="card-desc">Remove old records to free space</div>
       <div class="cleanup-row">
-        <label for="db-days">Delete records older than</label>
-        <input class="input days-input" id="db-days" type="number" value="90" min="1" max="3650">
+        <label for="db-days">Days to keep <span class="req">*</span></label>
+        <input class="input days-input" id="db-days" type="number" value="90" min="1" max="3650" inputmode="numeric">
         <span>days</span>
         <button class="btn red sm" id="db-cleanup" data-action="db-cleanup">Delete</button>
       </div>
+      <div class="hint mt">Whole number between 1 and 3650. Records older than this are deleted permanently.</div>
       <div id="db-cleanup-result" aria-live="polite"></div>
     </div>
     <div class="card">
@@ -3256,15 +3272,18 @@ function renderDatabaseManager(content) {
   `;
   const btn = content.querySelector("[data-action='db-cleanup']");
   if (btn) btn.addEventListener("click", e => { e.preventDefault(); runDbCleanup(); });
+  const daysInput = content.querySelector("#db-days");
+  if (daysInput) attachValidator(daysInput, "days");
   pollDatabaseManager();
   const t = setInterval(pollDatabaseManager, 30000);
   addPoll(t);
 }
 
 async function runDbCleanup() {
-  const days = parseInt(document.getElementById("db-days").value, 10);
+  const daysEl = document.getElementById("db-days");
   const result = document.getElementById("db-cleanup-result");
-  if (!days || days < 1) { result.innerHTML = `<div class="inline-error">Enter a valid number of days</div>`; return; }
+  if (!validateInput(daysEl, "days")) { result.innerHTML = ""; return; }
+  const days = parseInt(daysEl.value.trim(), 10);
   openConfirmModal("Database Cleanup", `Delete all records older than ${days} days? This cannot be undone.`, () => doDbCleanup(days), "Confirm");
 }
 
@@ -3272,20 +3291,18 @@ async function doDbCleanup(days) {
   const result = document.getElementById("db-cleanup-result");
   const btn = document.getElementById("db-cleanup");
   if (!btn) return;
-  btn.disabled = true;
-  const original = btn.innerHTML;
-  btn.innerHTML = `<span class="spin"></span>Deleting...`;
+  setBtnLoading(btn, "Deleting...");
   try {
     const r = await http(`/api/database/cleanup?days_to_keep=${days}`, { method: "POST", headers: jsonHeaders(true) });
     const data = await r.json();
     result.innerHTML = `<div class="inline-ok">${ICONS.check}Cleanup complete: ${escapeHtml(JSON.stringify(data.result || data))}</div>`;
     toast("Database cleanup complete", "ok");
+    setBtnSuccess(btn, "Done", 2000);
     pollDatabaseManager();
   } catch (e) {
     result.innerHTML = `<div class="inline-error">${ICONS.x}Cleanup failed: ${escapeHtml(e.message)}</div>`;
+    setBtnError(btn, "Failed");
   }
-  btn.disabled = false;
-  btn.innerHTML = original;
 }
 
 let metricsState = { history: {}, lastValues: {} };
@@ -3746,6 +3763,62 @@ function genKey(prefix) {
   return `${prefix}-${seg()}-${seg()}-${seg()}-${seg()}`;
 }
 
+let _lastFocusedBeforeModal = null;
+let _activeModalStack = [];
+
+function _getFocusable(scope) {
+  return Array.from(scope.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"]))')).filter(el => !el.disabled && el.offsetParent !== null);
+}
+
+function _trapTab(e, overlay) {
+  if (e.key !== "Tab") return;
+  const focusable = _getFocusable(overlay);
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey) {
+    if (document.activeElement === first || !overlay.contains(document.activeElement)) { e.preventDefault(); last.focus(); }
+  } else {
+    if (document.activeElement === last || !overlay.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+}
+
+function openModal(overlay, opts) {
+  opts = opts || {};
+  _lastFocusedBeforeModal = document.activeElement;
+  document.body.appendChild(overlay);
+  _activeModalStack.push(overlay);
+  const onEscape = e => { if (e.key === "Escape") { e.preventDefault(); closeModal(overlay); } };
+  const onTab = e => _trapTab(e, overlay);
+  const onBackdrop = e => { if (e.target === overlay) closeModal(overlay); };
+  overlay.addEventListener("click", onBackdrop);
+  document.addEventListener("keydown", onEscape);
+  document.addEventListener("keydown", onTab);
+  overlay._modalCleanup = () => {
+    overlay.removeEventListener("click", onBackdrop);
+    document.removeEventListener("keydown", onEscape);
+    document.removeEventListener("keydown", onTab);
+  };
+  requestAnimationFrame(() => overlay.classList.add("modal-open"));
+  const focusable = _getFocusable(overlay);
+  if (focusable.length > 0) setTimeout(() => focusable[0].focus(), 50);
+  if (opts.onClose) overlay._onClose = opts.onClose;
+}
+
+function closeModal(overlay) {
+  if (!overlay || !overlay.parentNode) return;
+  overlay.classList.remove("modal-open");
+  overlay.classList.add("modal-closing");
+  if (overlay._modalCleanup) overlay._modalCleanup();
+  const idx = _activeModalStack.indexOf(overlay);
+  if (idx >= 0) _activeModalStack.splice(idx, 1);
+  setTimeout(() => {
+    if (overlay.parentNode) overlay.remove();
+    if (_lastFocusedBeforeModal && _activeModalStack.length === 0) { try { _lastFocusedBeforeModal.focus(); } catch {} _lastFocusedBeforeModal = null; }
+    if (overlay._onClose) overlay._onClose();
+  }, 200);
+}
+
 function openLicenseModal() {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
@@ -3821,12 +3894,14 @@ function openConfirmModal(title, msg, onConfirm, confirmLabel = "Delete") {
 let securityState = { data: null, headers: null };
 
 async function renderSecurity(content, actions) {
+  const tk = renderToken;
   content.innerHTML = skeletonCard(2);
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 10s</span>`;
   const [rlRes, hdrRes] = await Promise.all([
     useFetch(`${API}/rate-limits`),
     useFetch(`${API}/security-headers`),
   ]);
+  if (staleRender(tk)) return;
   if (rlRes.error && !rlRes.data) {
     content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load security data</div><div class="sub">${escapeHtml(rlRes.error)}</div><button class="btn outline sm mt" data-action="retry-security">Retry</button></div>`;
     bindRetry(content, "retry-security", () => route("security"));
@@ -4098,13 +4173,8 @@ function renderAuditContent(content) {
 }
 
 window.route = route;
-window.doLogin = doLogin;
-window.retryLastRoute = retryLastRoute;
+window.copy = copy;
 window.saveTelegram = saveTelegram;
-window.copyWebhook = copyWebhook;
-window.copyWebhookStep3 = copyWebhookStep3;
-window.advanceStep = advanceStep;
-window.toggleTestForm = toggleTestForm;
 window.sendTestWebhook = sendTestWebhook;
 
 (async function init() {
@@ -4126,3 +4196,4 @@ window.addEventListener("resize", () => {
   }
   lastWidth = w;
 });
+})();
