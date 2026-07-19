@@ -4,19 +4,74 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
+import secrets
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from apps.lib.env_manager import read_env, redact_value, write_env_updates
+from apps.lib.env_manager import generate_secret, read_env, redact_value, write_env_updates
 from apps.server.auth.session import require_auth
 from apps.server.auth.telegram_auth import TelegramAuthStore
 
 _TELEGRAM_RELOAD_KEYS = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_IDS"}
+
+_ROTATABLE_PATTERNS = ("SECRET", "TOKEN", "KEY", "PASSWORD", "PASSPHRASE")
+
+_MIN_ENV_TEMPLATE = """\
+HOST=127.0.0.1
+PORT=8000
+APP_ENV=production
+WEBHOOK_SECRET={webhook_secret}
+JWT_SECRET={jwt_secret}
+ADMIN_API_KEY={admin_api_key}
+SESSION_SECRET={session_secret}
+SIGNAL_ENCRYPTION_KEY={encryption_key}
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ADMIN_IDS=
+SERVER_BASE_URL=http://127.0.0.1:8000
+DATABASE_URL=sqlite:///pinetunnel.db
+"""
+
+_CONFIG_SCHEMA: dict[str, dict] = {
+    "HOST": {"type": "str", "default": "127.0.0.1", "secret": False, "group": "Server"},
+    "PORT": {"type": "int", "default": "8000", "secret": False, "group": "Server"},
+    "APP_ENV": {"type": "str", "default": "production", "secret": False, "group": "Server"},
+    "SERVER_BASE_URL": {"type": "str", "default": "http://127.0.0.1:8000", "secret": False, "group": "Server"},
+    "SERVER_CORS_ORIGINS": {"type": "str", "default": "", "secret": False, "group": "Server"},
+    "SERVER_WORKERS": {"type": "int", "default": "1", "secret": False, "group": "Server"},
+    "WEBHOOK_SECRET": {"type": "str", "default": "", "secret": True, "group": "Security"},
+    "JWT_SECRET": {"type": "str", "default": "", "secret": True, "group": "Security"},
+    "ADMIN_API_KEY": {"type": "str", "default": "", "secret": True, "group": "Security"},
+    "SIGNAL_ENCRYPTION_KEY": {"type": "str", "default": "", "secret": True, "group": "Security"},
+    "TELEGRAM_BOT_TOKEN": {"type": "str", "default": "", "secret": True, "group": "Telegram"},
+    "TELEGRAM_ADMIN_IDS": {"type": "str", "default": "", "secret": False, "group": "Telegram"},
+    "TELEGRAM_BOT_URL": {"type": "str", "default": "", "secret": False, "group": "Telegram"},
+    "DATABASE_URL": {"type": "str", "default": "sqlite:///pinetunnel.db", "secret": False, "group": "Database"},
+    "REDIS_URL": {"type": "str", "default": "", "secret": False, "group": "Redis"},
+    "TRUSTED_PROXY_COUNT": {"type": "int", "default": "0", "secret": False, "group": "Trading"},
+    "TRADINGVIEW_IP_ALLOWLIST": {"type": "str", "default": "1", "secret": False, "group": "Trading"},
+    "TRADINGVIEW_IPS": {"type": "str", "default": "", "secret": False, "group": "Trading"},
+}
+
+
+def _is_rotatable(key: str) -> bool:
+    upper = key.upper()
+    return any(p in upper for p in _ROTATABLE_PATTERNS)
+
+
+def _generate_new_secret(key: str) -> str:
+    upper = key.upper()
+    if upper == "SIGNAL_ENCRYPTION_KEY":
+        return secrets.token_hex(32)
+    if "KEY" in upper or "TOKEN" in upper:
+        return generate_secret(48)
+    return generate_secret(32)
 
 _LOGIN_RATE_LIMIT = 5
 _LOGIN_RATE_WINDOW = 60
@@ -75,6 +130,14 @@ class LoginRequest(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     updates: dict[str, str]
+
+
+class RotateRequest(BaseModel):
+    key: str
+
+
+class ResetRequest(BaseModel):
+    confirm: bool = False
 
 
 class ValidateTelegramRequest(BaseModel):
@@ -147,6 +210,64 @@ def create_dashboard_router(
                 reloaded = False
             needs_restart = not reloaded
         return {"status": "ok", "updated_keys": list(req.updates.keys()), "needs_restart": needs_restart}
+
+    @router.get("/config/schema")
+    async def get_config_schema(_=Depends(require_auth)):
+        return _CONFIG_SCHEMA
+
+    @router.post("/config/rotate")
+    async def rotate_config(req: RotateRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
+        key = req.key.strip().upper()
+        if not key:
+            raise HTTPException(status_code=400, detail="key is required")
+        if not _is_rotatable(key):
+            raise HTTPException(status_code=400, detail=f"{key} is not a rotatable secret")
+        env = read_env(env_path)
+        current_value = env.get(key, "")
+        updates: dict[str, str] = {}
+        if current_value:
+            previous_key = f"{key}_PREVIOUS"
+            updates[previous_key] = current_value
+        new_value = _generate_new_secret(key)
+        updates[key] = new_value
+        write_env_updates(env_path, updates)
+        needs_restart = False
+        if key == "TELEGRAM_BOT_TOKEN":
+            try:
+                reloaded = await _reload_telegram_bot(env_path)
+            except Exception:
+                reloaded = False
+            needs_restart = not reloaded
+        return {
+            "status": "ok",
+            "key": key,
+            "new_value": redact_value(key, new_value),
+            "needs_restart": needs_restart,
+        }
+
+    @router.post("/config/reset")
+    async def reset_config(req: ResetRequest, _=Depends(require_auth), _c=Depends(require_csrf)):
+        if not req.confirm:
+            raise HTTPException(status_code=400, detail="confirm must be true to reset settings")
+        if env_path.exists():
+            try:
+                env_path.unlink()
+            except OSError:
+                pass
+        content = _MIN_ENV_TEMPLATE.format(
+            webhook_secret=generate_secret(32),
+            jwt_secret=generate_secret(48),
+            admin_api_key=generate_secret(48),
+            session_secret=generate_secret(32),
+            encryption_key=secrets.token_hex(32),
+        )
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text(content)
+        try:
+            os.chmod(env_path, 0o600)
+        except OSError:
+            pass
+        return {"status": "ok", "message": "Settings reset. Restart the server for changes to take effect."}
 
     @router.post("/validate-telegram")
     async def validate_telegram(req: ValidateTelegramRequest, _=Depends(require_csrf)):
@@ -410,5 +531,77 @@ def create_dashboard_router(
             }
         except Exception:
             return {"actions": [], "count": 0, "error": "Failed to retrieve audit trail"}
+
+    _PATH_RE = re.compile(r"(?:/[\w.\-]+)+/?|[A-Za-z]:\\[^\s]*")
+
+    def _sanitize_err(e: Exception) -> str:
+        text = str(e)[:200]
+        return _PATH_RE.sub("<path>", text)
+
+    @router.get("/bot-info")
+    async def bot_info(_=Depends(require_auth)):
+        from apps.server import state
+
+        bot = getattr(state, "telegram_bot", None)
+        if bot is None:
+            return {
+                "started": False,
+                "username": None,
+                "first_name": None,
+                "handler_count": 0,
+                "admin_ids": [],
+                "alerts_enabled": False,
+            }
+        admin_ids = list(getattr(bot, "admin_ids", []) or [])
+        alerts_enabled = bool(getattr(bot, "alerts_enabled", False))
+        started = bool(getattr(bot, "_started", False))
+        handler_count = 0
+        app = getattr(bot, "app", None)
+        if app is not None:
+            handlers = getattr(app, "handlers", None)
+            if isinstance(handlers, dict):
+                for grp in handlers.values():
+                    if isinstance(grp, list):
+                        handler_count += len(grp)
+        username = getattr(bot, "_cached_bot_username", None)
+        first_name = getattr(bot, "_cached_bot_first_name", None)
+        if (username is None or first_name is None) and app is not None and started:
+            try:
+                me = await app.bot.get_me()
+                bot._cached_bot_username = me.username
+                bot._cached_bot_first_name = me.first_name
+                username = me.username
+                first_name = me.first_name
+            except Exception:
+                pass
+        return {
+            "started": started,
+            "username": username,
+            "first_name": first_name,
+            "handler_count": handler_count,
+            "admin_ids": admin_ids,
+            "alerts_enabled": alerts_enabled,
+        }
+
+    @router.post("/bot-test")
+    async def bot_test(_=Depends(require_auth), _c=Depends(require_csrf)):
+        from apps.server import state
+
+        bot = getattr(state, "telegram_bot", None)
+        if bot is None or not getattr(bot, "_started", False) or getattr(bot, "app", None) is None:
+            return {"success": False, "error": "Bot not running"}
+        admin_ids = list(getattr(bot, "admin_ids", []) or [])
+        if not admin_ids:
+            env_admin = os.environ.get("TELEGRAM_ADMIN_IDS", "")
+            admin_ids = [int(s.strip()) for s in env_admin.split(",") if s.strip().isdigit()]
+        if not admin_ids:
+            return {"success": False, "error": "No admin IDs configured"}
+        ts = datetime.now(timezone.utc).isoformat()
+        text = f"Test message from PineTunnel dashboard at {ts}"
+        try:
+            await bot.app.bot.send_message(chat_id=admin_ids[0], text=text)
+            return {"success": True, "message": "Test message sent"}
+        except Exception as e:
+            return {"success": False, "error": _sanitize_err(e)}
 
     return router

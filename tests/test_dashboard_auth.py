@@ -100,6 +100,7 @@ def dashboard_app(tmp_path):
     app = FastAPI()
     setup_session_middleware(app, secret_key="test-secret-key-for-tests-32chars")
     app.include_router(create_dashboard_router(auth_store=store, admin_ids=[123], env_path=env_path))
+    app.__pinetunnel_env_path = env_path
     return app, store
 
 
@@ -280,3 +281,169 @@ def test_put_config_telegram_keys_hot_reloads_running_bot(dashboard_app, monkeyp
 
     assert os.environ.get("TELEGRAM_BOT_TOKEN") == "newtoken"
     assert os.environ.get("TELEGRAM_ADMIN_IDS") == "456,789"
+
+
+def _login(client, store):
+    code = store.issue_code(user_id=123)
+    client.post("/api/dashboard/login", json={"code": code, "user_id": 123}, headers=CSRF_HEADERS)
+
+
+def test_config_schema_requires_auth(dashboard_app):
+    app, _ = dashboard_app
+    client = TestClient(app)
+    r = client.get("/api/dashboard/config/schema")
+    assert r.status_code == 401
+
+
+def test_config_schema_returns_field_defs(dashboard_app):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    r = client.get("/api/dashboard/config/schema")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["HOST"]["group"] == "Server"
+    assert data["HOST"]["secret"] is False
+    assert data["WEBHOOK_SECRET"]["secret"] is True
+    assert data["WEBHOOK_SECRET"]["group"] == "Security"
+    assert data["TELEGRAM_BOT_TOKEN"]["group"] == "Telegram"
+    assert data["DATABASE_URL"]["group"] == "Database"
+    assert data["REDIS_URL"]["group"] == "Redis"
+    assert data["TRADINGVIEW_IPS"]["group"] == "Trading"
+
+
+def test_rotate_requires_auth(dashboard_app):
+    app, _ = dashboard_app
+    client = TestClient(app)
+    r = client.post("/api/dashboard/config/rotate", json={"key": "WEBHOOK_SECRET"}, headers=CSRF_HEADERS)
+    assert r.status_code == 401
+
+
+def test_rotate_rejects_missing_csrf(dashboard_app):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/config/rotate", json={"key": "WEBHOOK_SECRET"})
+    assert r.status_code == 403
+
+
+def test_rotate_rejects_non_secret_key(dashboard_app):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/config/rotate", json={"key": "HOST"}, headers=CSRF_HEADERS)
+    assert r.status_code == 400
+
+
+def test_rotate_rejects_empty_key(dashboard_app):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/config/rotate", json={"key": ""}, headers=CSRF_HEADERS)
+    assert r.status_code == 400
+
+
+def test_rotate_generates_new_secret_and_redacts_response(dashboard_app):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    client.put("/api/dashboard/config", json={"updates": {"WEBHOOK_SECRET": "old-secret-value-123"}}, headers=CSRF_HEADERS)
+    r = client.post("/api/dashboard/config/rotate", json={"key": "WEBHOOK_SECRET"}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert data["key"] == "WEBHOOK_SECRET"
+    assert "****" in data["new_value"]
+
+
+def test_rotate_writes_previous_and_new_value_to_env(dashboard_app):
+    app, store = dashboard_app
+    env_path = app.__pinetunnel_env_path  # type: ignore[attr-defined]
+    client = TestClient(app)
+    _login(client, store)
+    client.put("/api/dashboard/config", json={"updates": {"WEBHOOK_SECRET": "old-secret-value-123"}}, headers=CSRF_HEADERS)
+    client.post("/api/dashboard/config/rotate", json={"key": "WEBHOOK_SECRET"}, headers=CSRF_HEADERS)
+    from apps.lib.env_manager import read_env
+
+    env = read_env(env_path)
+    assert env["WEBHOOK_SECRET_PREVIOUS"] == "old-secret-value-123"
+    assert env["WEBHOOK_SECRET"] != "old-secret-value-123"
+    assert len(env["WEBHOOK_SECRET"]) >= 32
+
+
+def test_rotate_signal_encryption_key_uses_token_hex(dashboard_app):
+    app, store = dashboard_app
+    env_path = app.__pinetunnel_env_path  # type: ignore[attr-defined]
+    client = TestClient(app)
+    _login(client, store)
+    client.put("/api/dashboard/config", json={"updates": {"SIGNAL_ENCRYPTION_KEY": "abcd" * 16}}, headers=CSRF_HEADERS)
+    r = client.post("/api/dashboard/config/rotate", json={"key": "SIGNAL_ENCRYPTION_KEY"}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    from apps.lib.env_manager import read_env
+
+    env = read_env(env_path)
+    new_val = env["SIGNAL_ENCRYPTION_KEY"]
+    assert len(new_val) == 64
+    int(new_val, 16)  # valid hex
+    assert env["SIGNAL_ENCRYPTION_KEY_PREVIOUS"] == "abcd" * 16
+
+
+def test_rotate_telegram_bot_token_triggers_reload(dashboard_app, monkeypatch):
+    app, store = dashboard_app
+    from apps.server import state
+
+    monkeypatch.setattr(state, "telegram_bot", None)
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/config/rotate", json={"key": "TELEGRAM_BOT_TOKEN"}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    assert r.json()["needs_restart"] is True
+
+
+def test_reset_requires_auth(dashboard_app):
+    app, _ = dashboard_app
+    client = TestClient(app)
+    r = client.post("/api/dashboard/config/reset", json={"confirm": True}, headers=CSRF_HEADERS)
+    assert r.status_code == 401
+
+
+def test_reset_rejects_missing_csrf(dashboard_app):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/config/reset", json={"confirm": True})
+    assert r.status_code == 403
+
+
+def test_reset_requires_confirm_true(dashboard_app):
+    app, store = dashboard_app
+    client = TestClient(app)
+    _login(client, store)
+    r = client.post("/api/dashboard/config/reset", json={"confirm": False}, headers=CSRF_HEADERS)
+    assert r.status_code == 400
+
+
+def test_reset_regenerates_minimal_env(dashboard_app):
+    app, store = dashboard_app
+    env_path = app.__pinetunnel_env_path  # type: ignore[attr-defined]
+    client = TestClient(app)
+    _login(client, store)
+    # add custom keys that should be wiped
+    client.put("/api/dashboard/config", json={"updates": {"CUSTOM_KEY": "custom"}}, headers=CSRF_HEADERS)
+    assert "CUSTOM_KEY" in (env_path).read_text()
+    r = client.post("/api/dashboard/config/reset", json={"confirm": True}, headers=CSRF_HEADERS)
+    assert r.status_code == 200
+    assert "Settings reset" in r.json()["message"]
+    from apps.lib.env_manager import read_env
+
+    env = read_env(env_path)
+    assert "CUSTOM_KEY" not in env
+    assert env["HOST"] == "127.0.0.1"
+    assert env["PORT"] == "8000"
+    assert env["APP_ENV"] == "production"
+    assert len(env["WEBHOOK_SECRET"]) >= 32
+    assert len(env["JWT_SECRET"]) >= 48
+    assert len(env["ADMIN_API_KEY"]) >= 48
+    assert len(env["SIGNAL_ENCRYPTION_KEY"]) == 64
+    assert env["TELEGRAM_BOT_TOKEN"] == ""
+    assert env["TELEGRAM_ADMIN_IDS"] == ""
