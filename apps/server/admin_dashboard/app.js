@@ -2476,7 +2476,7 @@ function drawLineChart(daily) {
   }));
   const pathD = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
   const areaD = `${pathD} L ${coords[coords.length - 1].x} ${H - pad} L ${coords[0].x} ${H - pad} Z`;
-  const dots = coords.map((c, i) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="${PALETTE.green}"><title>${points[i].date}: ${points[i].rate.toFixed(1)}%</title></circle>`).join("");
+  const dots = coords.map((c, i) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="${PALETTE.green}"><title>${escapeHtml(points[i].date)}: ${escapeHtml(points[i].rate.toFixed(1))}%</title></circle>`).join("");
   const xLabels = points.map((p, i) => {
     if (i % 2 !== 0) return "";
     const d = p.date ? new Date(p.date) : null;
@@ -4139,7 +4139,7 @@ function renderLicenseRows() {
         <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(formatMaskedKey(r.license_key))}</td>
         <td>${escapeHtml(r.name || "--")}</td>
         <td class="td-email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
-        <td><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
+        <td class="td-status"><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
         <td class="secret-cell" aria-label="Secret hidden">****</td>
         <td>${escapeHtml(expires)}</td>
         <td class="td-num">${r.connected_eas}</td>
@@ -4589,7 +4589,7 @@ function renderAuditContent(content) {
       <h2 class="card-title">Admin Activity Timeline</h2>
       <div class="card-desc">${filtered.length} entries - polling every 10s</div>
       <div class="timeline" id="audit-timeline"></div>
-      ${auditState.hasMore ? `<div class="load-more-row" id="audit-load-more">Showing ${auditState.rows.length} - increase limit for more history</div>` : `<div class="load-more-row">End of log</div>`}
+      ${auditState.hasMore ? `<div class="load-more-row"><button class="btn outline sm" id="audit-load-more" type="button">Load more (showing ${auditState.rows.length})</button></div>` : `<div class="load-more-row">End of log</div>`}
     </div>
   `;
   const tl = content.querySelector("#audit-timeline");
@@ -4641,6 +4641,17 @@ function renderAuditContent(content) {
     if (toEl) toEl.value = "";
     if (searchEl) searchEl.value = "";
     renderAuditContent(content);
+  });
+  const loadMoreBtn = content.querySelector("#audit-load-more");
+  if (loadMoreBtn) loadMoreBtn.addEventListener("click", async e => {
+    e.preventDefault();
+    loadMoreBtn.disabled = true;
+    const orig = loadMoreBtn.textContent;
+    loadMoreBtn.textContent = "Loading...";
+    auditState.limit += 50;
+    await loadAuditPage(false);
+    renderAuditContent(content);
+    loadMoreBtn.disabled = false;
   });
 }
 
