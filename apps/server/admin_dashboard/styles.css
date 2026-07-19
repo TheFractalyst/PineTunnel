@@ -115,6 +115,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
+  padding-top: env(safe-area-inset-top);
 }
 .header .title { font-size: 15px; font-weight: 600; }
 .header .actions { display: flex; align-items: center; gap: 8px; }
@@ -324,6 +325,16 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 }
 .skip-link:focus { top: 12px; }
 
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 :focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
@@ -334,6 +345,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 .mobile-nav .tab:focus-visible { outline-offset: -2px; }
 .stat.clickable:focus-visible { outline-offset: 0; }
 .retry-link:focus-visible { outline-offset: 1px; }
+.skip-link:focus-visible { outline-offset: 2px; }
 
 .field { margin-bottom: 14px; }
 .field label {
@@ -517,6 +529,7 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
 .mobile-nav { display: none; }
 @media (max-width: 768px) {
   .sidebar { display: none; }
+  .grid { gap: 8px; }
   .mobile-nav {
     display: flex;
     position: fixed;
@@ -548,15 +561,30 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   .mobile-nav .tab.active { color: var(--blue); background: var(--blue-bg); }
   .mobile-nav .tab svg { width: 20px; height: 20px; }
   .content { padding: 16px; padding-bottom: 72px; }
-  .header { padding: 0 14px; }
+  .header { padding: 0 14px; padding-top: env(safe-area-inset-top); }
   .header .title { font-size: 14px; }
   .card { padding: 16px; }
+  .btn.sm { min-height: 44px; }
+  .card .btn:not(.sm) { width: 100%; }
+  .row { flex-wrap: wrap; gap: 4px 8px; }
+  .row .k { min-width: 0; word-break: break-all; overflow-wrap: anywhere; }
+  .row .v { min-width: 0; word-break: break-all; overflow-wrap: anywhere; text-align: right; flex: 1; }
   .prog-header { flex-direction: column; align-items: flex-start; gap: 10px; }
   .prog-dots { width: 100%; justify-content: center; }
   .webhook-display { flex-direction: column; }
   .webhook-url { font-size: 14px; padding: 12px 14px; }
   .webhook-display .btn { width: 100%; }
   .stat .value { font-size: 18px; }
+}
+
+@media (max-width: 480px) {
+  body { font-size: 13px; }
+  .label, .stat .label, .field label { font-size: 11px; }
+  .stat .value { font-size: 18px; }
+  .card-title { font-size: 13.5px; }
+  .card-desc { font-size: 12px; }
+  .header .title { font-size: 13.5px; }
+  .badge { font-size: 11.5px; padding: 5px 10px; }
 }
 
 @media (max-width: 375px) {
@@ -568,6 +596,6 @@ h1, h2, h3, h4, .card-title, .welcome h1, .header .title { letter-spacing: -0.01
   .header .title { font-size: 13px; }
   .step { padding: 12px; gap: 10px; }
   .step .num { width: 24px; height: 24px; font-size: 12px; }
-  .btn { padding: 8px 12px; min-height: 38px; font-size: 12.5px; }
+  .btn { padding: 8px 12px; min-height: 44px; font-size: 12.5px; }
   .btn.lg { padding: 10px 16px; min-height: 44px; font-size: 14px; }
 }
