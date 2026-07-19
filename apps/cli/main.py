@@ -405,25 +405,65 @@ def _step2_cloudflare_token(env_path: Path) -> bool:
 
 
 def _list_cf_zones() -> list:
-    try:
-        proc = subprocess.run(
-            ["cloudflared", "tunnel", "list"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except Exception:
+    """Extract API token from cert.pem and list zones via Cloudflare API."""
+    if not CF_CERT_FILE.exists():
         return []
     try:
-        cert_content = CF_CERT_FILE.read_text()
+        content = CF_CERT_FILE.read_text()
         import json as _json
-        parts = cert_content.split("-----BEGIN CERTIFICATE-----")
-        cert_json_str = parts[0].strip() if len(parts) > 1 else ""
-        if cert_json_str:
-            cert_json = _json.loads(cert_json_str)
-            zones = [z.get("Name", "") for z in cert_json.get("Zones", []) if z.get("Name")]
-            if zones:
-                return zones
+        import re as _re
+        for match in _re.finditer(r"-----BEGIN ([^-]+)-----\n(.*?)\n-----END", content, _re.DOTALL):
+            block_type = match.group(1).strip()
+            b64_content = match.group(2).strip()
+            if "CERTIFICATE" in block_type or "PRIVATE KEY" in block_type:
+                continue
+            try:
+                import base64 as _b64
+                decoded = _b64.b64decode(b64_content).decode("utf-8", errors="replace")
+                data = _json.loads(decoded)
+                api_token = data.get("apiToken") or data.get("APIToken") or ""
+                zone_id = data.get("zoneID") or data.get("ZoneID") or ""
+                if api_token:
+                    return _fetch_zones_from_api(api_token, zone_id)
+            except Exception:
+                continue
+        json_part = content.split("-----BEGIN")[0].strip()
+        if json_part:
+            data = _json.loads(json_part)
+            api_token = data.get("apiToken") or data.get("APIToken") or ""
+            zone_id = data.get("zoneID") or data.get("ZoneID") or ""
+            if api_token:
+                return _fetch_zones_from_api(api_token, zone_id)
     except Exception:
         pass
+    return []
+
+
+def _fetch_zones_from_api(api_token: str, zone_id: str) -> list:
+    """Use Cloudflare API token to list all zones, or resolve single zone."""
+    if not api_token:
+        return []
+    try:
+        import httpx
+        headers = {"Authorization": f"Bearer {api_token}"}
+        r = httpx.get("https://api.cloudflare.com/client/v4/zones?per_page=50", headers=headers, timeout=10)
+        data = r.json()
+        if data.get("success"):
+            return [z.get("name", "") for z in data.get("result", []) if z.get("name")]
+    except Exception:
+        pass
+    if zone_id:
+        try:
+            import httpx
+            headers = {"Authorization": f"Bearer {api_token}"}
+            r = httpx.get(f"https://api.cloudflare.com/client/v4/zones/{zone_id}", headers=headers, timeout=10)
+            data = r.json()
+            if data.get("success"):
+                name = data.get("result", {}).get("name", "")
+                if name:
+                    return [name]
+        except Exception:
+            pass
     return []
 
 
