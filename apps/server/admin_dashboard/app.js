@@ -399,7 +399,7 @@ const PALETTE = {
   green: "#4cb782",
   red: "#eb5757",
   amber: "#f2994a",
-  blue: "#5e6ad2",
+  blue: "#7a86dc",
   text: "#e4e4e7",
   muted: "#9a9aa3",
   muted2: "#82828b",
@@ -1189,8 +1189,8 @@ function route(id) {
       audit: "Audit Log Timeline",
     };
     document.getElementById("page-title").textContent = titles[id] || id;
-    const content = domCache.content || document.getElementById("content");
-    const actions = domCache.actions || document.getElementById("header-actions");
+    const content = document.getElementById("content");
+    const actions = document.getElementById("header-actions");
     actions.innerHTML = "";
     if (id !== "overview") overviewRendered = false;
     if (id === "overview") {
@@ -1376,7 +1376,7 @@ async function renderOverview(content, actions) {
           <div class="label">Cloudflare Tunnel</div>
           ${cfHint}
         </div>
-        <div class="stat ${init ? "ok" : "warn"}">
+        <div class="stat ${init ? "ok" : "warn"}" role="group" aria-label="Initialized: ${init ? "Yes" : "No"}">
           <div class="value">${init ? "Yes" : "No"}</div>
           <div class="label">Initialized</div>
           ${initHint}
@@ -2468,16 +2468,28 @@ let pipelineState = {
 async function pollPipeline() {
   if (currentRoute !== "pipeline" || !visibilityPolling) return;
   const [statusRes, metricsText] = await Promise.all([
-    useFetch("/api/status").catch(() => ({ data: null, error: "status" })),
+    useFetch("/api/status").catch(() => ({ data: null, error: "status", stale: false })),
     fetchMetrics(),
   ]);
   const status = statusRes.data;
   const m = metricsText;
+  const staleEl = document.getElementById("pipeline-stale-banner");
+  if (staleEl) {
+    if (statusRes.stale && status) {
+      staleEl.innerHTML = staleBanner();
+    } else if (statusRes.error && !status && m) {
+      staleEl.innerHTML = partialWarning("status endpoint unavailable");
+    } else if (!m && status) {
+      staleEl.innerHTML = partialWarning("metrics endpoint unavailable");
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
   if (!status && !m) {
     const content = domCache.content || document.getElementById("content");
     if (content) {
-      content.innerHTML = `<div class="empty"><div class="icon">${ICONS.alert}</div><div class="msg">Failed to load pipeline data</div><div class="sub">Status and metrics endpoints unavailable</div><button class="btn outline sm mt" data-action="retry-pipeline">Retry</button></div>`;
-      bindRetry(content, "retry-pipeline", () => route("pipeline"));
+      content.innerHTML = errorPanel("pipeline", "Status and metrics endpoints unavailable", "retry-pipeline");
+      bindRetryToScope("retry-pipeline", () => route("pipeline"));
     }
     return;
   }
@@ -2622,7 +2634,7 @@ function svgLineChart(values, opts = {}) {
   const gid = "grad-" + Math.random().toString(36).slice(2, 8);
   const gridLines = [0.25, 0.5, 0.75].map(g => {
     const y = pad + g * (H - pad * 2);
-    return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" stroke="rgba(255,255,255,0.05)"/>`;
+    return `<line x1="${pad}" y1="${y}" x2="${W - pad}" y2="${y}" stroke="${PALETTE.gridFaint}"/>`;
   }).join("");
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${opts.label || "chart"}">
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
