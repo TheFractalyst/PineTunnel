@@ -25,6 +25,8 @@ function prefersReducedMotion() {
   return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+let analyticsChartsAnimated = false;
+
 const panelStates = {};
 function getPanelState(id) {
   if (!panelStates[id]) {
@@ -152,7 +154,7 @@ function setFieldState(input, wrap, errMsg) {
       msgEl.setAttribute("role", "alert");
       wrap.appendChild(msgEl);
     }
-    msgEl.innerHTML = ICONS.alert + escapeHtml(errMsg);
+    msgEl.textContent = errMsg;
     input.setAttribute("aria-describedby", msgEl.id || (msgEl.id = input.id + "-err"));
   } else {
     input.classList.remove("input-error");
@@ -694,8 +696,8 @@ window.addEventListener("error", e => {
 });
 
 let healthState = { data: null, error: null, stale: false };
-let healthTimer = null;
 let healthActive = false;
+let healthPollStarted = false;
 
 function formatUptime(sec) {
   if (sec == null || isNaN(sec)) return "--";
@@ -732,6 +734,8 @@ function svgGauge(value, label, opts = {}) {
   const dash = (pct != null) ? (pct / 100) * circumference : 0;
   return `<div class="gauge-wrap">
     <svg class="gauge" viewBox="0 0 ${size} ${size}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${label}: ${display}">
+      <title>${label}: ${display}</title>
+      <desc>${label} usage is ${display}</desc>
       <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${PALETTE.gridTrack}" stroke-width="${stroke}"/>
       <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
         stroke-dasharray="${dash} ${circumference}" stroke-linecap="round"
@@ -799,17 +803,14 @@ async function fetchHealth() {
 function startHealthPolling() {
   if (!visibilityPolling) return;
   healthActive = true;
-  if (healthTimer) return;
-  fetchHealth();
-  healthTimer = setInterval(fetchHealth, POLL_INTERVAL);
+  if (healthPollStarted) return;
+  healthPollStarted = true;
+  startPoll(fetchHealth, POLL_INTERVAL);
 }
 
 function stopHealthPolling() {
   healthActive = false;
-  if (healthTimer) {
-    clearInterval(healthTimer);
-    healthTimer = null;
-  }
+  healthPollStarted = false;
 }
 
 function setTile(id, value, cls) {
@@ -1078,20 +1079,44 @@ function render() {
 }
 
 let _mobileSheetTrigger = null;
+let _mobileSheetEscape = null;
+let _mobileSheetTab = null;
 function openMobileSheet() {
   const sheet = document.getElementById("mobile-sheet");
   if (!sheet) return;
   _mobileSheetTrigger = document.activeElement;
-  sheet.classList.remove("hidden");
+  sheet.classList.remove("sheet-closing");
+  requestAnimationFrame(() => sheet.classList.add("sheet-open"));
+  _mobileSheetEscape = e => { if (e.key === "Escape") { e.preventDefault(); closeMobileSheet(); } };
+  _mobileSheetTab = e => {
+    if (e.key !== "Tab") return;
+    const focusable = _getFocusable(sheet);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first || !sheet.contains(document.activeElement)) { e.preventDefault(); last.focus(); }
+    } else {
+      if (document.activeElement === last || !sheet.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+    }
+  };
+  document.addEventListener("keydown", _mobileSheetEscape);
+  document.addEventListener("keydown", _mobileSheetTab);
   const closeBtn = sheet.querySelector("[data-action='close-sheet']");
-  if (closeBtn) closeBtn.focus();
+  if (closeBtn) setTimeout(() => closeBtn.focus(), 50);
 }
 
 function closeMobileSheet() {
   const sheet = document.getElementById("mobile-sheet");
   if (!sheet) return;
-  sheet.classList.add("hidden");
-  if (_mobileSheetTrigger) { try { _mobileSheetTrigger.focus(); } catch {} _mobileSheetTrigger = null; }
+  sheet.classList.remove("sheet-open");
+  sheet.classList.add("sheet-closing");
+  if (_mobileSheetEscape) { document.removeEventListener("keydown", _mobileSheetEscape); _mobileSheetEscape = null; }
+  if (_mobileSheetTab) { document.removeEventListener("keydown", _mobileSheetTab); _mobileSheetTab = null; }
+  setTimeout(() => {
+    sheet.classList.remove("sheet-closing");
+    if (_mobileSheetTrigger) { try { _mobileSheetTrigger.focus(); } catch {} _mobileSheetTrigger = null; }
+  }, 200);
 }
 
 document.addEventListener("visibilitychange", () => {
@@ -1200,11 +1225,9 @@ function badge(state, text, pulse = false) {
   return `<span class="badge ${cls} ${pulse ? "pulse" : ""}"><span class="dot"></span>${text}</span>`;
 }
 
-function startOverviewPoll() {
-  if (!visibilityPolling) return;
-  const t = setInterval(async () => {
-    if (currentRoute !== "overview" || !visibilityPolling) return;
-    const { data } = await useFetch(`${API}/setup-status`);
+function pollOverview() {
+  if (currentRoute !== "overview" || !visibilityPolling) return;
+  useFetch(`${API}/setup-status`).then(({ data }) => {
     if (!data) return;
     const sig = JSON.stringify(data);
     if (sig !== lastSetupStatus) {
@@ -1213,8 +1236,11 @@ function startOverviewPoll() {
       const actions = document.getElementById("header-actions");
       if (content && actions) renderOverview(content, actions);
     }
-  }, POLL_INTERVAL);
-  addPoll(t);
+  });
+}
+function startOverviewPoll() {
+  if (!visibilityPolling) return;
+  addPoll(setInterval(pollOverview, POLL_INTERVAL));
 }
 
 async function renderOverview(content, actions) {
@@ -2208,7 +2234,7 @@ async function loadEaTrades(key, container) {
           <tbody>
             ${trades.map(t => {
               const ts = t.close_time || t.open_time || t.timestamp;
-              const tsStr = ts ? new Date(ts).toLocaleString() : "--";
+              const tsStr = ts ? formatTime(ts) : "--";
               const sym = t.symbol || "--";
               const type = t.type || t.cmd || (t.entry ? (t.entry === 1 ? "sell" : "buy") : "--");
               const lots = t.volume != null ? t.volume : "--";
@@ -2257,6 +2283,7 @@ function renderTradeAnalytics(content, actions) {
     </div>
   `;
   actions.innerHTML = `${ICONS.refresh}<span>Auto-poll 15s</span>`;
+  analyticsChartsAnimated = false;
   startPoll(pollTradeAnalytics, 15000);
 }
 
@@ -2352,7 +2379,9 @@ function drawBarChart(daily, dash) {
     const x = pad + h.hour * barW + barW / 2;
     return `<text x="${x}" y="${H - pad + 14}" text-anchor="middle" fill="${PALETTE.muted2}" font-size="10">${h.hour}</text>`;
   }).join("");
-  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="Trades by hour: ${totalTrades} trades today, peak at ${peakHour.hour}:00 with ${peakHour.count} trades">
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg${analyticsChartsAnimated ? "" : " chart-entrance"}" role="img" aria-label="Trades by hour: ${totalTrades} trades today, peak at ${peakHour.hour}:00 with ${peakHour.count} trades">
+    <title>Trades by hour - ${totalTrades} total trades today</title>
+    <desc>Hourly trade volume for the last 24 hours. Peak hour: ${peakHour.hour}:00 with ${peakHour.count} trades.</desc>
     <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     ${bars}${labels}
@@ -2387,7 +2416,9 @@ function drawLineChart(daily) {
   const latestRate = points[points.length - 1].rate;
   const minRate = Math.min(...points.map(p => p.rate));
   const maxRate = Math.max(...points.map(p => p.rate));
-  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg" role="img" aria-label="7-day success rate trend: latest ${latestRate.toFixed(1)}%, average ${avgRate.toFixed(1)}%, range ${minRate.toFixed(1)}% to ${maxRate.toFixed(1)}%">
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg${analyticsChartsAnimated ? "" : " chart-entrance"}" role="img" aria-label="7-day success rate trend: latest ${latestRate.toFixed(1)}%, average ${avgRate.toFixed(1)}%, range ${minRate.toFixed(1)}% to ${maxRate.toFixed(1)}%">
+    <title>7-day success rate trend</title>
+    <desc>Daily success rate over the past 7 days. Latest: ${latestRate.toFixed(1)}%. Average: ${avgRate.toFixed(1)}%. Range: ${minRate.toFixed(1)}% to ${maxRate.toFixed(1)}%.</desc>
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${PALETTE.green}" stop-opacity="0.3"/>
       <stop offset="100%" stop-color="${PALETTE.green}" stop-opacity="0"/>
@@ -2395,7 +2426,7 @@ function drawLineChart(daily) {
     <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H - pad}" stroke="${PALETTE.grid}"/>
     <path d="${areaD}" fill="url(#${gid})"/>
-    <path d="${pathD}" fill="none" stroke="${PALETTE.green}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="${pathD}" fill="none" stroke="${PALETTE.green}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="line-path"/>
     ${dots}${xLabels}
   </svg>`;
 }
@@ -2432,7 +2463,7 @@ function drawDonutChart(stats, dash) {
     const large = frac > 0.5 ? 1 : 0;
     const path = `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${xi1} ${yi1} A ${innerR} ${innerR} 0 ${large} 0 ${xi2} ${yi2} Z`;
     const pct = (frac * 100).toFixed(1);
-    return `<path d="${path}" fill="${colors[i]}" stroke="${PALETTE.card}" stroke-width="1"><title>${escapeHtml(e.name)}: ${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</title></path>`;
+    return `<path d="${path}" fill="${colors[i]}" stroke="${PALETTE.card}" stroke-width="1" class="donut-slice"><title>${escapeHtml(e.name)}: ${escapeHtml(String(e.vol))} (${escapeHtml(pct)}%)</title></path>`;
   }).join("");
   const legend = entries.map((e, i) => {
     const pct = ((e.vol / total) * 100).toFixed(1);
@@ -2441,14 +2472,18 @@ function drawDonutChart(stats, dash) {
   const topSym = entries[0] ? entries[0].name : "none";
   const topPct = entries[0] ? ((entries[0].vol / total) * 100).toFixed(1) : "0";
   const ariaLbl = `Top symbols by volume: ${total} total trades, top symbol ${topSym} at ${topPct}%`;
+  const descParts = entries.map(e => `${e.name}: ${e.vol} (${((e.vol / total) * 100).toFixed(1)}%)`).join(", ");
   wrap.innerHTML = `<div class="donut-wrap">
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg donut-svg" role="img" aria-label="${escapeHtml(ariaLbl)}">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="chart-svg donut-svg${analyticsChartsAnimated ? "" : " chart-entrance"}" role="img" aria-label="${escapeHtml(ariaLbl)}">
+      <title>Top symbols by volume - ${total} total trades</title>
+      <desc>${escapeHtml(descParts)}</desc>
       ${slices}
       <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="${PALETTE.text}" font-size="16" font-weight="700">${total}</text>
       <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="${PALETTE.muted}" font-size="10">trades</text>
     </svg>
     <div class="legend" role="list" aria-label="Symbol legend">${legend}</div>
   </div>`;
+  analyticsChartsAnimated = true;
 }
 
 function renderPipelineMonitor(content, actions) {
@@ -2739,6 +2774,14 @@ function fmtBytes(n) {
 function fmtNum(n, digits = 0) {
   if (n == null || isNaN(n)) return "--";
   return Number(n).toFixed(digits);
+}
+
+function colorClass(c) {
+  if (c === PALETTE.green) return "c-green";
+  if (c === PALETTE.blue) return "c-blue";
+  if (c === PALETTE.amber) return "c-amber";
+  if (c === PALETTE.red) return "c-red";
+  return "c-muted";
 }
 
 function statusColor(code) {
@@ -3118,7 +3161,7 @@ function renderWebhookTable() {
   const end = Math.min(start + perPage, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty small">${webhookLogState.rows.length === 0 ? emptyState("No webhook logs yet", "Incoming TradingView webhook requests will appear here", "webhook") : '<div class="msg">No matches</div>'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty small">${webhookLogState.rows.length === 0 ? emptyState(ICONS.webhook, "No webhooks received yet.") : '<div class="msg">No matches</div>'}</td></tr>`;
   } else {
     tbody.innerHTML = shown.map(r => {
       const cls = statusColor(r.response_code);
@@ -3145,15 +3188,15 @@ function renderWebhookTable() {
   const loadMore = document.querySelector("[data-action='wl-load-more']");
   if (loadMore) loadMore.style.display = end >= rows.length ? "none" : "";
   tbody.querySelectorAll(".row-expandable").forEach(tr => {
-    tr.addEventListener("click", () => {
+    const toggle = () => {
       const tbodyEl = tr.parentElement;
       const existingOpen = tbodyEl.querySelector(".row-expanded");
       const existingSelf = tr.nextElementSibling && tr.nextElementSibling.classList.contains("row-expanded");
-      if (existingSelf) { tr.nextElementSibling.remove(); tr.classList.remove("expanded"); return; }
+      if (existingSelf) { tr.nextElementSibling.remove(); tr.classList.remove("expanded"); tr.setAttribute("aria-expanded", "false"); return; }
       if (existingOpen) {
         const prevRow = existingOpen.previousElementSibling;
         existingOpen.remove();
-        if (prevRow) prevRow.classList.remove("expanded");
+        if (prevRow) { prevRow.classList.remove("expanded"); prevRow.setAttribute("aria-expanded", "false"); }
       }
       const payload = tr.dataset.payload || "(no payload)";
       const exp = document.createElement("tr");
@@ -3167,6 +3210,11 @@ function renderWebhookTable() {
       exp.appendChild(td);
       tr.after(exp);
       tr.classList.add("expanded");
+      tr.setAttribute("aria-expanded", "true");
+    };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
     });
   });
 }
@@ -3268,7 +3316,23 @@ let errorLogState = { entries: [], paused: false, filter: "ALL", search: "" };
 
 async function pollErrorLogs() {
   if (currentRoute !== "sys-errors" || !visibilityPolling) return;
-  const { data } = await useFetch("/api/logs/errors?limit=100");
+  const { data, error, stale } = await useFetch("/api/logs/errors?limit=100");
+  const staleEl = document.getElementById("el-stale-banner");
+  if (staleEl) {
+    if (stale && data) {
+      staleEl.innerHTML = staleBanner();
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
+  if (error && !data && errorLogState.entries.length === 0) {
+    const wrap = document.getElementById("el-list");
+    if (wrap) {
+      wrap.innerHTML = errorPanel("error logs", error, "retry-sys-errors");
+      bindRetryToScope("retry-sys-errors", () => route("sys-errors"));
+    }
+    return;
+  }
   if (!data || !data.errors) return;
   const newEntries = data.errors.map(e => {
     const text = typeof e === "string" ? e : (e.message || JSON.stringify(e));
@@ -3297,7 +3361,7 @@ function renderErrorLogList() {
     entries = entries.filter(e => e.message.toLowerCase().includes(q));
   }
   if (entries.length === 0) {
-    wrap.innerHTML = `<div class="empty small"><div class="msg">No log entries</div></div>`;
+    wrap.innerHTML = emptyState(ICONS.check, "No errors logged. All systems healthy.");
     return;
   }
   wrap.innerHTML = entries.map((e, i) => {
@@ -3335,6 +3399,7 @@ function renderErrorLogList() {
 
 function renderErrorLogs(content) {
   content.innerHTML = `
+    <div id="el-stale-banner"></div>
     <div class="card">
       <h2 class="card-title">Error Log Viewer</h2>
       <div class="card-desc">Real-time log tail - polling every 10s - max 200 entries</div>
@@ -3348,7 +3413,7 @@ function renderErrorLogs(content) {
         <button class="btn outline sm" id="el-pause" data-action="el-pause">${ICONS.pause}Pause</button>
       </div>
       <div class="log-scroll-wrap" id="el-scroll">
-        <div id="el-list"></div>
+        <div id="el-list"><div class="skeleton line"></div><div class="skeleton line"></div><div class="skeleton line short"></div></div>
       </div>
     </div>
   `;
@@ -3374,7 +3439,23 @@ function renderErrorLogs(content) {
 
 async function pollDatabaseManager() {
   if (currentRoute !== "sys-database" || !visibilityPolling) return;
-  const { data } = await useFetch("/api/database/stats");
+  const { data, error, stale } = await useFetch("/api/database/stats");
+  const staleEl = document.getElementById("db-stale-banner");
+  if (staleEl) {
+    if (stale && data) {
+      staleEl.innerHTML = staleBanner();
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
+  if (error && !data) {
+    const content = domCache.content || document.getElementById("content");
+    if (content && !cache["/api/database/stats"]) {
+      content.innerHTML = errorPanel("database", error, "retry-sys-database");
+      bindRetryToScope("retry-sys-database", () => route("sys-database"));
+    }
+    return;
+  }
   if (!data) return;
   updateDatabaseUI(data);
 }
@@ -3402,6 +3483,7 @@ function updateDatabaseUI(data) {
 
 function renderDatabaseManager(content) {
   content.innerHTML = `
+    <div id="db-stale-banner"></div>
     <div class="grid grid-3">
       <div class="stat" id="db-size"><div class="value skeleton line" aria-live="polite"></div><div class="label">DB Size</div></div>
       <div class="stat" id="db-total"><div class="value skeleton line" aria-live="polite"></div><div class="label">Total Records</div></div>
@@ -3469,7 +3551,24 @@ let metricsState = { history: {}, lastValues: {} };
 async function pollMetrics() {
   if (currentRoute !== "sys-metrics" || !visibilityPolling) return;
   const text = await fetchMetrics();
-  if (!text) return;
+  const staleEl = document.getElementById("metrics-stale-banner");
+  if (staleEl) {
+    if (!text && metricsState.lastValues && Object.keys(metricsState.lastValues).length > 0) {
+      staleEl.innerHTML = staleBanner();
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
+  if (!text) {
+    if (!metricsState.lastValues || Object.keys(metricsState.lastValues).length === 0) {
+      const content = domCache.content || document.getElementById("content");
+      if (content) {
+        content.innerHTML = errorPanel("metrics", "Metrics endpoint unavailable", "retry-sys-metrics");
+        bindRetryToScope("retry-sys-metrics", () => route("sys-metrics"));
+      }
+    }
+    return;
+  }
   const specs = [
     { key: "webhook_total", name: "pinetunnel_webhook_signals_total", label: "Webhook Signals Total", color: PALETTE.green },
     { key: "ws_delivered", name: "pinetunnel_websocket_signals_delivered_total", label: "WS Signals Delivered", color: PALETTE.blue },
@@ -3522,13 +3621,17 @@ function updateMetricsUI() {
         <span class="metric-name">${s.label}</span>
         ${svgSparkline(hist, { color: s.color })}
       </div>
-      <div class="metric-value" style="color:${s.color}">${val != null ? fmtNum(val, s.digits) : "--"}</div>
+      <div class="metric-value" data-color="${escapeHtml(s.color)}" aria-live="polite" aria-label="${escapeHtml(s.label)}: ${val != null ? escapeHtml(fmtNum(val, s.digits)) : '--'}">${val != null ? escapeHtml(fmtNum(val, s.digits)) : "--"}</div>
     </div>`;
   }).join("");
+  grid.querySelectorAll(".metric-value[data-color]").forEach(el => {
+    el.style.color = el.dataset.color;
+  });
 }
 
 function renderMetrics(content) {
   content.innerHTML = `
+    <div id="metrics-stale-banner"></div>
     <div class="card">
       <h2 class="card-title">Performance Metrics</h2>
       <div class="card-desc">Prometheus metrics - polling every 10s - sparklines show last 20 samples</div>
@@ -3539,17 +3642,31 @@ function renderMetrics(content) {
       <div class="card metric-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>
     </div>
   `;
-  pollMetrics();
-  const t = setInterval(pollMetrics, 10000);
-  addPoll(t);
+  startPoll(pollMetrics, 10000);
 }
 
 async function pollDiagnostics() {
   if (currentRoute !== "sys-diag" || !visibilityPolling) return;
-  const { data, error } = await useFetch("/api/diagnostics");
+  const { data, error, stale } = await useFetch("/api/diagnostics");
+  const staleEl = document.getElementById("diag-stale-banner");
+  if (staleEl) {
+    if (stale && data) {
+      staleEl.innerHTML = staleBanner();
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
   if (error || !data) {
     const overall = document.getElementById("diag-overall");
-    if (overall) overall.innerHTML = `<div class="empty small"><div class="msg">Diagnostics unavailable</div><div class="sub">${escapeHtml(error || "")}</div></div>`;
+    if (overall) {
+      if (!cache["/api/diagnostics"]) {
+        overall.innerHTML = errorPanel("diagnostics", error, "retry-sys-diag");
+        bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
+      } else {
+        overall.innerHTML = `<div class="empty small"><div class="msg">Diagnostics unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-diag">${ICONS.refresh}Retry</button></div>`;
+        bindRetryToScope("retry-sys-diag", () => route("sys-diag"));
+      }
+    }
     return;
   }
   updateDiagnosticsUI(data);
@@ -3591,6 +3708,7 @@ function updateDiagnosticsUI(data) {
 
 function renderDiagnostics(content) {
   content.innerHTML = `
+    <div id="diag-stale-banner"></div>
     <div class="card">
       <h2 class="card-title">Overall Status</h2>
       <div class="stat big-stat" id="diag-overall"><div class="value skeleton line" aria-live="polite"></div><div class="label">Running diagnostics...</div></div>
@@ -3599,17 +3717,31 @@ function renderDiagnostics(content) {
       ${Array(8).fill('<div class="card probe-card"><div class="skeleton line"></div><div class="skeleton line short"></div></div>').join("")}
     </div>
   `;
-  pollDiagnostics();
-  const t = setInterval(pollDiagnostics, 15000);
-  addPoll(t);
+  startPoll(pollDiagnostics, 15000);
 }
 
 async function pollBotStatus() {
   if (currentRoute !== "sys-bot" || !visibilityPolling) return;
-  const { data, error } = await useFetch("/health/bot");
+  const { data, error, stale } = await useFetch("/health/bot");
+  const staleEl = document.getElementById("bot-stale-banner");
+  if (staleEl) {
+    if (stale && data) {
+      staleEl.innerHTML = staleBanner();
+    } else {
+      staleEl.innerHTML = "";
+    }
+  }
   if (error || !data) {
     const card = document.getElementById("bot-status-card");
-    if (card) card.innerHTML = `<div class="empty small"><div class="msg">Bot status unavailable</div><div class="sub">${escapeHtml(error || "")}</div></div>`;
+    if (card) {
+      if (!cache["/health/bot"]) {
+        card.innerHTML = errorPanel("bot status", error, "retry-sys-bot");
+        bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
+      } else {
+        card.innerHTML = `<div class="empty small"><div class="msg">Bot status unavailable</div><div class="sub">${escapeHtml(error || "")}</div><button class="btn outline sm mt" data-action="retry-sys-bot">${ICONS.refresh}Retry</button></div>`;
+        bindRetryToScope("retry-sys-bot", () => route("sys-bot"));
+      }
+    }
     return;
   }
   updateBotUI(data);
@@ -3644,7 +3776,7 @@ function updateBotUI(data) {
     const env = data.env || {};
     const admins = env.TELEGRAM_ADMIN_IDS || "";
     adminEl.innerHTML = `<div class="row"><span class="k">Admin IDs</span><span class="v mono">${escapeHtml(admins || "not set")}</span></div>
-      <div class="row"><span class="k">Token len</span><span class="v mono">${env.TELEGRAM_BOT_TOKEN_len || 0}</span></div>`;
+      <div class="row"><span class="k">Token len</span><span class="v mono">${escapeHtml(String(env.TELEGRAM_BOT_TOKEN_len || 0))}</span></div>`;
   }
   const usernameEl = document.getElementById("bot-username");
   if (usernameEl) {
@@ -3658,6 +3790,7 @@ function updateBotUI(data) {
 
 function renderBotStatus(content) {
   content.innerHTML = `
+    <div id="bot-stale-banner"></div>
     <div class="grid grid-2">
       <div class="card">
         <h2 class="card-title">Bot Status</h2>
@@ -3696,9 +3829,7 @@ function renderBotStatus(content) {
   `;
   const testBtn = content.querySelector("[data-action='bot-test-msg']");
   if (testBtn) testBtn.addEventListener("click", e => { e.preventDefault(); sendBotTestMessage(); });
-  pollBotStatus();
-  const t = setInterval(pollBotStatus, 15000);
-  addPoll(t);
+  startPoll(pollBotStatus, 15000);
 }
 
 async function sendBotTestMessage() {
@@ -3802,9 +3933,7 @@ async function renderLicenses(content, actions) {
   bindSortHeaders(content.querySelector("#lic-table"), licenseState.sort, renderLicenseRows);
   applySort(content.querySelector("#lic-table"), licenseState.sort);
   renderLicenseRows();
-  pollLicenses();
-  const t = setInterval(pollLicenses, 15000);
-  addPoll(t);
+  startPoll(pollLicenses, 15000);
 }
 
 function filteredLicenseRows() {
@@ -3846,7 +3975,11 @@ function filteredLicenseRows() {
 
 function pollLicenses() {
   if (currentRoute !== "licenses" || !visibilityPolling) return;
-  useFetch(`${API}/users`).then(({ data }) => {
+  useFetch(`${API}/users`).then(({ data, stale }) => {
+    const staleEl = document.getElementById("lic-stale-banner");
+    if (staleEl) {
+      staleEl.innerHTML = (stale && data) ? staleBanner() : "";
+    }
     if (!data) return;
     licenseState.rows = data.users;
     renderLicenseRows();
@@ -3870,28 +4003,32 @@ function renderLicenseRows() {
   const end = Math.min(start + pp, rows.length);
   const shown = rows.slice(start, end);
   if (shown.length === 0) {
-    body.innerHTML = `<tr><td colspan="10" class="empty small"><div class="msg">${licenseState.rows.length === 0 ? "No licenses yet" : "No matches"}</div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" class="empty small">${licenseState.rows.length === 0 ? emptyState(ICONS.license, "No licenses configured. Click 'Add License' to create one.", "Add License", "empty-add-license") : '<div class="msg">No matches</div>'}</td></tr>`;
+    if (licenseState.rows.length === 0) {
+      const btn = body.querySelector("[data-action='empty-add-license']");
+      if (btn) btn.addEventListener("click", e => { e.preventDefault(); openLicenseModal(); });
+    }
   } else {
     body.innerHTML = shown.map(r => {
       const u = r._u, lic = r._lic;
       const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "--";
       const lastAct = r.last_activity ? relativeTime(r.last_activity) : (r.total_trades > 0 ? "prior" : "never");
       return `<tr>
-        <td class="td-key" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
+        <td class="td-key" scope="row" title="${escapeHtml(r.license_key)}">${escapeHtml(maskKey(r.license_key))}</td>
         <td>${escapeHtml(r.name || "--")}</td>
         <td class="td-email" title="${escapeHtml(r.email)}">${escapeHtml(r.email || "--")}</td>
-        <td><span class="status-pill ${r.status_cls}"><span class="dot"></span>${r.status}</span></td>
-        <td class="secret-cell">****</td>
+        <td><span class="status-pill ${r.status_cls}"><span class="dot" aria-hidden="true"></span>${r.status}</span></td>
+        <td class="secret-cell" aria-label="Secret hidden">****</td>
         <td>${escapeHtml(expires)}</td>
         <td class="td-num">${r.connected_eas}</td>
         <td class="td-num">${r.total_trades}</td>
         <td>${escapeHtml(lastAct)}</td>
         <td class="td-actions">
-          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" title="Edit">${ICONS.edit}</button>
-          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" title="Extend +30d">+30d</button>
-          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" title="Force disconnect">${ICONS.power}</button>
-          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" title="Delete">${ICONS.trash}</button>
+          <button class="btn ghost sm" data-action="lic-edit" data-key="${escapeHtml(r.license_key)}" aria-label="Edit license ${escapeHtml(maskKey(r.license_key))}" title="Edit">${ICONS.edit}</button>
+          <button class="btn ghost sm" data-action="lic-extend" data-key="${escapeHtml(r.license_key)}" aria-label="Extend license ${escapeHtml(maskKey(r.license_key))} by 30 days" title="Extend +30d">+30d</button>
+          <button class="btn ghost sm" data-action="lic-toggle" data-key="${escapeHtml(r.license_key)}" data-enabled="${r.enabled ? "1" : "0"}" aria-label="${r.enabled ? "Disable" : "Enable"} license ${escapeHtml(maskKey(r.license_key))}" title="${r.enabled ? "Disable" : "Enable"}">${r.enabled ? ICONS.ban : ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-disconnect" data-key="${escapeHtml(r.license_key)}" aria-label="Force disconnect license ${escapeHtml(maskKey(r.license_key))}" title="Force disconnect">${ICONS.power}</button>
+          <button class="btn ghost sm" data-action="lic-delete" data-key="${escapeHtml(r.license_key)}" data-name="${escapeHtml(u.email || u.name || "")}" aria-label="Delete license ${escapeHtml(maskKey(r.license_key))}" title="Delete">${ICONS.trash}</button>
         </td>
       </tr>`;
     }).join("");
@@ -4088,9 +4225,7 @@ async function renderSecurity(content, actions) {
   securityState.data = rlRes.data;
   securityState.headers = hdrRes.data;
   renderSecurityContent(content);
-  pollSecurity();
-  const t = setInterval(pollSecurity, 10000);
-  addPoll(t);
+  startPoll(pollSecurity, 10000);
 }
 
 function pollSecurity() {
@@ -4185,7 +4320,7 @@ function renderSecurityContent(content) {
       <div class="card-desc">Webhook requests restricted to known TradingView egress IPs</div>
       <div class="allowlist-status">
         <div>
-          <div class="label">Status: <strong style="color:${tvAllow ? "var(--green)" : "var(--muted-2)"}">${tvAllow ? "Enabled" : "Disabled"}</strong></div>
+          <div class="label">Status: <strong class="${tvAllow ? "txt-green" : "txt-muted2"}">${tvAllow ? "Enabled" : "Disabled"}</strong></div>
           ${tvIps.length > 0 ? `<div class="ips">${tvIps.map(escapeHtml).join(", ")}</div>` : ""}
         </div>
         <span class="status-pill ${tvAllow ? "ok" : "muted"}"><span class="dot"></span>${tvAllow ? "ON" : "OFF"}</span>
@@ -4219,9 +4354,7 @@ async function renderAuditTimeline(content, actions) {
   await loadAuditPage(true);
   if (staleRender(tk)) return;
   renderAuditContent(content);
-  pollAudit();
-  const t = setInterval(pollAudit, 10000);
-  addPoll(t);
+  startPoll(pollAudit, 10000);
 }
 
 async function loadAuditPage(isInitial) {
@@ -4309,11 +4442,11 @@ function renderAuditContent(content) {
   `;
   const tl = content.querySelector("#audit-timeline");
   if (filtered.length === 0) {
-    tl.innerHTML = `<div class="empty small"><div class="msg">${auditState.rows.length === 0 ? "No audit entries" : "No matches"}</div></div>`;
+    tl.innerHTML = `${auditState.rows.length === 0 ? emptyState(ICONS.audit, "No admin actions recorded yet.") : '<div class="empty small"><div class="msg">No matches</div></div>'}`;
   } else {
     tl.innerHTML = filtered.map(a => {
       const sev = auditSeverityClass(a.action);
-      const ts = a.timestamp ? new Date(a.timestamp).toLocaleString() : "--";
+      const ts = a.timestamp ? formatTime(a.timestamp) : "--";
       const user = a.user || "unknown";
       const src = sourceBadge(a.user);
       const details = a.details ? (typeof a.details === "string" ? a.details : JSON.stringify(a.details, null, 2)) : "";
