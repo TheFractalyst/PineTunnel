@@ -171,25 +171,31 @@ def _ensure_cloudflared() -> bool:
 
 
 def _run_migrations() -> int:
-    root = _project_root()
     import importlib.util
-    alembic_ini = root / "alembic.ini"
-    if not alembic_ini.exists():
-        spec = importlib.util.find_spec("migrations")
-        if spec and spec.origin:
-            alembic_ini = Path(spec.origin).parent / "alembic.ini"
+    spec = importlib.util.find_spec("migrations")
+    if not spec or not spec.origin:
+        print("[pinetunnel] Migration warning: migrations package not found")
+        return 1
+    migrations_dir = Path(spec.origin).parent
+    alembic_ini = migrations_dir / "alembic.ini"
+    pkg_root = migrations_dir.parent
     result = subprocess.run(
         [sys.executable, "-c",
-         "import os,sys; sys.path=[p for p in sys.path if p not in ('','.',os.getcwd())]; "
+         "import os,sys; "
          "from alembic.config import Config; from alembic import command; "
          "cfg=Config(os.environ['PINETUNNEL_ALEMBIC_INI']); "
+         "cfg.set_main_option('script_location', os.environ['PINETUNNEL_SCRIPT_LOCATION']); "
          "cfg.set_main_option('sqlalchemy.url', os.environ.get('DATABASE_URL','sqlite:///pinetunnel.db')); "
          "command.upgrade(cfg, 'head')"],
-        cwd=str(root), capture_output=True, text=True, timeout=30,
-        env={**os.environ, "PINETUNNEL_ALEMBIC_INI": str(alembic_ini)},
+        cwd=str(pkg_root), capture_output=True, text=True, timeout=30,
+        env={**os.environ,
+             "PINETUNNEL_ALEMBIC_INI": str(alembic_ini),
+             "PINETUNNEL_SCRIPT_LOCATION": str(migrations_dir)},
     )
     if result.returncode != 0:
-        print(f"[pinetunnel] Migration warning: {result.stderr[:200]}")
+        print(f"[pinetunnel] Migration warning:")
+        for line in result.stderr.strip().splitlines():
+            print(f"  {line}")
     return result.returncode
 
 
