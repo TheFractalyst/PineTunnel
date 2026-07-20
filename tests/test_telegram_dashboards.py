@@ -133,3 +133,45 @@ def test_overview_screen_no_licenses(dash_module):
     text, keyboard = dash_module.overview_screen(bot)
     assert "No licenses" in text or "0" in text
     assert text.isascii()
+
+
+def test_account_screen_single_license(dash_module):
+    bot = FakeBot(clients={
+        "abcd1234efgh5678": {
+            "name": "Test Account",
+            "status": "active",
+            "expires_at": "2026-08-07",
+            "secret_key": "supersecret123",
+            "user_id": 12345,
+        }
+    })
+    bot._revealed_keys = set()
+    text, keyboard = dash_module.account_screen(bot, page=0)
+    assert "Account" in text
+    assert "abcd1234..." in text
+    assert "supersecret123" not in text
+    assert "supe****" in text
+    assert text.isascii()
+
+
+def test_account_screen_revealed_key(dash_module):
+    bot = FakeBot(clients={
+        "abcd1234efgh5678": {
+            "name": "Test",
+            "status": "active",
+            "secret_key": "supersecret123",
+            "user_id": 1,
+        }
+    })
+    bot._revealed_keys = {"abcd1234efgh5678"}
+    text, keyboard = dash_module.account_screen(bot, page=0)
+    assert "abcd1234efgh5678" in text
+    assert "supersecret123" in text
+
+
+def test_account_screen_no_licenses(dash_module):
+    bot = FakeBot()
+    bot._revealed_keys = set()
+    text, keyboard = dash_module.account_screen(bot, page=0)
+    assert "No licenses" in text
+    assert text.isascii()

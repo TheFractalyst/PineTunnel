@@ -173,3 +173,69 @@ def overview_screen(bot) -> tuple[str, list[list[InlineKeyboardButton]]]:
         [InlineKeyboardButton("Back to Menu", callback_data="nav:main")],
     ]
     return text, keyboard
+
+
+def account_screen(bot, page: int = 0) -> tuple[str, list[list[InlineKeyboardButton]]]:
+    clients = bot.client_manager.clients
+    keys = list(clients.keys())
+    total = len(keys)
+
+    if total == 0:
+        text = "Account & License\n" + SEP + "\nNo licenses found."
+        keyboard = [[InlineKeyboardButton("Back to Menu", callback_data="nav:main")]]
+        return text, keyboard
+
+    page, total_pages, start = calc_pagination(page, total, 1)
+    key = keys[start]
+    data = clients[key]
+    revealed = key in getattr(bot, "_revealed_keys", set())
+
+    name = escape_md(data.get("name", "Unknown"))
+    status = data.get("status", "unknown")
+    enabled = data.get("enabled", True)
+    if not enabled:
+        status = "disabled"
+
+    expires = data.get("expires_at", "Lifetime")
+    if expires and len(str(expires)) > 10:
+        expires = str(expires)[:10]
+
+    lic_display = key if revealed else mask_license_key(key)
+    secret = data.get("secret_key", "")
+    secret_display = secret if revealed else mask_secret(secret)
+
+    connection = data.get("connection", "unknown")
+    user_id = data.get("user_id", "N/A")
+
+    lines = [
+        f"Account & License ({page + 1}/{total_pages})",
+        SEP,
+        f"License: {lic_display}",
+        f"Name: {name}",
+        f"Secret: {secret_display}",
+        f"Status: {status} | Expires: {expires}",
+        f"Connection: {connection}",
+        f"User ID: {user_id}",
+        SEP,
+    ]
+
+    text = "\n".join(lines)
+
+    reveal_label = "Hide" if revealed else "Reveal Key"
+    secret_label = "Hide Secret" if revealed else "Reveal Secret"
+
+    keyboard = [
+        [InlineKeyboardButton(reveal_label, callback_data=f"reveal:key:{key}"),
+         InlineKeyboardButton(secret_label, callback_data=f"reveal:secret:{key}")],
+    ]
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("Prev", callback_data=f"page:account:{page - 1}"))
+    nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next", callback_data=f"page:account:{page + 1}"))
+    keyboard.append(nav)
+
+    keyboard.append([InlineKeyboardButton("Back to Menu", callback_data="nav:main")])
+    return text, keyboard
