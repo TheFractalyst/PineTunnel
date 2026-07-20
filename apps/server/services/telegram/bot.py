@@ -54,6 +54,8 @@ from .constants import (
     EXPIRY_VALUE,
     SEARCH_QUERY,
     USER_QH_INPUT,
+    WEBHOOK_URL_CONFIRM,
+    WEBHOOK_URL_INPUT,
 )
 from .helpers import CONNECTED_CLIENT_THRESHOLD_SEC, SEP, _sanitize_error, is_benign_edit_error
 from .mixins.auth import AuthMixin, DEFAULT_QUIET_HOURS
@@ -64,6 +66,7 @@ from .mixins.monitoring import MonitoringMixin
 from .mixins.settings import SettingsMixin
 from .mixins.signals import SignalMixin
 from .mixins.user_dashboard import UserDashboardMixin
+from .mixins.webhook import WebhookMixin
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,8 @@ _ADMIN_AUDIT_LOG_MODE = 0o600
 _CATCH_ALL_CB_PATTERN = re.compile(
     r"^(?!lic_add$|lic_edit_pick$|lic_expiry_pick$|lic_search$"
     r"|feat_|exp_|addconf_|editf_|edpick_|expick_|expval_"
-    r"|qh_set_(start|end)$)"
+    r"|qh_set_(start|end)$"
+    r"|set_webhook_edit$|set_webhook_confirm_)"
 )
 
 
@@ -87,6 +91,7 @@ class PineTunnelTelegramBot(
     SignalMixin,
     SettingsMixin,
     UserDashboardMixin,
+    WebhookMixin,
 ):
     """Admin-only Telegram bot for PineTunnel management."""
 
@@ -440,6 +445,24 @@ class PineTunnelTelegramBot(
             )
         )
 
+        # Webhook endpoint URL edit conversation
+        app.add_handler(
+            self._make_conversation(
+                CallbackQueryHandler(self._webhook_edit_start, pattern="^set_webhook_edit$"),
+                {
+                    WEBHOOK_URL_INPUT: [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, self._webhook_url_input)
+                    ],
+                    WEBHOOK_URL_CONFIRM: [
+                        CallbackQueryHandler(
+                            self._webhook_url_confirm, pattern="^set_webhook_confirm_(yes|no)$"
+                        )
+                    ],
+                },
+                timeout_min=5,
+            )
+        )
+
         # Catch-all callback handler (excludes conversation-owned patterns)
         app.add_handler(CallbackQueryHandler(self._cb_handler, pattern=_CATCH_ALL_CB_PATTERN))
 
@@ -564,6 +587,8 @@ class PineTunnelTelegramBot(
             await self._show_main_menu(update)
         elif data == "set_system_info":
             await self._show_system_info(update)
+        elif data == "set_webhook":
+            await self._show_webhook_screen(update)
 
         # User dashboard / settings (admin browses the user view)
         elif (

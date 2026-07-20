@@ -71,6 +71,7 @@ class MenuMixin:
             ],
             [
                 InlineKeyboardButton("ℹ️ System Info", callback_data="set_system_info"),
+                InlineKeyboardButton("🌐 Webhook", callback_data="set_webhook"),
             ],
             [
                 InlineKeyboardButton("🏠 User Dashboard", callback_data="user_menu"),

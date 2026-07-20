@@ -220,6 +220,7 @@ _ROUTER_TARGETS = [
     "_show_signal_detail",
     "_show_signals_license_picker",
     "_show_system_info",
+    "_show_webhook_screen",
     "_show_user_menu",
     "_show_user_settings",
     "_show_notif_presets",
@@ -393,6 +394,7 @@ _ROUTER_CASES = [
     # Settings
     ("set_toggle_alerts", "_show_main_menu"),
     ("set_system_info", "_show_system_info"),
+    ("set_webhook", "_show_webhook_screen"),
     # User menu / settings
     ("user_menu", "_show_user_menu"),
     ("user_settings", "_show_user_settings"),
@@ -463,3 +465,40 @@ def test_set_toggle_alerts_flips_state(bot_class, tmp_path):
     assert bot.alerts_enabled is True
     asyncio.run(bot._cb_handler(_FakeUpdate("set_toggle_alerts"), None))
     assert bot.alerts_enabled is False
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Part 3: webhook endpoint — URL validation + catch-all exclusion parity
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_validate_webhook_url_accepts_https(bot_class):
+    from apps.server.services.telegram.mixins.webhook import _validate_webhook_url
+
+    assert _validate_webhook_url("https://signals.example.com") is True
+    assert _validate_webhook_url("https://sub.domain.co/path") is True
+    assert _validate_webhook_url("https://my-tunnel.trycloudflare.com") is True
+
+
+def test_validate_webhook_url_rejects_bad(bot_class):
+    from apps.server.services.telegram.mixins.webhook import _validate_webhook_url
+
+    assert _validate_webhook_url("http://insecure.com") is False  # must be https
+    assert _validate_webhook_url("https://") is False  # too short
+    assert _validate_webhook_url("") is False
+    assert _validate_webhook_url("not a url") is False
+    assert _validate_webhook_url("https://bad space.com") is False  # whitespace
+    assert _validate_webhook_url("https://" + "a" * 201) is False  # too long
+
+
+def test_catch_all_excludes_webhook_conversation(bot_class):
+    """Conversation-owned webhook callbacks must NOT reach the catch-all router;
+    the view callback `set_webhook` MUST reach it."""
+    from apps.server.services.telegram.bot import _CATCH_ALL_CB_PATTERN as p
+
+    # Conversation-owned -> excluded (router must not claim them)
+    for owned in ("set_webhook_edit", "set_webhook_confirm_yes", "set_webhook_confirm_no"):
+        assert p.match(owned) is None, f"{owned} should be EXCLUDED from catch-all"
+    # View callback -> reaches catch-all router
+    assert p.match("set_webhook") is not None, "set_webhook should REACH catch-all"
+

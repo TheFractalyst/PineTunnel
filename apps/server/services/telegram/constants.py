@@ -25,6 +25,10 @@ SEARCH_QUERY = 70
 # User Quiet Hours time input flow
 USER_QH_INPUT = 90
 
+# Webhook endpoint URL edit flow (input -> confirm)
+WEBHOOK_URL_INPUT = 100
+WEBHOOK_URL_CONFIRM = 101
+
 # Conversation state prefixes to clean up on cancel/timeout
 CONVERSATION_CLEANUP_PREFIXES = [
     "new_lic_",

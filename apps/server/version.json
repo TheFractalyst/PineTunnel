@@ -1,15 +1,12 @@
 {
-  "version": "7.7.0",
+  "version": "7.8.0",
   "release_date": "2026-07-20",
   "changes": [
-    "Telegram bot rewritten to the reference mixin architecture (1:1 menu/dashboard)",
-    "Admin menu: Licenses CRUD, Monitor (status/connections/accounts/logs), Signals tracking, System Info",
-    "User dashboard: Account (with connection), Trading (open/closed), Signals, Kill Switch, Settings",
-    "Ported constants/helpers/keyboards + 8 mixins (auth, menu, licenses, monitoring, signals, settings, user_dashboard, conversations)",
-    "Added DB readers get_latest_open_positions/get_trade_history_for_license/get_ea_audit_for_license (sqlite + postgres)",
-    "Added constants-only services/notification.py (NOTIF_TYPES/LABELS/DEFAULT_PREFS/CRITICAL_EVENTS)",
-    "Simplified state.py TelegramBotProto (admin-only, bot-wide settings)",
-    "Removed dashboards.py; rewrote telegram tests (pure helpers + 64-case router dispatch)"
+    "Telegram: view/edit the webhook endpoint domain (SERVER_BASE_URL) from the admin menu",
+    "New 🌐 Webhook screen on the admin main menu shows active + pending URL and deploy mode",
+    "Edit flow: input -> validate -> confirm -> write .env (restart to apply); auto-detects Render (read-only + dashboard link) vs local (.env editable)",
+    "New WebhookMixin + WEBHOOK_URL_INPUT/CONFIRM conversation states",
+    "Reuses apps.lib.env_manager for atomic .env writes; audit-logs change_webhook_url"
   ],
-  "notes": "Admin-only bot: no end-user registration, Subscribe (NOWPayments), or Support (AI chat). Bot-wide settings persist to bot_settings.json."
+  "notes": "The bot edits the configured URL string only; creating/rotating the Cloudflare tunnel stays host-side. get_config is cached so edits apply after a server restart (screen shows pending vs active)."
 }
