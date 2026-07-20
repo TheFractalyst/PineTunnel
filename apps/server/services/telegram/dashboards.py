@@ -389,3 +389,155 @@ def signals_screen(bot, page: int = 0, cmd_filter: str = "all", status_filter: s
 
     keyboard.append([InlineKeyboardButton("Back to Menu", callback_data="nav:main")])
     return text, keyboard
+
+
+DEFAULT_NOTIFICATION_PREFS = {
+    "trade_opened": True,
+    "trade_closed": True,
+    "error_alerts": True,
+    "connection_changes": False,
+    "signal_received": False,
+}
+
+DEFAULT_QUIET_HOURS = {
+    "enabled": False,
+    "start": "22:00",
+    "end": "08:00",
+}
+
+_NOTIF_ITEMS = [
+    ("trade_opened", "Trade Opened"),
+    ("trade_closed", "Trade Closed"),
+    ("error_alerts", "Error Alerts"),
+    ("connection_changes", "Connection Changes"),
+    ("signal_received", "Signal Received"),
+]
+
+
+def settings_screen(bot) -> tuple[str, list[list[InlineKeyboardButton]]]:
+    prefs = getattr(bot, "notification_prefs", DEFAULT_NOTIFICATION_PREFS)
+    quiet = getattr(bot, "quiet_hours", DEFAULT_QUIET_HOURS)
+    alerts = getattr(bot, "alerts_enabled", True)
+
+    lines = ["Settings", SEP, "Notification Preferences:"]
+    for key, label in _NOTIF_ITEMS:
+        on = prefs.get(key, False)
+        mark = "[OK]" if on else "[  ]"
+        state = "ON" if on else "OFF"
+        lines.append(f"  {mark} {label:20s} - {state}")
+
+    lines.append(SEP)
+    quiet_on = quiet.get("enabled", False)
+    quiet_mark = "[OK]" if quiet_on else "[  ]"
+    quiet_state = f"ON ({quiet.get('start','?')}-{quiet.get('end','?')})" if quiet_on else "OFF"
+    lines.append(f"Quiet Hours: {quiet_mark} {quiet_state}")
+
+    lines.append(SEP)
+    alerts_mark = "[OK]" if alerts else "[  ]"
+    lines.append(f"Master Alerts: {alerts_mark} {'ON' if alerts else 'OFF'}")
+
+    text = "\n".join(lines)
+
+    def toggle_btn(key, label):
+        on = prefs.get(key, False)
+        state = "ON" if on else "OFF"
+        return InlineKeyboardButton(f"{label}: {state}", callback_data=f"toggle:{key}")
+
+    keyboard = [
+        [toggle_btn("trade_opened", "Trade Opened"), toggle_btn("trade_closed", "Trade Closed")],
+        [toggle_btn("error_alerts", "Error Alerts"), toggle_btn("connection_changes", "Conn Changes")],
+        [toggle_btn("signal_received", "Signal Received")],
+        [InlineKeyboardButton(
+            f"Quiet Hours: {'ON' if quiet_on else 'OFF'}",
+            callback_data="toggle:quiet_hours",
+        )],
+        [InlineKeyboardButton(
+            f"Alerts Master: {'ON' if alerts else 'OFF'}",
+            callback_data="toggle:alerts",
+        )],
+        [InlineKeyboardButton("Back to Menu", callback_data="nav:main")],
+    ]
+    return text, keyboard
+
+
+def admin_screen(bot) -> tuple[str, list[list[InlineKeyboardButton]]]:
+    clients = bot.client_manager.clients
+    total = len(clients)
+    active = _count_active_licenses(bot)
+    connected = _count_connected(bot)
+
+    signals_7d = 0
+    success_7d = 0
+    try:
+        interval = bot.db_manager.sql_interval_days(7)
+        rows = bot.db_manager.execute_query(
+            f"SELECT COUNT(*) as cnt_total, "
+            f"COUNT(CASE WHEN response_code = 200 THEN 1 END) as cnt_success "
+            f"FROM alert_history WHERE timestamp >= {interval}"
+        )
+        if rows:
+            signals_7d = rows[0]["cnt_total"] or 0
+            success_7d = rows[0]["cnt_success"] or 0
+    except Exception:
+        pass
+
+    failed_7d = signals_7d - success_7d
+    rate = round((success_7d / signals_7d * 100), 1) if signals_7d > 0 else 0
+
+    ws_count = 0
+    if bot.ws_manager:
+        try:
+            ws_count = len(bot.ws_manager.get_connected_license_keys())
+        except Exception:
+            pass
+
+    http_count = 0
+    from datetime import datetime
+    now = datetime.now()
+    for key, poll_data in bot.http_polling_clients.items():
+        last = poll_data.get("last_poll")
+        if last and (now - last).total_seconds() <= 60:
+            http_count += 1
+
+    lines = [
+        "Admin Panel",
+        SEP,
+        f"Total Licenses: {total}",
+        f"Active Licenses: {active}",
+        f"Connected EAs: {connected}",
+        f"Signals (7d): {signals_7d}",
+        SEP,
+        f"Signal Queue Stats (7d):",
+        f"  Total: {signals_7d} | Success: {success_7d}",
+        f"  Failed: {failed_7d} | Rate: {rate}%",
+        SEP,
+        f"EA Connections:",
+        f"  WebSocket: {ws_count} | HTTP Polling: {http_count}",
+        SEP,
+    ]
+
+    try:
+        from apps.server.middleware.main import failed_attempt_tracker
+        from apps.server.state import rate_limiter
+        blocked = []
+        if failed_attempt_tracker is not None:
+            fa = failed_attempt_tracker.get_statistics()
+            for entry in fa.get("blocked_ips", []):
+                blocked.append(f"  {entry['ip']} (failed auth, {entry['remaining_seconds']}s left)")
+        if rate_limiter is not None:
+            import time as _time
+            for ip, until in rate_limiter.blocked_ips.items():
+                remaining = max(0, int(until - _time.time()))
+                blocked.append(f"  {ip} (rate limit, {remaining}s left)")
+        lines.append(f"Blocked IPs: {len(blocked)}")
+        lines.extend(blocked[:10])
+    except Exception:
+        lines.append("Blocked IPs: N/A")
+
+    text = "\n".join(lines)
+    keyboard = [
+        [InlineKeyboardButton("Refresh", callback_data="refresh:admin"),
+         InlineKeyboardButton("Security", callback_data="nav:security")],
+        [InlineKeyboardButton("Back to Menu", callback_data="nav:main")],
+    ]
+    return text, keyboard

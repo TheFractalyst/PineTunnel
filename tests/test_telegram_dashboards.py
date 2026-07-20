@@ -216,3 +216,32 @@ def test_signals_screen_empty(dash_module):
     text, keyboard = dash_module.signals_screen(bot, page=0)
     assert "No signals" in text
     assert text.isascii()
+
+
+def test_settings_screen_defaults(dash_module):
+    bot = FakeBot()
+    bot.alerts_enabled = True
+    bot.notification_prefs = {
+        "trade_opened": True, "trade_closed": True, "error_alerts": True,
+        "connection_changes": False, "signal_received": False,
+    }
+    bot.quiet_hours = {"enabled": False, "start": "22:00", "end": "08:00"}
+    text, keyboard = dash_module.settings_screen(bot)
+    assert "Settings" in text
+    assert "ON" in text
+    assert "OFF" in text
+    assert text.isascii()
+    assert any("toggle:trade_opened" in (b.callback_data or "") for row in keyboard for b in row)
+
+
+def test_admin_screen_basic(dash_module):
+    bot = FakeBot(clients={
+        "k1": {"status": "active"},
+        "k2": {"status": "active"},
+        "k3": {"status": "disabled"},
+    })
+    text, keyboard = dash_module.admin_screen(bot)
+    assert "Admin Panel" in text
+    assert "Total Licenses" in text
+    assert "3" in text
+    assert text.isascii()
