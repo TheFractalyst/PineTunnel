@@ -1,10 +1,12 @@
 {
-  "version": "7.8.1",
+  "version": "7.8.2",
   "release_date": "2026-07-20",
   "changes": [
-    "fix(telegram): webhook screen .env locator used __file__ parents (resolves to site-packages when pip-installed) -> now CWD-based via apps.lib.env_manager.find_env_path, matching the CLI/start_daemon convention (cwd=project root)",
-    "fix(telegram): webhook screen no longer shows contradictory 'Local (.env)' + '.env not found'; distinct 'Environment variables (no .env found)' mode with no edit button when no .env is present",
-    "Added apps.lib.env_manager.find_env_path (shared with CLI _find_env_path) + regression tests"
+    "feat(telegram): webhook URL change now hot-reloads live config on confirm — no restart needed",
+    "On confirm: writes .env, syncs os.environ, and calls reset_config_singleton() so get_config() returns the new URL immediately (single-worker deployments = fully applied)",
+    "Webhook screen mode line: 'Local (.env) — applies on save' (was 'restart to apply')",
+    "Success message: 'Live now — no restart needed' (was 'Restart the server to apply')",
+    "No restart button added (per design); apply is automatic on save"
   ],
-  "notes": "Patch to 7.8.0: the 🌐 Webhook edit button was missing and the screen reported '.env not found' for pip-installed deployments because the .env path was derived from the package install location instead of the runtime CWD."
+  "notes": "Closes the pending-restart gap from 7.8.0/7.8.1: editing the webhook URL from Telegram now takes effect immediately. Multi-worker caveat: only the bot's worker hot-reloads, but .env holds the new value for any later full restart. The user runs single-worker (default), so changes are fully live on confirm."
 }

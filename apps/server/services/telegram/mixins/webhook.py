@@ -22,7 +22,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.helpers import escape_markdown as _escape_md
 
 from apps.lib.env_manager import find_env_path, read_env, write_env_updates
-from apps.server.config.settings import get_config
+from apps.server.config.settings import get_config, reset_config_singleton
 from ..constants import WEBHOOK_URL_CONFIRM, WEBHOOK_URL_INPUT
 from ..helpers import SEP, is_benign_edit_error
 
@@ -69,7 +69,7 @@ class WebhookMixin:
         if is_render:
             mode_line = "Mode: Render (dashboard-managed)"
         elif env_exists:
-            mode_line = "Mode: Local (`.env`) — restart to apply"
+            mode_line = "Mode: Local (`.env`) — applies on save"
         else:
             mode_line = "Mode: Environment variables (no `.env` found)"
 
@@ -223,19 +223,41 @@ class WebhookMixin:
                     logger.debug("Failed to edit webhook write-failure message: %s", e2)
             return ConversationHandler.END
 
+        # Hot-reload: Settings reads os.environ at instantiation, so sync the live
+        # env var alongside .env, then clear the cached singleton. The next
+        # get_config() re-reads os.environ and the new URL is live immediately —
+        # no restart. (Single-worker deployments — the default — are fully applied;
+        # with multiple workers only this worker updates, so .env still holds the
+        # new value for any later full restart.)
+        applied = old_url
+        try:
+            os.environ["SERVER_BASE_URL"] = new_url
+            reset_config_singleton()
+            applied = get_config().server.base_url
+        except Exception as e:
+            logger.error("Hot-reload of SERVER_BASE_URL failed: %s", e, exc_info=True)
+
         await self._log_admin_action(
             user_id=update.effective_user.id,
             username=update.effective_user.username,
             action="change_webhook_url",
-            details={"old": old_url, "new": new_url},
+            details={"old": old_url, "new": new_url, "applied_live": applied == new_url},
         )
+
+        if applied == new_url:
+            body = (
+                f"Active: `{_escape_md(new_url, version=1)}`\n\n"
+                "Live now — no restart needed."
+            )
+        else:
+            body = (
+                f"New: `{_escape_md(new_url, version=1)}`\n\n"
+                "Hot-reload failed — restart the server to apply."
+            )
 
         try:
             await query.edit_message_text(
-                "✅ *Webhook URL saved*\n"
-                f"{SEP}\n"
-                f"New: `{_escape_md(new_url, version=1)}`\n\n"
-                "Restart the server to apply (until then the active URL is unchanged).",
+                "✅ *Webhook URL applied*\n" f"{SEP}\n" f"{body}",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("🌐 Back to Webhook", callback_data="set_webhook")]]

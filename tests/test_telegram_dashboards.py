@@ -581,3 +581,114 @@ def test_webhook_screen_no_env_coherent_message(bot_class, tmp_path, monkeypatch
     assert not any("Change URL" in b for b in btns), btns
 
 
+def test_webhook_confirm_hot_reloads_live_config(monkeypatch, tmp_path):
+    """Confirming a new webhook URL hot-reloads the running config: the new URL
+    is live immediately (os.environ sync + reset_config_singleton), no restart.
+
+    Uses the REAL apps.server.config.settings (not stubbed) so the cache reset
+    is exercised end-to-end; only telegram + heavy route/ws/analytics deps are
+    stubbed so the bot imports cleanly.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    # Stub telegram + heavy deps; keep apps.server.config.settings REAL.
+    for name in (
+        "telegram",
+        "telegram.helpers",
+        "telegram.constants",
+        "telegram.ext",
+        "telegram.error",
+    ):
+        monkeypatch.setitem(sys.modules, name, MagicMock())
+    # escape_markdown must be a real identity so escaped URLs render as strings.
+    sys.modules["telegram.helpers"].escape_markdown = lambda s, version=1: str(s)
+    monkeypatch.setitem(sys.modules, "apps.server.routes", types.ModuleType("apps.server.routes"))
+    monkeypatch.setitem(sys.modules, "apps.server.routes.ea_download", MagicMock())
+    monkeypatch.setitem(sys.modules, "apps.server.db.analytics_store", MagicMock())
+    monkeypatch.setitem(sys.modules, "apps.server.ws.handler", MagicMock())
+    # Force a clean re-import of the telegram package + settings so webhook binds
+    # to the REAL settings module (not a stub left over from another test).
+    for k in list(sys.modules):
+        if k.startswith("apps.server.services.telegram") or k == "apps.server.config.settings":
+            sys.modules.pop(k, None)
+
+    from apps.server.config.settings import get_config, reset_config_singleton
+    from apps.server.services.telegram import PineTunnelTelegramBot
+
+    proj = (tmp_path / "proj").resolve()
+    proj.mkdir()
+    (proj / "pyproject.toml").write_text("[tool.x]\n")
+    (proj / ".env").write_text("SERVER_BASE_URL=https://old.example.com\nOTHER_KEY=keepme\n")
+    monkeypatch.chdir(proj)
+    monkeypatch.setenv("SERVER_BASE_URL", "https://old.example.com")
+    monkeypatch.delenv("RENDER", raising=False)
+    reset_config_singleton()
+    assert get_config().server.base_url == "https://old.example.com"
+
+    class FakeCM:
+        clients = {"k1": {"status": "active"}}
+
+        def get_client_by_license(self, k):
+            return self.clients.get(k)
+
+    class FakeQuery:
+        def __init__(self, data):
+            self.data = data
+            self.message = MagicMock()
+
+        async def answer(self, *a, **k):
+            pass
+
+        last = None
+
+        async def edit_message_text(self, text, **k):
+            FakeQuery.last = (text, k.get("reply_markup"))
+            return None
+
+    def msg_update(txt):
+        u = MagicMock()
+        u.message.text = txt
+        u.message.reply_text = AsyncMock()
+        u.effective_user = MagicMock(id=1, username="admin")
+        u.effective_chat = MagicMock(id=1)
+        return u
+
+    class CbUpdate:
+        def __init__(self, data):
+            self.callback_query = FakeQuery(data)
+            self.effective_user = MagicMock(id=1, username="admin")
+            self.effective_chat = MagicMock(id=1)
+
+    bot = PineTunnelTelegramBot(
+        token="t",
+        admin_ids=[1],
+        client_manager=FakeCM(),
+        db_manager=MagicMock(),
+        data_dir=str(proj),
+        http_polling_clients={},
+        signal_queues={},
+    )
+
+    # input -> confirm state
+    assert asyncio.run(bot._webhook_url_input(msg_update("https://new.example.com"), MagicMock())) == 101
+    ctx = MagicMock()
+    ctx.user_data = {"webhook_new_url": "https://new.example.com"}
+    asyncio.run(bot._webhook_url_confirm(CbUpdate("set_webhook_confirm_yes"), ctx))
+
+    # THE KEY ASSERTION: new URL is live immediately, no restart.
+    assert get_config().server.base_url == "https://new.example.com"
+    # Success message says it's live; no restart prompt.
+    text, _ = FakeQuery.last
+    assert "Live now" in text
+    assert "https://new.example.com" in text
+    assert "Restart the server" not in text
+    # .env persisted + other key preserved.
+    from apps.lib.env_manager import find_env_path, read_env
+
+    env = read_env(find_env_path())
+    assert env.get("SERVER_BASE_URL") == "https://new.example.com"
+    assert env.get("OTHER_KEY") == "keepme"
+
+
+
