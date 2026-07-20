@@ -1,12 +1,10 @@
 {
-  "version": "7.8.0",
+  "version": "7.8.1",
   "release_date": "2026-07-20",
   "changes": [
-    "Telegram: view/edit the webhook endpoint domain (SERVER_BASE_URL) from the admin menu",
-    "New 🌐 Webhook screen on the admin main menu shows active + pending URL and deploy mode",
-    "Edit flow: input -> validate -> confirm -> write .env (restart to apply); auto-detects Render (read-only + dashboard link) vs local (.env editable)",
-    "New WebhookMixin + WEBHOOK_URL_INPUT/CONFIRM conversation states",
-    "Reuses apps.lib.env_manager for atomic .env writes; audit-logs change_webhook_url"
+    "fix(telegram): webhook screen .env locator used __file__ parents (resolves to site-packages when pip-installed) -> now CWD-based via apps.lib.env_manager.find_env_path, matching the CLI/start_daemon convention (cwd=project root)",
+    "fix(telegram): webhook screen no longer shows contradictory 'Local (.env)' + '.env not found'; distinct 'Environment variables (no .env found)' mode with no edit button when no .env is present",
+    "Added apps.lib.env_manager.find_env_path (shared with CLI _find_env_path) + regression tests"
   ],
-  "notes": "The bot edits the configured URL string only; creating/rotating the Cloudflare tunnel stays host-side. get_config is cached so edits apply after a server restart (screen shows pending vs active)."
+  "notes": "Patch to 7.8.0: the 🌐 Webhook edit button was missing and the screen reported '.env not found' for pip-installed deployments because the .env path was derived from the package install location instead of the runtime CWD."
 }

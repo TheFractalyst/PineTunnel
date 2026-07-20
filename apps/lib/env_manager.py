@@ -33,6 +33,26 @@ def read_env(path: Path) -> dict[str, str]:
     return result
 
 
+def find_env_path() -> Path:
+    """Locate the project ``.env`` by walking up from the current working directory.
+
+    Returns ``<dir>/.env`` for the first directory containing ``.env`` or
+    ``pyproject.toml``; falls back to ``CWD/.env``. This is CWD-based (not
+    ``__file__``-based) so it resolves correctly whether PineTunnel runs from the
+    source tree or is pip-installed — the CLI launcher (``apps.lib.service.
+    start_daemon``) sets ``cwd=<project root>`` and injects ``.env`` vars into
+    ``os.environ`` before starting the server, so CWD is the project root at
+    runtime. Mirrors ``apps.cli.main._find_env_path``.
+    """
+    p = Path.cwd()
+    while p != p.parent:
+        if (p / ".env").exists() or (p / "pyproject.toml").exists():
+            return p / ".env"
+        p = p.parent
+    return Path.cwd() / ".env"
+
+
+
 def write_env_updates(path: Path, updates: dict[str, str]) -> None:
     current = read_env(path)
     current.update(updates)

@@ -502,3 +502,82 @@ def test_catch_all_excludes_webhook_conversation(bot_class):
     # View callback -> reaches catch-all router
     assert p.match("set_webhook") is not None, "set_webhook should REACH catch-all"
 
+
+def test_find_env_path_walks_cwd_to_project_root(monkeypatch, tmp_path):
+    """The webhook .env locator must be CWD-based (not __file__-based) so it works
+    when the package is pip-installed and __file__ lives in site-packages."""
+    from apps.lib.env_manager import find_env_path
+
+    proj = (tmp_path / "proj").resolve()
+    proj.mkdir()
+    (proj / "pyproject.toml").write_text("[tool.x]\n")
+    (proj / ".env").write_text("SERVER_BASE_URL=https://example.com\n")
+    monkeypatch.chdir(proj)
+    found = find_env_path().resolve()
+    assert found == proj / ".env"
+    assert found.exists()
+
+
+def test_find_env_path_finds_env_without_pyproject(monkeypatch, tmp_path):
+    """If a dir has .env but no pyproject.toml, find_env_path still returns it."""
+    from apps.lib.env_manager import find_env_path
+
+    d = (tmp_path / "plain").resolve()
+    d.mkdir()
+    (d / ".env").write_text("X=1\n")
+    monkeypatch.chdir(d)
+    assert find_env_path().resolve() == d / ".env"
+
+
+def test_webhook_screen_no_env_coherent_message(bot_class, tmp_path, monkeypatch):
+    """When not on Render and no .env is found, the screen must NOT show the
+    contradictory 'Local (.env)' + '.env not found' — it shows the 'no .env found'
+    mode line and no edit button."""
+    import os
+    from unittest.mock import MagicMock, AsyncMock
+    from apps.server.services.telegram import PineTunnelTelegramBot
+    from apps.server.services.telegram.mixins import webhook as wh
+
+    empty = (tmp_path / "empty").resolve()
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+    monkeypatch.setenv("SERVER_BASE_URL", "https://pine.deeptest.pro")
+    monkeypatch.delenv("RENDER", raising=False)
+
+    class FakeCM:
+        clients = {"k1": {"status": "active"}}
+        def get_client_by_license(self, k):
+            return self.clients.get(k)
+
+    class FakeQuery:
+        def __init__(self, data):
+            self.data = data
+            self.message = MagicMock()
+        async def answer(self, *a, **k):
+            pass
+        last = None
+        async def edit_message_text(self, text, **k):
+            FakeQuery.last = (text, k.get("reply_markup"))
+            return None
+
+    class CbUpdate:
+        def __init__(self, data):
+            self.callback_query = FakeQuery(data)
+            self.effective_user = MagicMock(id=1, username="admin")
+            self.effective_chat = MagicMock(id=1)
+
+    bot = PineTunnelTelegramBot(
+        token="t", admin_ids=[1], client_manager=FakeCM(), db_manager=MagicMock(),
+        data_dir=str(tmp_path), http_polling_clients={}, signal_queues={},
+    )
+    import asyncio
+    asyncio.run(bot._show_webhook_screen(CbUpdate("set_webhook")))
+    text, markup = FakeQuery.last
+    # No contradiction: 'Local (.env)' must NOT appear when .env is missing
+    assert "Local" not in text, f"should not claim Local mode with no .env: {text}"
+    assert "no `.env` found" in text.lower() or "not found" in text.lower(), text
+    # No edit button when not editable
+    btns = [b.text for row in (markup.inline_keyboard if markup else []) for b in row]
+    assert not any("Change URL" in b for b in btns), btns
+
+

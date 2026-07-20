@@ -21,7 +21,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.helpers import escape_markdown as _escape_md
 
-from apps.lib.env_manager import read_env, write_env_updates
+from apps.lib.env_manager import find_env_path, read_env, write_env_updates
 from apps.server.config.settings import get_config
 from ..constants import WEBHOOK_URL_CONFIRM, WEBHOOK_URL_INPUT
 from ..helpers import SEP, is_benign_edit_error
@@ -48,8 +48,9 @@ class WebhookMixin:
 
     @staticmethod
     def _env_path() -> Path:
-        # apps/server/services/telegram/mixins/webhook.py -> parents[5] = project root.
-        return Path(__file__).resolve().parents[5] / ".env"
+        # CWD-based (not __file__-based) so it resolves correctly when the package
+        # is pip-installed: start_daemon sets cwd=project root at runtime.
+        return find_env_path()
 
     @staticmethod
     def _is_render_env() -> bool:
@@ -65,11 +66,12 @@ class WebhookMixin:
 
         pending = read_env(env_path).get("SERVER_BASE_URL", "") if env_exists else ""
 
-        mode_line = (
-            "Mode: Render (dashboard-managed)"
-            if is_render
-            else "Mode: Local (`.env`) — restart to apply"
-        )
+        if is_render:
+            mode_line = "Mode: Render (dashboard-managed)"
+        elif env_exists:
+            mode_line = "Mode: Local (`.env`) — restart to apply"
+        else:
+            mode_line = "Mode: Environment variables (no `.env` found)"
 
         text = (
             "🌐 *Webhook Endpoint*\n"
@@ -82,9 +84,12 @@ class WebhookMixin:
             text += f"⏳ Pending restart: `{_escape_md(pending, version=1)}`\n"
         text += f"{mode_line}\n"
         if is_render:
-            text += "Edit SERVER_BASE_URL in the Render dashboard.\n"
+            text += "Edit `SERVER_BASE_URL` in the Render dashboard.\n"
         elif not env_exists:
-            text += f"`.env` not found — set `SERVER_BASE_URL` in your environment.\n"
+            text += (
+                "No `.env` found — run `pinetunnel` from your project dir, "
+                "or set `SERVER_BASE_URL` in your environment.\n"
+            )
 
         keyboard: list[list[InlineKeyboardButton]] = []
         if editable:
