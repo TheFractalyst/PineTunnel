@@ -1,13 +1,15 @@
 {
-  "version": "7.4.5",
-  "release_date": "2026-07-18",
+  "version": "7.7.0",
+  "release_date": "2026-07-20",
   "changes": [
-    "Cloudflare remotely-managed tunnel flow (Cloudflare-recommended)",
-    "Removed deprecated locally-managed OAuth tunnel flow",
-    "Default subdomain changed from webhook to pinetunnel",
-    "New CLI flags: --tunnel-token, --tunnel-url",
-    "Fix: quick tunnel process now detaches properly on Windows (survives SSH/session close)",
-    "Fix: use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues on Windows"
+    "Telegram bot rewritten to the reference mixin architecture (1:1 menu/dashboard)",
+    "Admin menu: Licenses CRUD, Monitor (status/connections/accounts/logs), Signals tracking, System Info",
+    "User dashboard: Account (with connection), Trading (open/closed), Signals, Kill Switch, Settings",
+    "Ported constants/helpers/keyboards + 8 mixins (auth, menu, licenses, monitoring, signals, settings, user_dashboard, conversations)",
+    "Added DB readers get_latest_open_positions/get_trade_history_for_license/get_ea_audit_for_license (sqlite + postgres)",
+    "Added constants-only services/notification.py (NOTIF_TYPES/LABELS/DEFAULT_PREFS/CRITICAL_EVENTS)",
+    "Simplified state.py TelegramBotProto (admin-only, bot-wide settings)",
+    "Removed dashboards.py; rewrote telegram tests (pure helpers + 64-case router dispatch)"
   ],
-  "notes": "CLI-only change - no server or EA logic changes"
+  "notes": "Admin-only bot: no end-user registration, Subscribe (NOWPayments), or Support (AI chat). Bot-wide settings persist to bot_settings.json."
 }

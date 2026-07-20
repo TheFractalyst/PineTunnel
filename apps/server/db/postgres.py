@@ -1120,6 +1120,58 @@ class PostgresDatabaseManager(DatabaseBase):
             ") b ON a.license_key = b.license_key AND a.timestamp = b.max_ts"
         )
 
+    # ------------------------------------------------------------------
+    # User Dashboard Queries — read-only queries for the Telegram bot user
+    # dashboard. All return list[dict] or None.
+    # ------------------------------------------------------------------
+
+    def get_latest_open_positions(self, license_key: str) -> list[dict[str, Any]]:
+        """Return the most recent snapshot of open positions for a license.
+
+        Positions are deduplicated by ticket (latest snapshot wins).
+        Returns list of dicts with: ticket, symbol, type, volume, open_price,
+        current_price, sl, tp, profit, swap, commission, magic, comment, open_time.
+        """
+        return self.execute_query(
+            "SELECT DISTINCT ON (ticket) "
+            "ticket, symbol, type, volume, open_price, current_price, "
+            "sl, tp, profit, swap, commission, magic, comment, open_time "
+            "FROM ws_open_positions "
+            "WHERE license_key = :lk "
+            "ORDER BY ticket DESC, timestamp DESC",
+            {"lk": license_key},
+        )
+
+    def get_trade_history_for_license(
+        self, license_key: str, limit: int = 20, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Return recent closed trade history for a license (newest first).
+
+        Returns list of dicts with: ticket, symbol, type, volume, open_price,
+        close_price, sl, tp, profit, swap, commission, fee, magic, comment,
+        open_time, close_time, entry, reason, position_id.
+        """
+        return self.execute_query(
+            "SELECT ticket, symbol, type, volume, open_price, close_price, "
+            "sl, tp, profit, swap, commission, fee, magic, comment, "
+            "open_time, close_time, entry, reason, position_id "
+            "FROM ws_trade_history "
+            "WHERE license_key = :lk "
+            "ORDER BY open_time DESC NULLS LAST LIMIT :lim OFFSET :off",
+            {"lk": license_key, "lim": limit, "off": offset},
+        )
+
+    def get_ea_audit_for_license(self, license_key: str) -> dict[str, Any] | None:
+        """Return the most recent EA audit record for a license.
+
+        Returns a dict with all ea_audit fields, or None if no records exist.
+        """
+        rows = self.execute_query(
+            "SELECT * FROM ea_audit WHERE license_key = :lk ORDER BY timestamp DESC LIMIT 1",
+            {"lk": license_key},
+        )
+        return dict(rows[0]) if rows else None
+
     def _update_symbol_performance(self, symbol: str):
         """Update symbol performance metrics after a trade."""
         if not symbol:

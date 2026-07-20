@@ -857,6 +857,39 @@ class SqliteDatabaseManager(DatabaseBase):
             )
             self._conn.commit()
 
+    def get_ea_audit_for_license(self, license_key: str) -> dict[str, Any] | None:
+        """Return the most recent EA audit record for a license (JSON blob)."""
+        row = self._conn.execute(
+            "SELECT data FROM ea_audit WHERE license_key = ?", (license_key,)
+        ).fetchone()
+        return json.loads(row["data"]) if row else None
+
+    def get_latest_open_positions(self, license_key: str) -> list[dict[str, Any]]:
+        """Return the most recent snapshot of open positions for a license."""
+        row = self._conn.execute(
+            "SELECT data FROM ws_open_positions WHERE license_key = ?", (license_key,)
+        ).fetchone()
+        return json.loads(row["data"]) if row else []
+
+    def get_trade_history_for_license(
+        self, license_key: str, limit: int = 20, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Return recent closed trade history for a license (newest first)."""
+        row = self._conn.execute(
+            "SELECT data FROM ws_trade_history WHERE license_key = ?", (license_key,)
+        ).fetchone()
+        if not row:
+            return []
+        try:
+            deals = json.loads(row["data"])
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(deals, list):
+            return []
+        # Sort by close_time descending (newest first), then paginate
+        deals.sort(key=lambda d: d.get("close_time", d.get("time", "")), reverse=True)
+        return deals[offset : offset + limit]
+
     def cleanup_ws_telemetry(
         self,
         stats_days: int = 0,

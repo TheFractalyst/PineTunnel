@@ -1,258 +1,465 @@
-"""Tests for Telegram dashboard formatting helpers.
+"""Tests for the ported Telegram bot (mixin architecture, admin-only).
 
-The telegram package is not installed in test env, so we stub minimal
-imports and test the pure-function helpers in dashboards.py.
+Part 1 — pure-function helpers / constants / notification constants.
+Part 2 — callback-router dispatch: stubs ``telegram`` and the heavy app deps
+         (``apps.server.db.analytics_store``, ``apps.server.ws.handler``,
+         ``apps.server.routes.ea_download``, ``apps.server.config.settings``)
+         with ``MagicMock``, imports the bot, monkeypatches every router
+         dispatch target to an async recorder, and asserts each keyboard
+         callback prefix reaches the intended handler (never the "unhandled"
+         warning).
+
+``python-telegram-bot`` is not installed in the test env, so telegram is stubbed.
 """
 
+import asyncio
 import importlib.util
 import sys
 import types
+from unittest.mock import MagicMock
 
 import pytest
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Part 1: pure-function helpers / constants / notification
+# ──────────────────────────────────────────────────────────────────────────
+
+
 @pytest.fixture
-def dash_module():
-    """Load dashboards.py with stubbed telegram imports."""
+def helpers_module():
+    """Load helpers.py with a stubbed telegram.helpers.escape_markdown (identity)."""
     tg = types.ModuleType("telegram")
     tg.helpers = types.ModuleType("telegram.helpers")
-    tg.helpers.escape_markdown = lambda s, version=1: s
-    class _StubButton:
-        def __init__(self, text, callback_data=None, **kwargs):
-            self.text = text
-            self.callback_data = callback_data
-    tg.InlineKeyboardButton = _StubButton
+    tg.helpers.escape_markdown = lambda s, version=1: str(s)
     sys.modules["telegram"] = tg
     sys.modules["telegram.helpers"] = tg.helpers
 
     spec = importlib.util.spec_from_file_location(
-        "_dashboards_test",
-        "apps/server/services/telegram/dashboards.py",
+        "_tg_helpers_test", "apps/server/services/telegram/helpers.py"
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     yield mod
 
-    for k in ("telegram", "telegram.helpers", "_dashboards_test"):
+    for k in ("telegram", "telegram.helpers", "_tg_helpers_test"):
         sys.modules.pop(k, None)
 
 
-def test_mask_license_key_long(dash_module):
-    assert dash_module.mask_license_key("abcd1234efgh5678") == "abcd1234..."
+def test_helpers_sep_is_box_drawing(helpers_module):
+    # Reference uses the heavy box-drawing bar, not an ASCII hyphen.
+    assert helpers_module.SEP == "━" * 20
+    assert len(helpers_module.SEP) == 20
 
 
-def test_mask_license_key_short(dash_module):
-    assert dash_module.mask_license_key("abc") == "abc..."
+def test_helpers_calc_pagination_basic(helpers_module):
+    page, total_pages, start = helpers_module.calc_pagination(0, 42, 8)
+    assert (page, total_pages, start) == (0, 6, 0)
 
 
-def test_mask_license_key_empty(dash_module):
-    assert dash_module.mask_license_key("") == "****"
+def test_helpers_calc_pagination_last_page(helpers_module):
+    page, total_pages, start = helpers_module.calc_pagination(5, 42, 8)
+    assert (page, total_pages, start) == (5, 6, 40)
 
 
-def test_mask_secret_long(dash_module):
-    assert dash_module.mask_secret("abcd123456") == "abcd****"
+def test_helpers_calc_pagination_clamps_negative(helpers_module):
+    page, _tp, start = helpers_module.calc_pagination(-1, 42, 8)
+    assert (page, start) == (0, 0)
 
 
-def test_mask_secret_short(dash_module):
-    assert dash_module.mask_secret("ab") == "ab****"
+def test_helpers_calc_pagination_empty(helpers_module):
+    page, total_pages, start = helpers_module.calc_pagination(0, 0, 8)
+    assert (page, total_pages, start) == (0, 1, 0)
 
 
-def test_mask_secret_empty(dash_module):
-    assert dash_module.mask_secret("") == "****"
+def test_helpers_validate_email(helpers_module):
+    assert helpers_module.validate_email("user@example.com") is True
+    assert helpers_module.validate_email("not-an-email") is False
+    assert helpers_module.validate_email("") is False
 
 
-def test_calc_pagination_basic(dash_module):
-    page, total_pages, start = dash_module.calc_pagination(0, 42, 8)
-    assert page == 0
-    assert total_pages == 6
-    assert start == 0
+def test_helpers_validate_volume(helpers_module):
+    assert helpers_module.validate_volume("0.10") == 0.10
+    assert helpers_module.validate_volume("-1") is None  # negative
+    assert helpers_module.validate_volume("notanumber") is None
+    assert helpers_module.validate_volume("99999") is None  # > 10000
 
 
-def test_calc_pagination_last_page(dash_module):
-    page, total_pages, start = dash_module.calc_pagination(5, 42, 8)
-    assert page == 5
-    assert total_pages == 6
-    assert start == 40
+def test_helpers_validate_symbols(helpers_module):
+    assert helpers_module.validate_symbols("25") == 25
+    assert helpers_module.validate_symbols("0") is None
+    assert helpers_module.validate_symbols("abc") is None
 
 
-def test_calc_pagination_clamps_negative(dash_module):
-    page, total_pages, start = dash_module.calc_pagination(-1, 42, 8)
-    assert page == 0
-    assert start == 0
+def test_helpers_truncate(helpers_module):
+    assert helpers_module.truncate("short", 30) == "short"
+    assert helpers_module.truncate("a" * 40, 30) == "a" * 30 + "..."
 
 
-def test_calc_pagination_empty(dash_module):
-    page, total_pages, start = dash_module.calc_pagination(0, 0, 8)
-    assert page == 0
-    assert total_pages == 1
-    assert start == 0
+def test_helpers_generate_license_key(helpers_module):
+    k = helpers_module.generate_license_key()
+    assert len(k) == 13
+    assert k.isdigit()
 
 
-def test_sep_is_ascii(dash_module):
-    assert dash_module.SEP == "-" * 20
-    assert dash_module.SEP.isascii()
+def test_helpers_is_benign_edit_error(helpers_module):
+    assert helpers_module.is_benign_edit_error("Bad Request: message is not modified") is True
+    assert helpers_module.is_benign_edit_error("Message to edit not found") is True
+    assert helpers_module.is_benign_edit_error("Flood control exceeded") is False
 
 
-class FakeClientManager:
-    def __init__(self, clients):
-        self.clients = clients
+def test_helpers_sanitize_error_strips_paths(helpers_module):
+    sanitized = helpers_module._sanitize_error(Exception("boom at /var/app/src/foo.py line 3"))
+    assert "/var" not in sanitized
+    assert "foo.py" not in sanitized
+    assert "boom" in sanitized
 
 
-class FakeDbManager:
-    def __init__(self, rows=None):
-        self._rows = rows or []
-
-    def execute_query(self, sql, params=None):
-        return self._rows
-
-
-class FakeBot:
-    def __init__(self, clients=None, db_rows=None):
-        self.client_manager = FakeClientManager(clients or {})
-        self.db_manager = FakeDbManager(db_rows)
-        self.ws_manager = None
-        self.http_polling_clients = {}
-        self.alerts_enabled = True
-        self.signal_queues = {}
-
-
-def test_overview_screen_basic(dash_module):
-    bot = FakeBot(
-        clients={"key1": {"name": "Test", "status": "active", "expires_at": "2026-08-07"}},
-        db_rows=[{"timestamp": "2026-07-20T14:30:00", "action": "buy", "symbol": "EURUSD", "response_code": 200}],
-    )
-    text, keyboard = dash_module.overview_screen(bot)
-    assert "Overview" in text
-    assert "Licenses" in text or "No licenses" in text
-    assert len(keyboard) > 0
-    assert text.isascii(), "Overview text must be ASCII-only"
-
-
-def test_overview_screen_no_licenses(dash_module):
-    bot = FakeBot()
-    text, keyboard = dash_module.overview_screen(bot)
-    assert "No licenses" in text or "0" in text
-    assert text.isascii()
-
-
-def test_account_screen_single_license(dash_module):
-    bot = FakeBot(clients={
-        "abcd1234efgh5678": {
-            "name": "Test Account",
-            "status": "active",
-            "expires_at": "2026-08-07",
-            "secret_key": "supersecret123",
-            "user_id": 12345,
-        }
-    })
-    bot._revealed_keys = set()
-    text, keyboard = dash_module.account_screen(bot, page=0)
-    assert "Account" in text
-    assert "abcd1234..." in text
-    assert "supersecret123" not in text
-    assert "supe****" in text
-    assert text.isascii()
-
-
-def test_account_screen_revealed_key(dash_module):
-    bot = FakeBot(clients={
-        "abcd1234efgh5678": {
-            "name": "Test",
-            "status": "active",
-            "secret_key": "supersecret123",
-            "user_id": 1,
-        }
-    })
-    bot._revealed_keys = {"abcd1234efgh5678"}
-    text, keyboard = dash_module.account_screen(bot, page=0)
-    assert "abcd1234efgh5678" in text
-    assert "supersecret123" in text
-
-
-def test_account_screen_no_licenses(dash_module):
-    bot = FakeBot()
-    bot._revealed_keys = set()
-    text, keyboard = dash_module.account_screen(bot, page=0)
-    assert "No licenses" in text
-    assert text.isascii()
-
-
-def test_trades_screen_basic(dash_module):
-    bot = FakeBot(db_rows=[
-        {"timestamp": "2026-07-20T14:30:00", "symbol": "EURUSD", "action": "buy", "volume": 0.10, "profit": 12.50},
-        {"timestamp": "2026-07-20T10:15:00", "symbol": "GBPUSD", "action": "sell", "volume": 0.05, "profit": -3.20},
-    ])
-    text, keyboard = dash_module.trades_screen(bot, page=0)
-    assert "Trade History" in text
-    assert "EURUSD" in text
-    assert "GBPUSD" in text
-    assert "+12.50" in text
-    assert "-3.20" in text
-    assert text.isascii()
-
-
-def test_trades_screen_empty(dash_module):
-    bot = FakeBot(db_rows=[])
-    text, keyboard = dash_module.trades_screen(bot, page=0)
-    assert "No trades" in text
-    assert text.isascii()
-
-
-def test_signals_screen_basic(dash_module):
-    bot = FakeBot(db_rows=[
-        {"timestamp": "2026-07-20T14:30:00", "action": "buy", "symbol": "EURUSD", "response_code": 200},
-        {"timestamp": "2026-07-20T10:15:00", "action": "sell", "symbol": "GBPUSD", "response_code": 500},
-    ])
-    text, keyboard = dash_module.signals_screen(bot, page=0)
-    assert "Signal Log" in text
-    assert "EURUSD" in text
-    assert "[OK]" in text
-    assert "[X]" in text
-    assert text.isascii()
-
-
-def test_signals_screen_empty(dash_module):
-    bot = FakeBot(db_rows=[])
-    text, keyboard = dash_module.signals_screen(bot, page=0)
-    assert "No signals" in text
-    assert text.isascii()
-
-
-def test_settings_screen_defaults(dash_module):
-    bot = FakeBot()
-    bot.alerts_enabled = True
-    bot.notification_prefs = {
-        "trade_opened": True, "trade_closed": True, "error_alerts": True,
-        "connection_changes": False, "signal_received": False,
+def test_helpers_format_license_info(helpers_module):
+    data = {
+        "name": "Test Account",
+        "status": "active",
+        "email": "user@example.com",
+        "secret_key": "supersecret",
+        "user_id": 12345,
+        "created_at": "2026-01-01T00:00:00",
+        "features": ["websocket", "trading"],
+        "max_volume": 1000.0,
+        "max_symbols": 25,
+        "max_daily_trades": 100,
+        "max_daily_loss": 500.0,
+        "enabled": True,
     }
-    bot.quiet_hours = {"enabled": False, "start": "22:00", "end": "08:00"}
-    text, keyboard = dash_module.settings_screen(bot)
-    assert "Settings" in text
-    assert "ON" in text
-    assert "OFF" in text
-    assert text.isascii()
-    assert any("toggle:trade_opened" in (b.callback_data or "") for row in keyboard for b in row)
+    text = helpers_module.format_license_info("ABCKEY123", data)
+    assert "🟢" in text  # active status emoji
+    assert "ABCKEY123" in text
+    assert "Test Account" in text
+    assert "supersecret" in text
 
 
-def test_admin_screen_basic(dash_module):
-    bot = FakeBot(clients={
-        "k1": {"status": "active"},
-        "k2": {"status": "active"},
-        "k3": {"status": "disabled"},
-    })
-    text, keyboard = dash_module.admin_screen(bot)
-    assert "Admin Panel" in text
-    assert "Total Licenses" in text
-    assert "3" in text
-    assert text.isascii()
+@pytest.fixture
+def constants_module():
+    spec = importlib.util.spec_from_file_location(
+        "_tg_constants_test", "apps/server/services/telegram/constants.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    yield mod
+    sys.modules.pop("_tg_constants_test", None)
 
 
-def test_main_menu_basic(dash_module):
-    bot = FakeBot(clients={"k1": {"status": "active"}})
-    bot.alerts_enabled = True
-    text, keyboard = dash_module.main_menu(bot)
-    assert "PineTunnel Dashboard" in text
-    assert "Licenses" in text
-    assert any("nav:overview" in (b.callback_data or "") for row in keyboard for b in row)
-    assert any("nav:admin" in (b.callback_data or "") for row in keyboard for b in row)
-    assert text.isascii()
+def test_constants_conversation_states(constants_module):
+    c = constants_module
+    # Add License flow: 0..4
+    assert (c.ADD_LIC_NAME, c.ADD_LIC_EMAIL, c.ADD_LIC_FEATURES, c.ADD_LIC_EXPIRY, c.ADD_LIC_CONFIRM) == (
+        0,
+        1,
+        2,
+        3,
+        4,
+    )
+    # Edit License flow + picker
+    assert c.EDIT_LIC_FIELD == 10 and c.EDIT_LIC_VALUE == 11 and c.EDIT_LIC_PICK == 12
+    # Expiry flow + picker
+    assert c.EXPIRY_VALUE == 50 and c.EXPIRY_PICK == 51
+    # Search + Quiet Hours
+    assert c.SEARCH_QUERY == 70 and c.USER_QH_INPUT == 90
+
+
+def test_constants_cleanup_prefixes(constants_module):
+    prefixes = constants_module.CONVERSATION_CLEANUP_PREFIXES
+    assert "new_lic_" in prefixes
+    assert "edit_lic_" in prefixes
+    assert "qh_field" in prefixes
+    assert "expiry_" in prefixes
+
+
+def test_notification_constants():
+    from apps.server.services.notification import (
+        CRITICAL_EVENTS,
+        DEFAULT_PREFS,
+        NOTIF_LABELS,
+        NOTIF_TYPES,
+    )
+
+    assert "exec_success" in NOTIF_TYPES
+    assert "exec_failed" in NOTIF_TYPES
+    assert "position_closed" in NOTIF_TYPES
+    assert all(DEFAULT_PREFS[t] is True for t in NOTIF_TYPES)
+    assert set(NOTIF_LABELS.keys()) == set(NOTIF_TYPES)
+    assert NOTIF_LABELS["exec_failed"] == "Execution Failed"
+    assert CRITICAL_EVENTS == {"exec_failed", "margin_warning", "equity_drawdown"}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Part 2: callback-router dispatch
+# ──────────────────────────────────────────────────────────────────────────
+
+
+# Every method the router (_route_admin_callback + _user_cb_handler) can dispatch to.
+_ROUTER_TARGETS = [
+    "_show_main_menu",
+    "_show_licenses_menu",
+    "_show_monitor_menu",
+    "_show_license_list",
+    "_show_license_detail",
+    "_toggle_license",
+    "_delete_confirm",
+    "_do_delete_license",
+    "_bulk_deactivate_expired",
+    "_bulk_activate_all",
+    "_force_disconnect_client",
+    "_show_status",
+    "_show_connections",
+    "_show_account_stats",
+    "_show_logs",
+    "_show_connection_detail",
+    "_show_signals_menu",
+    "_show_license_signals_overview",
+    "_show_signal_list_from_callback",
+    "_show_signal_detail",
+    "_show_signals_license_picker",
+    "_show_system_info",
+    "_show_user_menu",
+    "_show_user_settings",
+    "_show_notif_presets",
+    "_show_user_notif_settings",
+    "_apply_notif_preset",
+    "_toggle_user_notif",
+    "_show_user_licenses",
+    "_show_user_quiet_hours",
+    "_handle_quiet_hours_cb",
+    "_show_user_account_pick",
+    "_show_user_account",
+    "_show_user_trading_pick",
+    "_show_user_trading",
+    "_show_user_signal_pick",
+    "_show_user_signals",
+    "_confirm_close_position",
+    "_do_close_position",
+    "_confirm_disconnect_ea",
+    "_do_disconnect_ea",
+    "_show_user_kill_switch",
+    "_confirm_close_all_positions",
+    "_do_close_all_positions",
+    "_confirm_disconnect_all",
+    "_do_disconnect_all",
+]
+
+
+@pytest.fixture
+def bot_class():
+    """Stub telegram + heavy app deps so apps.server.services.telegram.bot imports."""
+    for name in (
+        "telegram",
+        "telegram.helpers",
+        "telegram.constants",
+        "telegram.ext",
+        "telegram.error",
+    ):
+        sys.modules[name] = MagicMock()
+    # routes has a heavy __init__ (imports all routers) — stub the package empty.
+    sys.modules["apps.server.routes"] = types.ModuleType("apps.server.routes")
+    sys.modules["apps.server.routes.ea_download"] = MagicMock()
+    sys.modules["apps.server.db.analytics_store"] = MagicMock()
+    sys.modules["apps.server.ws.handler"] = MagicMock()
+    sys.modules["apps.server.config.settings"] = MagicMock()
+    # notification is a pure module — import it for real.
+    sys.modules.pop("apps.server.services.notification", None)
+
+    from apps.server.services.telegram import PineTunnelTelegramBot
+
+    yield PineTunnelTelegramBot
+
+    for k in list(sys.modules):
+        if k.startswith("apps.server.services.telegram") or k in (
+            "telegram",
+            "telegram.helpers",
+            "telegram.constants",
+            "telegram.ext",
+            "telegram.error",
+            "apps.server.routes",
+            "apps.server.routes.ea_download",
+            "apps.server.db.analytics_store",
+            "apps.server.ws.handler",
+            "apps.server.config.settings",
+        ):
+            sys.modules.pop(k, None)
+
+
+class _FakeUser:
+    def __init__(self, uid=1):
+        self.id = uid
+        self.username = "admin"
+        self.full_name = "Admin"
+
+
+class _FakeChat:
+    def __init__(self, cid=1):
+        self.id = cid
+
+
+class _FakeQuery:
+    def __init__(self, data):
+        self.data = data
+        self.message = MagicMock()
+
+    async def answer(self, *args, **kwargs):
+        pass
+
+    async def edit_message_text(self, *args, **kwargs):
+        pass
+
+
+class _FakeUpdate:
+    def __init__(self, data, uid=1, cid=1):
+        self.callback_query = _FakeQuery(data)
+        self.effective_user = _FakeUser(uid)
+        self.effective_chat = _FakeChat(cid)
+        self.effective_message = MagicMock()
+        self.message = MagicMock()
+
+
+def _make_bot(bot_class, tmp_path):
+    return bot_class(
+        token="t",
+        admin_ids=[1],
+        client_manager=MagicMock(),
+        db_manager=MagicMock(),
+        data_dir=str(tmp_path),
+        http_polling_clients={},
+        signal_queues={},
+        conn_manager=None,
+        ws_manager=None,
+        test_env=False,
+        auth_store=None,
+        admin_logger=None,
+    )
+
+
+def _patch_screens(bot):
+    """Monkeypatch every router dispatch target with an async recorder."""
+    calls: list[str] = []
+
+    def make_rec(name):
+        async def _rec(*args, **kwargs):
+            calls.append(name)
+
+        return _rec
+
+    for name in _ROUTER_TARGETS:
+        setattr(bot, name, make_rec(name))
+    return calls
+
+
+# (callback_data, expected dispatch target)
+_ROUTER_CASES = [
+    # Main menu navigation
+    ("menu_main", "_show_main_menu"),
+    ("menu_licenses", "_show_licenses_menu"),
+    ("menu_monitor", "_show_monitor_menu"),
+    ("menu_signals", "_show_signals_menu"),
+    # License actions
+    ("lic_list", "_show_license_list"),
+    ("lic_info_ABC", "_show_license_detail"),
+    ("lic_activate_ABC", "_toggle_license"),
+    ("lic_deactivate_ABC", "_toggle_license"),
+    ("lic_delconf_ABC", "_delete_confirm"),
+    ("lic_dodel_ABC", "_do_delete_license"),
+    ("lic_delcancel", "_show_licenses_menu"),
+    ("lic_page_2", "_show_license_list"),
+    # Bulk operations
+    ("lic_bulk_deactivate_expired", "_bulk_deactivate_expired"),
+    ("lic_bulk_activate_all", "_bulk_activate_all"),
+    ("lic_force_disconnect_ABC", "_force_disconnect_client"),
+    # Monitor actions
+    ("mon_status", "_show_status"),
+    ("mon_connections", "_show_connections"),
+    ("mon_account_stats", "_show_account_stats"),
+    ("mon_logs", "_show_logs"),
+    ("log_webhook", "_show_logs"),
+    ("log_admin", "_show_logs"),
+    ("log_conn", "_show_logs"),
+    ("whlog_page_1", "_show_logs"),
+    ("audit_page_1", "_show_logs"),
+    ("conn_page_1", "_show_logs"),
+    ("mon_conn_detail_ABC", "_show_connection_detail"),
+    # Signal tracking
+    ("sig_menu", "_show_signals_menu"),
+    ("sig_lic_ABC", "_show_license_signals_overview"),
+    ("sig_v_ABC_all_0", "_show_signal_list_from_callback"),
+    ("sig_d_ABC", "_show_signal_detail"),
+    ("sig_pg_2", "_show_signals_license_picker"),
+    # Settings
+    ("set_toggle_alerts", "_show_main_menu"),
+    ("set_system_info", "_show_system_info"),
+    # User menu / settings
+    ("user_menu", "_show_user_menu"),
+    ("user_settings", "_show_user_settings"),
+    ("user_notif_settings", "_show_notif_presets"),
+    ("user_notif_custom", "_show_user_notif_settings"),
+    ("user_preset_all", "_apply_notif_preset"),
+    ("user_preset_critical", "_apply_notif_preset"),
+    ("user_preset_silent", "_apply_notif_preset"),
+    ("user_toggle_exec_success", "_toggle_user_notif"),
+    ("user_licenses", "_show_user_licenses"),
+    ("user_quiet_hours", "_show_user_quiet_hours"),
+    ("qh_toggle", "_handle_quiet_hours_cb"),
+    ("qh_set_tz", "_handle_quiet_hours_cb"),
+    ("qh_tz_UTC", "_handle_quiet_hours_cb"),
+    # User dashboard — account
+    ("ud_account_pick", "_show_user_account_pick"),
+    ("ud_acct_KEY", "_show_user_account"),
+    # User dashboard — trading
+    ("ud_trading", "_show_user_trading_pick"),
+    ("ud_trade_open_KEY", "_show_user_trading"),
+    ("ud_trade_closed_KEY", "_show_user_trading"),
+    ("ud_tradepg_closed_KEY_1", "_show_user_trading"),
+    # User dashboard — signals
+    ("ud_sig_pick", "_show_user_signal_pick"),
+    ("ud_sig_KEY", "_show_user_signals"),
+    ("ud_sigpg_KEY_1", "_show_user_signals"),
+    # User dashboard — actions
+    ("ud_close_KEY_TK", "_confirm_close_position"),
+    ("ud_closeok_KEY_TK", "_do_close_position"),
+    ("ud_disc_KEY", "_confirm_disconnect_ea"),
+    ("ud_discok_KEY", "_do_disconnect_ea"),
+    # Kill switch
+    ("ud_kill", "_show_user_kill_switch"),
+    ("ud_closeall_KEY", "_confirm_close_all_positions"),
+    ("ud_closeallok_KEY", "_do_close_all_positions"),
+    ("ud_kill_disc_all", "_confirm_disconnect_all"),
+    ("ud_kill_disc_all_ok", "_do_disconnect_all"),
+]
+
+
+@pytest.mark.parametrize("data,expected", _ROUTER_CASES)
+def test_router_dispatch(bot_class, tmp_path, data, expected):
+    bot = _make_bot(bot_class, tmp_path)
+    calls = _patch_screens(bot)
+    asyncio.run(bot._cb_handler(_FakeUpdate(data), None))
+    assert calls == [expected], f"data={data!r} routed to {calls}, expected [{expected!r}]"
+
+
+def test_router_rejects_non_admin(bot_class, tmp_path):
+    bot = _make_bot(bot_class, tmp_path)
+    _patch_screens(bot)
+    # admin_ids=[1]; user id 999 is not an admin.
+    query = _FakeQuery("menu_main")
+
+    async def run():
+        upd = _FakeUpdate("menu_main", uid=999)
+        upd.callback_query = query
+        await bot._cb_handler(upd, None)
+
+    asyncio.run(run())
+    # Non-admin branch calls query.edit_message_text("Not authorized.") and returns;
+    # no router target is invoked.
+
+
+def test_set_toggle_alerts_flips_state(bot_class, tmp_path):
+    bot = _make_bot(bot_class, tmp_path)
+    _patch_screens(bot)
+    assert bot.alerts_enabled is True
+    asyncio.run(bot._cb_handler(_FakeUpdate("set_toggle_alerts"), None))
+    assert bot.alerts_enabled is False
