@@ -17,7 +17,11 @@ def dash_module():
     tg = types.ModuleType("telegram")
     tg.helpers = types.ModuleType("telegram.helpers")
     tg.helpers.escape_markdown = lambda s, version=1: s
-    tg.InlineKeyboardButton = object
+    class _StubButton:
+        def __init__(self, text, callback_data=None, **kwargs):
+            self.text = text
+            self.callback_data = callback_data
+    tg.InlineKeyboardButton = _StubButton
     sys.modules["telegram"] = tg
     sys.modules["telegram.helpers"] = tg.helpers
 
@@ -87,3 +91,45 @@ def test_calc_pagination_empty(dash_module):
 def test_sep_is_ascii(dash_module):
     assert dash_module.SEP == "-" * 20
     assert dash_module.SEP.isascii()
+
+
+class FakeClientManager:
+    def __init__(self, clients):
+        self.clients = clients
+
+
+class FakeDbManager:
+    def __init__(self, rows=None):
+        self._rows = rows or []
+
+    def execute_query(self, sql, params=None):
+        return self._rows
+
+
+class FakeBot:
+    def __init__(self, clients=None, db_rows=None):
+        self.client_manager = FakeClientManager(clients or {})
+        self.db_manager = FakeDbManager(db_rows)
+        self.ws_manager = None
+        self.http_polling_clients = {}
+        self.alerts_enabled = True
+        self.signal_queues = {}
+
+
+def test_overview_screen_basic(dash_module):
+    bot = FakeBot(
+        clients={"key1": {"name": "Test", "status": "active", "expires_at": "2026-08-07"}},
+        db_rows=[{"timestamp": "2026-07-20T14:30:00", "action": "buy", "symbol": "EURUSD", "response_code": 200}],
+    )
+    text, keyboard = dash_module.overview_screen(bot)
+    assert "Overview" in text
+    assert "Licenses" in text or "No licenses" in text
+    assert len(keyboard) > 0
+    assert text.isascii(), "Overview text must be ASCII-only"
+
+
+def test_overview_screen_no_licenses(dash_module):
+    bot = FakeBot()
+    text, keyboard = dash_module.overview_screen(bot)
+    assert "No licenses" in text or "0" in text
+    assert text.isascii()
