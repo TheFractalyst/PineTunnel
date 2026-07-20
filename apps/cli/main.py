@@ -640,6 +640,8 @@ def _open_browser_after(delay: float, port: int) -> None:
 
 def cmd_start(args: argparse.Namespace) -> int:
     env_path = _ensure_minimal_env()
+    from dotenv import load_dotenv
+    load_dotenv(env_path, override=False)
     _run_migrations()
     env = read_env(env_path)
     tg = bool(env.get("TELEGRAM_BOT_TOKEN"))
