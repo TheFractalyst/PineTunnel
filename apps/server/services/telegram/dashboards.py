@@ -541,3 +541,40 @@ def admin_screen(bot) -> tuple[str, list[list[InlineKeyboardButton]]]:
         [InlineKeyboardButton("Back to Menu", callback_data="nav:main")],
     ]
     return text, keyboard
+
+
+def main_menu(bot) -> tuple[str, list[list[InlineKeyboardButton]]]:
+    from datetime import datetime, timezone
+    total = len(bot.client_manager.clients)
+    active = _count_active_licenses(bot)
+    connected = _count_connected(bot)
+
+    pending = 0
+    try:
+        for key in bot.client_manager.clients:
+            count = bot.db_manager.get_signal_count(key, "pending")
+            pending += count
+    except Exception:
+        pass
+
+    alerts_state = "ON" if bot.alerts_enabled else "OFF"
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    text = (
+        "PineTunnel Dashboard\n"
+        f"{SEP}\n"
+        f"Licenses: {active}/{total} active | Connected: {connected} | Pending: {pending}\n"
+        f"Alerts: {alerts_state} | {now_str}\n"
+        f"{SEP}\n"
+        "Select a dashboard:"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("Overview", callback_data="nav:overview"),
+         InlineKeyboardButton("Account", callback_data="nav:account")],
+        [InlineKeyboardButton("Trades", callback_data="nav:trades"),
+         InlineKeyboardButton("Signals", callback_data="nav:signals")],
+        [InlineKeyboardButton("Settings", callback_data="nav:settings"),
+         InlineKeyboardButton("Admin", callback_data="nav:admin")],
+    ]
+    return text, keyboard

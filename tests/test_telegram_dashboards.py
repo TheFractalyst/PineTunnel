@@ -245,3 +245,14 @@ def test_admin_screen_basic(dash_module):
     assert "Total Licenses" in text
     assert "3" in text
     assert text.isascii()
+
+
+def test_main_menu_basic(dash_module):
+    bot = FakeBot(clients={"k1": {"status": "active"}})
+    bot.alerts_enabled = True
+    text, keyboard = dash_module.main_menu(bot)
+    assert "PineTunnel Dashboard" in text
+    assert "Licenses" in text
+    assert any("nav:overview" in (b.callback_data or "") for row in keyboard for b in row)
+    assert any("nav:admin" in (b.callback_data or "") for row in keyboard for b in row)
+    assert text.isascii()
