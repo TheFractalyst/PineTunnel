@@ -2,7 +2,9 @@ import json
 import logging
 import os
 import re
+import tempfile
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from telegram import (
     BotCommand,
@@ -19,50 +21,32 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    ConversationHandler,
     MessageHandler,
     filters,
 )
 from telegram.helpers import escape_markdown as _escape_md
 
-from apps.server.routes.trade_analytics import account_stats_latest, license_stats
-
-from .constants import (
-    ADD_LIC_CONFIRM,
-    ADD_LIC_EMAIL,
-    ADD_LIC_EXPIRY,
-    ADD_LIC_FEATURES,
-    ADD_LIC_NAME,
-    CONVERSATION_CLEANUP_PREFIXES,
-    EDIT_LIC_FIELD,
-    EDIT_LIC_PICK,
-    EDIT_LIC_VALUE,
-    EXPIRY_PICK,
-    EXPIRY_VALUE,
-    SEARCH_QUERY,
+from .dashboards import (
+    SEP,
+    account_screen,
+    admin_screen,
+    escape_md,
+    main_menu,
+    overview_screen,
+    sanitize_error,
+    settings_screen,
+    signals_screen,
+    trades_screen,
+    DEFAULT_NOTIFICATION_PREFS,
+    DEFAULT_QUIET_HOURS,
 )
-from .helpers import CONNECTED_CLIENT_THRESHOLD_SEC, SEP, _sanitize_error, is_benign_edit_error
-from .mixins.auth import AuthMixin
-from .mixins.events import EventMixin
-from .mixins.menu import MenuMixin
-from .mixins.monitoring import MonitoringMixin
 
 logger = logging.getLogger(__name__)
 
 _ADMIN_AUDIT_LOG_MODE = 0o600
 
-_CATCH_ALL_CB_PATTERN = re.compile(
-    r"^(?!lic_add$|lic_edit_pick$|lic_expiry_pick$|lic_search$"
-    r"|feat_|exp_|addconf_|editf_|edpick_|expick_|expval_)"
-)
 
-
-class PineTunnelTelegramBot(
-    AuthMixin,
-    MenuMixin,
-    MonitoringMixin,
-    EventMixin,
-):
+class PineTunnelTelegramBot:
     """Admin-only Telegram bot for PineTunnel management."""
 
     def __init__(
@@ -94,6 +78,9 @@ class PineTunnelTelegramBot(
         self.admin_logger = admin_logger
 
         self.alerts_enabled = True
+        self.notification_prefs = dict(DEFAULT_NOTIFICATION_PREFS)
+        self.quiet_hours = dict(DEFAULT_QUIET_HOURS)
+        self._revealed_keys: set[str] = set()
         self._load_bot_settings()
         self.app: Application | None = None
         self._started = False
@@ -146,11 +133,8 @@ class PineTunnelTelegramBot(
             admin_commands = [
                 BotCommand("start", "Main menu"),
                 BotCommand("menu", "Show main menu"),
-                BotCommand("licenses", "License management"),
-                BotCommand("monitor", "Server monitoring"),
-                BotCommand("signals", "Signal tracking by license"),
-                BotCommand("status", "Quick server status"),
                 BotCommand("help", "Show help"),
+                BotCommand("login", "Dashboard login code"),
             ]
             for admin_id in self.admin_ids:
                 try:
@@ -196,81 +180,51 @@ class PineTunnelTelegramBot(
             except Exception as e:
                 logger.error("Error stopping Telegram bot: %s", e)
 
-    def _cascade_delete_license(self, license_key: str):
-        if self.conn_manager:
-            self.conn_manager.cleanup_client_state(license_key)
-        else:
-            self.http_polling_clients.pop(license_key, None)
-            self.signal_queues.pop(license_key, None)
-
-        try:
-            self.db_manager.delete_signals_by_license(license_key)
-        except Exception:
-            logger.debug("Failed to delete signals for %s", license_key, exc_info=True)
-
-        try:
-            account_stats_latest.pop(license_key, None)
-            license_stats.pop(license_key, None)
-        except Exception:
-            logger.debug("Failed to clean trade analytics cache for %s", license_key, exc_info=True)
-
-    @property
-    def _active_license_count(self) -> int:
-        return sum(1 for c in self.client_manager.clients.values() if c.get("status") == "active")
-
-    def _count_connected_clients(self) -> int:
-        now = datetime.now()
-        connected_keys: set[str] = set()
-
-        for key, poll_data in self.http_polling_clients.items():
-            if (
-                poll_data.get("last_poll")
-                and (now - poll_data["last_poll"]).total_seconds() <= CONNECTED_CLIENT_THRESHOLD_SEC
-            ):
-                connected_keys.add(key)
-
-        if self.ws_manager:
-            try:
-                for lic_key in self.ws_manager.get_connected_license_keys():
-                    connected_keys.add(lic_key)
-            except Exception:
-                logger.debug("Failed to get WS license keys for connected count", exc_info=True)
-
-        return len(connected_keys)
+    def _is_admin(self, update: Update) -> bool:
+        return update.effective_user.id in self.admin_ids
 
     def _register_handlers(self):
         app = self.app
-
         _admin_filter = filters.User(user_id=self.admin_ids) if self.admin_ids else filters.Chat(-1)
 
         app.add_handler(CommandHandler("start", self._cmd_start, filters=_admin_filter))
-        app.add_handler(CommandHandler("menu", self._cmd_menu, filters=_admin_filter))
+        app.add_handler(CommandHandler("menu", self._cmd_start, filters=_admin_filter))
         app.add_handler(CommandHandler("help", self._cmd_help, filters=_admin_filter))
-        app.add_handler(CommandHandler("monitor", self._cmd_monitor, filters=_admin_filter))
-        app.add_handler(CommandHandler("licenses", self._cmd_licenses, filters=_admin_filter))
         app.add_handler(CommandHandler("login", self._cmd_login, filters=_admin_filter))
-
-        app.add_handler(CallbackQueryHandler(self._cb_handler, pattern=_CATCH_ALL_CB_PATTERN))
+        app.add_handler(CallbackQueryHandler(self._cb_handler))
         app.add_error_handler(self._error_handler)
 
-    def _make_conversation(
-        self,
-        entry: CallbackQueryHandler,
-        states: dict,
-        timeout_min: int = 10,
-    ) -> ConversationHandler:
-        states[ConversationHandler.TIMEOUT] = [
-            MessageHandler(filters.ALL, self._conversation_timeout_handler)
-        ]
-        return ConversationHandler(
-            entry_points=[entry],
-            states=states,
-            fallbacks=[
-                CommandHandler("cancel", self._cancel_conversation),
-                CommandHandler("start", self._cancel_conversation),
-            ],
-            per_message=False,
-            conversation_timeout=timedelta(minutes=timeout_min),
+    async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        text, keyboard = main_menu(self)
+        await update.message.reply_text(
+            text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        help_text = (
+            "<b>PineTunnel Admin Bot</b>\n\n"
+            "<b>Commands:</b>\n"
+            "/start - Main menu (dashboards)\n"
+            "/menu - Same as /start\n"
+            "/help - This help message\n"
+            "/login - Get web dashboard login code\n\n"
+            "Use the inline buttons to navigate dashboards."
+        )
+        await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
+
+    async def _cmd_login(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        if user is None:
+            return
+        store = getattr(self, "_auth_store", None)
+        if store is None:
+            await update.message.reply_text("Web dashboard auth not configured.")
+            return
+        code = await store.issue_code_async(user.id)
+        await update.message.reply_text(
+            f"Your PineTunnel dashboard login code:\n\n"
+            f"{code}\n\n"
+            f"Expires in 90 seconds. Do not share it."
         )
 
     async def _cb_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -281,73 +235,143 @@ class PineTunnelTelegramBot(
             await query.edit_message_text("Admin access required.")
             return
 
-        data = query.data
+        data = query.data or ""
+        if data == "noop":
+            return
 
         try:
-            await self._route_admin_callback(update, context, data)
+            text, keyboard = self._route_callback(data)
+            if text:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                )
         except TelegramError as e:
-            if is_benign_edit_error(e):
+            if "message is not modified" in str(e).lower():
                 return
             raise
 
-    async def _route_admin_callback(self, update, context, data):
-        if data == "menu_main":
-            await self._show_main_menu(update)
-        elif data == "menu_monitor":
-            await self._show_monitor_menu(update)
-        elif data == "menu_licenses":
-            await self._show_licenses(update, page=0)
-        elif data.startswith("lic_page_"):
-            try:
-                page = int(data.replace("lic_page_", ""))
-            except ValueError:
-                page = 0
-            await self._show_licenses(update, page=page)
+    def _route_callback(self, data: str) -> tuple[str, list[list[InlineKeyboardButton]]]:
+        if data == "nav:main":
+            return main_menu(self)
 
-        elif data == "mon_status":
-            await self._show_status(update)
-        elif data == "mon_connections":
-            await self._show_connections(update)
-        elif data == "mon_account_stats":
-            await self._show_account_stats(update)
-        elif data == "mon_logs":
-            await self._show_logs(update)
-        elif data == "mon_security":
-            await self._show_security(update)
-        elif data == "log_webhook":
-            await self._show_logs(update, log_filter="webhook")
-        elif data == "log_admin":
-            await self._show_logs(update, log_filter="admin")
-        elif data == "log_conn":
-            await self._show_logs(update, log_filter="conn")
-        elif data.startswith("whlog_page_"):
-            try:
-                page = int(data.replace("whlog_page_", ""))
-            except ValueError:
-                page = 0
-            await self._show_logs(update, log_filter="webhook", page=page)
-        elif data.startswith("audit_page_"):
-            try:
-                page = int(data.replace("audit_page_", ""))
-            except ValueError:
-                page = 0
-            await self._show_logs(update, log_filter="admin", page=page)
-        elif data.startswith("conn_page_"):
-            try:
-                page = int(data.replace("conn_page_", ""))
-            except ValueError:
-                page = 0
-            await self._show_logs(update, log_filter="conn", page=page)
-        elif data.startswith("mon_conn_detail_"):
-            await self._show_connection_detail(update, data.replace("mon_conn_detail_", ""))
+        if data.startswith("nav:"):
+            screen = data[4:]
+            return self._render_screen(screen)
 
-        elif data == "set_toggle_alerts":
+        if data.startswith("refresh:"):
+            screen = data[8:]
+            return self._render_screen(screen)
+
+        if data.startswith("page:"):
+            parts = data.split(":")
+            screen = parts[1]
+            page = int(parts[2]) if len(parts) > 2 else 0
+            return self._render_screen(screen, page=page)
+
+        if data.startswith("filter:"):
+            parts = data.split(":")
+            screen = parts[1]
+            if screen == "trades":
+                side = parts[2] if len(parts) > 2 else "all"
+                return trades_screen(self, page=0, side_filter=side)
+            if screen == "signals":
+                ftype = parts[2] if len(parts) > 2 else "cmd"
+                value = parts[3] if len(parts) > 3 else "all"
+                return self._render_screen("signals", cmd_filter=value if ftype == "cmd" else "all",
+                                           status_filter=value if ftype == "status" else "all")
+
+        if data.startswith("toggle:"):
+            key = data[7:]
+            self._toggle_setting(key)
+            return settings_screen(self)
+
+        if data.startswith("reveal:"):
+            parts = data.split(":")
+            lic_key = parts[2] if len(parts) > 2 else ""
+            if lic_key in self._revealed_keys:
+                self._revealed_keys.discard(lic_key)
+            else:
+                self._revealed_keys.add(lic_key)
+            return account_screen(self)
+
+        return main_menu(self)
+
+    def _render_screen(self, screen: str, page: int = 0, cmd_filter: str = "all", status_filter: str = "all") -> tuple[str, list[list[InlineKeyboardButton]]]:
+        if screen == "overview":
+            return overview_screen(self)
+        if screen == "account":
+            return account_screen(self, page=page)
+        if screen == "trades":
+            return trades_screen(self, page=page)
+        if screen == "signals":
+            return signals_screen(self, page=page, cmd_filter=cmd_filter, status_filter=status_filter)
+        if screen == "settings":
+            return settings_screen(self)
+        if screen == "admin":
+            return admin_screen(self)
+        return main_menu(self)
+
+    def _toggle_setting(self, key: str):
+        if key == "alerts":
             self.alerts_enabled = not self.alerts_enabled
-            self._save_bot_settings()
-            await self._show_main_menu(update)
+        elif key == "quiet_hours":
+            self.quiet_hours["enabled"] = not self.quiet_hours.get("enabled", False)
+        elif key in self.notification_prefs:
+            self.notification_prefs[key] = not self.notification_prefs[key]
+        self._save_bot_settings()
 
+    def _load_bot_settings(self):
+        settings_file = os.path.join(self.data_dir, "bot_settings.json")
+        try:
+            if os.path.exists(settings_file):
+                with open(settings_file, "r") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self.alerts_enabled = data.get("alerts_enabled", True)
+                    prefs = data.get("notifications", {})
+                    if isinstance(prefs, dict):
+                        self.notification_prefs = {**DEFAULT_NOTIFICATION_PREFS, **prefs}
+                    quiet = data.get("quiet_hours", {})
+                    if isinstance(quiet, dict):
+                        self.quiet_hours = {**DEFAULT_QUIET_HOURS, **quiet}
+                    return
+        except Exception as e:
+            logger.error("Failed to load bot settings: %s", e)
+        self.alerts_enabled = True
+
+    def _save_bot_settings(self):
+        settings_file = os.path.join(self.data_dir, "bot_settings.json")
+        try:
+            parent = Path(settings_file).parent
+            parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "alerts_enabled": self.alerts_enabled,
+                "notifications": self.notification_prefs,
+                "quiet_hours": self.quiet_hours,
+            }
+            fd, tmp_path = tempfile.mkstemp(dir=str(parent), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, settings_file)
+            except Exception:
+                os.unlink(tmp_path)
+                raise
+        except Exception as e:
+            logger.error("Failed to save bot settings: %s", e)
+
+    def _cascade_delete_license(self, license_key: str):
+        if self.conn_manager:
+            self.conn_manager.cleanup_client_state(license_key)
         else:
-            logger.warning("Unhandled callback data: %s", data)
+            self.http_polling_clients.pop(license_key, None)
+            self.signal_queues.pop(license_key, None)
+        try:
+            self.db_manager.delete_signals_by_license(license_key)
+        except Exception:
+            logger.debug("Failed to delete signals for %s", license_key, exc_info=True)
 
     async def _log_admin_action(self, user_id: int, username: str, action: str, details: dict):
         user = f"@{username}" if username else str(user_id)
@@ -357,11 +381,7 @@ class PineTunnelTelegramBot(
 
         if self.admin_logger is not None:
             try:
-                self.admin_logger.log_activity(
-                    action=action,
-                    user=user,
-                    details=enriched,
-                )
+                self.admin_logger.log_activity(action=action, user=user, details=enriched)
                 return
             except Exception as e:
                 logger.error("Failed to write audit log via admin_logger: %s", e)
@@ -373,7 +393,6 @@ class PineTunnelTelegramBot(
             "action": action,
             "details": details,
         }
-
         log_file = os.path.join(self.data_dir, "admin_audit.log")
         try:
             os.makedirs(self.data_dir, exist_ok=True)
@@ -383,37 +402,80 @@ class PineTunnelTelegramBot(
         except Exception as e:
             logger.error("Failed to write audit log: %s", e)
 
-    async def _conversation_timeout_handler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):
-        for prefix in CONVERSATION_CLEANUP_PREFIXES:
-            keys_to_del = [k for k in context.user_data if k.startswith(prefix)]
-            for k in keys_to_del:
-                del context.user_data[k]
-
-        msg = update.effective_message
-        if msg:
-            await msg.reply_text(
-                "Operation timed out. Please start over.",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("Main Menu", callback_data="menu_main")]]
-                ),
-            )
-        return ConversationHandler.END
-
-    async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if is_benign_edit_error(context.error):
-            logger.debug("Benign Telegram edit error: %s", context.error)
+    async def notify_admin(self, message: str):
+        if not self._started or not self.app:
             return
-
-        logger.error("Exception while handling update: %s", context.error, exc_info=context.error)
-
-        sanitized = _sanitize_error(context.error)
         for admin_id in self.admin_ids:
             try:
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=f"Bot Error\n\n{sanitized}",
+                await self.app.bot.send_message(
+                    chat_id=admin_id, text=message, parse_mode=ParseMode.HTML,
                 )
+            except Exception as e:
+                logger.error("Failed to notify admin %s: %s", admin_id, e)
+
+    def _should_notify(self, pref_key: str) -> bool:
+        if not self.alerts_enabled:
+            return False
+        return self.notification_prefs.get(pref_key, False)
+
+    async def on_trade_executed(self, report):
+        if not self._should_notify("trade_opened"):
+            return
+        try:
+            await self.notify_admin(
+                f"Trade Executed\n"
+                f"License: {report.license_key}\n"
+                f"Symbol: {report.symbol}\n"
+                f"Side: {report.side}\n"
+                f"Volume: {report.volume}"
+            )
+        except Exception as e:
+            logger.error("Trade executed notification error: %s", e)
+
+    async def on_trade_execution_failed(self, report):
+        if not self._should_notify("error_alerts"):
+            return
+        try:
+            await self.notify_admin(
+                f"Trade Execution Failed\n"
+                f"License: {report.license_key}\n"
+                f"Symbol: {report.symbol}\n"
+                f"Error: {escape_md(str(report.error))}"
+            )
+        except Exception as e:
+            logger.error("Trade execution failed notification error: %s", e)
+
+    async def on_position_closed(self, report):
+        if not self._should_notify("trade_closed"):
+            return
+        try:
+            await self.notify_admin(
+                f"Position Closed\n"
+                f"License: {report.license_key}\n"
+                f"Symbol: {report.symbol}\n"
+                f"Profit: {report.profit}"
+            )
+        except Exception as e:
+            logger.error("Position closed notification error: %s", e)
+
+    async def on_trade_failure(self, license_key: str, error: str):
+        if not self._should_notify("error_alerts"):
+            return
+        await self.notify_admin(
+            f"Trade Failure\n"
+            f"License: {license_key}\n"
+            f"Error: {escape_md(error)}"
+        )
+
+    async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        err = context.error
+        if err and "message is not modified" in str(err).lower():
+            logger.debug("Benign Telegram edit error: %s", err)
+            return
+        logger.error("Exception while handling update: %s", err, exc_info=err)
+        sanitized = sanitize_error(err) if err else "Unknown error"
+        for admin_id in self.admin_ids:
+            try:
+                await context.bot.send_message(chat_id=admin_id, text=f"Bot Error\n\n{sanitized}")
             except Exception:
                 logger.error("Failed to send error notification to admin %s", admin_id, exc_info=True)
