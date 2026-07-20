@@ -182,10 +182,11 @@ def _run_migrations() -> int:
         [sys.executable, "-c",
          "import os,sys; sys.path=[p for p in sys.path if p not in ('','.',os.getcwd())]; "
          "from alembic.config import Config; from alembic import command; "
-         f"cfg=Config('{alembic_ini}'); "
+         "cfg=Config(os.environ['PINETUNNEL_ALEMBIC_INI']); "
          "cfg.set_main_option('sqlalchemy.url', os.environ.get('DATABASE_URL','sqlite:///pinetunnel.db')); "
          "command.upgrade(cfg, 'head')"],
         cwd=str(root), capture_output=True, text=True, timeout=30,
+        env={**os.environ, "PINETUNNEL_ALEMBIC_INI": str(alembic_ini)},
     )
     if result.returncode != 0:
         print(f"[pinetunnel] Migration warning: {result.stderr[:200]}")
