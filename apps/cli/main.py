@@ -408,7 +408,7 @@ def _step2_cloudflare_token(env_path: Path) -> bool:
     })
     print(f"  -> Saved to .env")
     if url:
-        print(f"  -> Webhook URL: {url.rstrip('/')}/webhook")
+        print(f"  -> Webhook URL: {url.rstrip('/')}/")
     print()
     return True
 
@@ -583,7 +583,7 @@ def _step3_webhook(env_path: Path) -> None:
     print("-" * 40)
     env = read_env(env_path)
     base_url = env.get("SERVER_BASE_URL", "http://127.0.0.1:8000")
-    webhook_url = base_url.rstrip("/") + "/webhook"
+    webhook_url = base_url.rstrip("/") + "/"
     print()
     print(f"  Your webhook URL:")
     print(f"  {webhook_url}")
