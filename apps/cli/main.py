@@ -476,6 +476,29 @@ def _fetch_zones_from_api(api_token: str, zone_id: str) -> list:
     return []
 
 
+def _try_create_tunnel(name: str) -> str:
+    """Try `cloudflared tunnel create <name>`. Return tunnel UUID on success, "" on failure."""
+    proc = subprocess.run(
+        ["cloudflared", "tunnel", "create", name],
+        capture_output=True, text=True, timeout=30,
+    )
+    output = proc.stdout + proc.stderr
+    if proc.returncode != 0:
+        return ""
+    for line in output.splitlines():
+        line = line.strip()
+        if "Created tunnel" in line and "with id" in line:
+            m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", line)
+            if m:
+                return m.group(1)
+        if "credentials written to" in line.lower():
+            m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", line)
+            if m:
+                return m.group(1)
+    m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", output)
+    return m.group(1) if m else ""
+
+
 def _create_tunnel(hostname: str) -> str:
     CF_CERT_DIR.mkdir(exist_ok=True)
     tunnel_name = "pinetunnel"
@@ -491,54 +514,33 @@ def _create_tunnel(hostname: str) -> str:
             if tunnel_name in line.lower():
                 m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", line)
                 if m:
-                    tunnel_id = m.group(1)
-                    print(f"  -> Found existing tunnel: {tunnel_id}")
+                    candidate = m.group(1)
+                    cred_check = CF_CERT_DIR / f"{candidate}.json"
+                    if cred_check.exists():
+                        tunnel_id = candidate
+                        print(f"  -> Found existing tunnel with credentials: {tunnel_id}")
+                        break
+                    print(f"  -> Found existing tunnel {candidate} but no credentials file.")
+                    print(f"  -> Attempting to delete stale tunnel...")
+                    subprocess.run(
+                        ["cloudflared", "tunnel", "delete", "-f", candidate],
+                        capture_output=True, text=True, timeout=20,
+                    )
                     break
 
     if not tunnel_id:
-        print(f"  -> Creating tunnel '{tunnel_name}'...")
-        proc = subprocess.run(
-            ["cloudflared", "tunnel", "create", tunnel_name],
-            capture_output=True, text=True, timeout=30,
-        )
-        output = proc.stdout + proc.stderr
-        if proc.returncode != 0:
-            print(f"  ! Failed to create tunnel (exit {proc.returncode}):")
-            for line in output.strip().splitlines():
-                print(f"     {line}")
-            if "already exists" in output.lower():
-                m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", output)
-                if m:
-                    tunnel_id = m.group(1)
-                    print(f"  -> Using existing tunnel ID from error: {tunnel_id}")
-                else:
-                    print(f"  -> Try deleting the tunnel in Cloudflare dashboard or use a different name.")
-                    return ""
-            else:
-                return ""
-        else:
-            for line in output.splitlines():
-                line = line.strip()
-                if "Created tunnel" in line and "with id" in line:
-                    m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", line)
-                    if m:
-                        tunnel_id = m.group(1)
-                        break
-                if "credentials written to" in line.lower():
-                    m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", line)
-                    if m:
-                        tunnel_id = m.group(1)
-                        break
-            if not tunnel_id:
-                m = re.search(r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", output)
-                if m:
-                    tunnel_id = m.group(1)
-            if not tunnel_id:
-                print(f"  ! Could not find tunnel ID in output:")
-                for line in output.strip().splitlines():
-                    print(f"     {line}")
-                return ""
-            print(f"  -> Tunnel created: {tunnel_id}")
+        for attempt in range(1, 6):
+            name = tunnel_name if attempt == 1 else f"{tunnel_name}{attempt}"
+            print(f"  -> Creating tunnel '{name}'...")
+            tunnel_id = _try_create_tunnel(name)
+            if tunnel_id:
+                print(f"  -> Tunnel created: {tunnel_id}")
+                break
+            print(f"  -> Name '{name}' unavailable, trying next...")
+        if not tunnel_id:
+            print(f"  ! Could not create a tunnel after 5 attempts.")
+            print(f"  -> Try deleting tunnels in Cloudflare dashboard or use a token.")
+            return ""
 
     cred_file = CF_CERT_DIR / f"{tunnel_id}.json"
     if not cred_file.exists():
@@ -548,7 +550,7 @@ def _create_tunnel(hostname: str) -> str:
 
     print(f"  -> Routing DNS for {hostname}...")
     proc2 = subprocess.run(
-        ["cloudflared", "tunnel", "route", "dns", tunnel_id, hostname],
+        ["cloudflared", "tunnel", "route", "dns", "--overwrite-dns", tunnel_id, hostname],
         capture_output=True, text=True, timeout=30,
     )
     if proc2.returncode != 0:
