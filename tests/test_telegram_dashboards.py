@@ -175,3 +175,44 @@ def test_account_screen_no_licenses(dash_module):
     text, keyboard = dash_module.account_screen(bot, page=0)
     assert "No licenses" in text
     assert text.isascii()
+
+
+def test_trades_screen_basic(dash_module):
+    bot = FakeBot(db_rows=[
+        {"timestamp": "2026-07-20T14:30:00", "symbol": "EURUSD", "action": "buy", "volume": 0.10, "profit": 12.50},
+        {"timestamp": "2026-07-20T10:15:00", "symbol": "GBPUSD", "action": "sell", "volume": 0.05, "profit": -3.20},
+    ])
+    text, keyboard = dash_module.trades_screen(bot, page=0)
+    assert "Trade History" in text
+    assert "EURUSD" in text
+    assert "GBPUSD" in text
+    assert "+12.50" in text
+    assert "-3.20" in text
+    assert text.isascii()
+
+
+def test_trades_screen_empty(dash_module):
+    bot = FakeBot(db_rows=[])
+    text, keyboard = dash_module.trades_screen(bot, page=0)
+    assert "No trades" in text
+    assert text.isascii()
+
+
+def test_signals_screen_basic(dash_module):
+    bot = FakeBot(db_rows=[
+        {"timestamp": "2026-07-20T14:30:00", "action": "buy", "symbol": "EURUSD", "response_code": 200},
+        {"timestamp": "2026-07-20T10:15:00", "action": "sell", "symbol": "GBPUSD", "response_code": 500},
+    ])
+    text, keyboard = dash_module.signals_screen(bot, page=0)
+    assert "Signal Log" in text
+    assert "EURUSD" in text
+    assert "[OK]" in text
+    assert "[X]" in text
+    assert text.isascii()
+
+
+def test_signals_screen_empty(dash_module):
+    bot = FakeBot(db_rows=[])
+    text, keyboard = dash_module.signals_screen(bot, page=0)
+    assert "No signals" in text
+    assert text.isascii()

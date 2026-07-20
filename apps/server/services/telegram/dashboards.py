@@ -239,3 +239,153 @@ def account_screen(bot, page: int = 0) -> tuple[str, list[list[InlineKeyboardBut
 
     keyboard.append([InlineKeyboardButton("Back to Menu", callback_data="nav:main")])
     return text, keyboard
+
+
+def trades_screen(bot, page: int = 0, side_filter: str = "all") -> tuple[str, list[list[InlineKeyboardButton]]]:
+    where = ""
+    params: dict = {}
+    if side_filter != "all":
+        where = " WHERE LOWER(action) LIKE :side"
+        params["side"] = f"%{side_filter}%"
+
+    total = 0
+    try:
+        rows = bot.db_manager.execute_query(f"SELECT COUNT(*) as cnt FROM trades{where}", params)
+        total = rows[0]["cnt"] if rows else 0
+    except Exception:
+        pass
+
+    page, total_pages, start = calc_pagination(page, total, _PAGE_SIZE)
+
+    records = []
+    try:
+        records = bot.db_manager.execute_query(
+            f"SELECT timestamp, symbol, action, volume, profit FROM trades{where} "
+            f"ORDER BY timestamp DESC LIMIT :lim OFFSET :off",
+            {**params, "lim": _PAGE_SIZE, "off": start},
+        )
+    except Exception:
+        pass
+
+    filter_label = side_filter.title() if side_filter != "all" else "All sides"
+    lines = [f"Trade History ({filter_label})", SEP]
+
+    if not records:
+        lines.append("No trades found.")
+    else:
+        lines.append(f"{len(records)} of {total} records | Page {page + 1}/{total_pages}")
+        lines.append(SEP)
+        for r in records:
+            r = dict(r)
+            ts = str(r.get("timestamp", ""))[:16]
+            symbol = escape_md(r.get("symbol", "?") or "?")
+            side = (r.get("action", "?") or "?").upper()
+            vol = r.get("volume", 0) or 0
+            profit = r.get("profit", 0) or 0
+            sign = "+" if profit >= 0 else ""
+            lines.append(f"{ts} | {side:4s} | {symbol} | {vol:.2f} | {sign}{profit:.2f}")
+
+    text = "\n".join(lines)
+
+    def flabel(s):
+        return f"[OK] {s.title()}" if side_filter == s else s.title()
+
+    keyboard = [
+        [InlineKeyboardButton(flabel("all"), callback_data="filter:trades:all"),
+         InlineKeyboardButton(flabel("buy"), callback_data="filter:trades:buy"),
+         InlineKeyboardButton(flabel("sell"), callback_data="filter:trades:sell"),
+         InlineKeyboardButton(flabel("close"), callback_data="filter:trades:close")],
+    ]
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("Prev", callback_data=f"page:trades:{page - 1}"))
+    nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next", callback_data=f"page:trades:{page + 1}"))
+    if nav:
+        keyboard.append(nav)
+
+    keyboard.append([InlineKeyboardButton("Back to Menu", callback_data="nav:main")])
+    return text, keyboard
+
+
+def signals_screen(bot, page: int = 0, cmd_filter: str = "all", status_filter: str = "all") -> tuple[str, list[list[InlineKeyboardButton]]]:
+    clauses = []
+    params: dict = {}
+    if cmd_filter != "all":
+        clauses.append("LOWER(action) LIKE :cmd")
+        params["cmd"] = f"%{cmd_filter}%"
+    if status_filter != "all":
+        if status_filter == "success":
+            clauses.append("response_code = 200")
+        elif status_filter == "failed":
+            clauses.append("response_code != 200")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    total = 0
+    try:
+        rows = bot.db_manager.execute_query(f"SELECT COUNT(*) as cnt FROM alert_history{where}", params)
+        total = rows[0]["cnt"] if rows else 0
+    except Exception:
+        pass
+
+    page, total_pages, start = calc_pagination(page, total, _PAGE_SIZE)
+
+    records = []
+    try:
+        records = bot.db_manager.execute_query(
+            f"SELECT timestamp, action, symbol, response_code FROM alert_history{where} "
+            f"ORDER BY timestamp DESC LIMIT :lim OFFSET :off",
+            {**params, "lim": _PAGE_SIZE, "off": start},
+        )
+    except Exception:
+        pass
+
+    cmd_label = cmd_filter.title() if cmd_filter != "all" else "All"
+    status_label = status_filter.title() if status_filter != "all" else "All"
+    lines = [f"Signal Log ({cmd_label} / {status_label})", SEP]
+
+    if not records:
+        lines.append("No signals found.")
+    else:
+        lines.append(f"{len(records)} of {total} records | Page {page + 1}/{total_pages}")
+        lines.append(SEP)
+        for r in records:
+            r = dict(r)
+            ts = str(r.get("timestamp", ""))[:16]
+            action = (r.get("action", "?") or "?").upper()
+            symbol = escape_md(r.get("symbol", "?") or "?")
+            code = r.get("response_code", 0) or 0
+            mark = "[OK]" if code == 200 else "[X]"
+            lines.append(f"{ts} | {mark} {action:6s} | {symbol}")
+
+    text = "\n".join(lines)
+
+    def clabel(s):
+        return f"[OK] {s.title()}" if cmd_filter == s else s.title()
+
+    def slabel(s):
+        return f"[OK] {s.title()}" if status_filter == s else s.title()
+
+    keyboard = [
+        [InlineKeyboardButton(clabel("all"), callback_data="filter:signals:cmd:all"),
+         InlineKeyboardButton(clabel("buy"), callback_data="filter:signals:cmd:buy"),
+         InlineKeyboardButton(clabel("sell"), callback_data="filter:signals:cmd:sell"),
+         InlineKeyboardButton(clabel("close"), callback_data="filter:signals:cmd:close")],
+        [InlineKeyboardButton(slabel("all"), callback_data="filter:signals:status:all"),
+         InlineKeyboardButton(slabel("success"), callback_data="filter:signals:status:success"),
+         InlineKeyboardButton(slabel("failed"), callback_data="filter:signals:status:failed")],
+    ]
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("Prev", callback_data=f"page:signals:{page - 1}"))
+    nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next", callback_data=f"page:signals:{page + 1}"))
+    if nav:
+        keyboard.append(nav)
+
+    keyboard.append([InlineKeyboardButton("Back to Menu", callback_data="nav:main")])
+    return text, keyboard
