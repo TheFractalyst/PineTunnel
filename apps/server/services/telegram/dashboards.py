@@ -221,12 +221,10 @@ def account_screen(bot, page: int = 0) -> tuple[str, list[list[InlineKeyboardBut
 
     text = "\n".join(lines)
 
-    reveal_label = "Hide" if revealed else "Reveal Key"
-    secret_label = "Hide Secret" if revealed else "Reveal Secret"
+    reveal_label = "Hide" if revealed else "Reveal"
 
     keyboard = [
-        [InlineKeyboardButton(reveal_label, callback_data=f"reveal:key:{key}"),
-         InlineKeyboardButton(secret_label, callback_data=f"reveal:secret:{key}")],
+        [InlineKeyboardButton(reveal_label, callback_data=f"reveal:key:{key}")],
     ]
 
     nav = []
@@ -299,10 +297,10 @@ def trades_screen(bot, page: int = 0, side_filter: str = "all") -> tuple[str, li
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("Prev", callback_data=f"page:trades:{page - 1}"))
+        nav.append(InlineKeyboardButton("Prev", callback_data=f"page:trades:{page - 1}:{side_filter}"))
     nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next", callback_data=f"page:trades:{page + 1}"))
+        nav.append(InlineKeyboardButton("Next", callback_data=f"page:trades:{page + 1}:{side_filter}"))
     if nav:
         keyboard.append(nav)
 
@@ -380,10 +378,10 @@ def signals_screen(bot, page: int = 0, cmd_filter: str = "all", status_filter: s
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("Prev", callback_data=f"page:signals:{page - 1}"))
+        nav.append(InlineKeyboardButton("Prev", callback_data=f"page:signals:{page - 1}:{cmd_filter}:{status_filter}"))
     nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next", callback_data=f"page:signals:{page + 1}"))
+        nav.append(InlineKeyboardButton("Next", callback_data=f"page:signals:{page + 1}:{cmd_filter}:{status_filter}"))
     if nav:
         keyboard.append(nav)
 
@@ -536,8 +534,7 @@ def admin_screen(bot) -> tuple[str, list[list[InlineKeyboardButton]]]:
 
     text = "\n".join(lines)
     keyboard = [
-        [InlineKeyboardButton("Refresh", callback_data="refresh:admin"),
-         InlineKeyboardButton("Security", callback_data="nav:security")],
+        [InlineKeyboardButton("Refresh", callback_data="refresh:admin")],
         [InlineKeyboardButton("Back to Menu", callback_data="nav:main")],
     ]
     return text, keyboard

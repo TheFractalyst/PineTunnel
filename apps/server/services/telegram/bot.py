@@ -81,6 +81,9 @@ class PineTunnelTelegramBot:
         self.notification_prefs = dict(DEFAULT_NOTIFICATION_PREFS)
         self.quiet_hours = dict(DEFAULT_QUIET_HOURS)
         self._revealed_keys: set[str] = set()
+        self._trades_filter = "all"
+        self._signals_cmd_filter = "all"
+        self._signals_status_filter = "all"
         self._load_bot_settings()
         self.app: Application | None = None
         self._started = False
@@ -268,6 +271,13 @@ class PineTunnelTelegramBot:
             parts = data.split(":")
             screen = parts[1]
             page = int(parts[2]) if len(parts) > 2 else 0
+            if screen == "trades":
+                side = parts[3] if len(parts) > 3 else "all"
+                return self._render_screen("trades", page=page, side_filter=side)
+            if screen == "signals":
+                cmd = parts[3] if len(parts) > 3 else "all"
+                status = parts[4] if len(parts) > 4 else "all"
+                return self._render_screen("signals", page=page, cmd_filter=cmd, status_filter=status)
             return self._render_screen(screen, page=page)
 
         if data.startswith("filter:"):
@@ -275,12 +285,17 @@ class PineTunnelTelegramBot:
             screen = parts[1]
             if screen == "trades":
                 side = parts[2] if len(parts) > 2 else "all"
+                self._trades_filter = side
                 return trades_screen(self, page=0, side_filter=side)
             if screen == "signals":
                 ftype = parts[2] if len(parts) > 2 else "cmd"
                 value = parts[3] if len(parts) > 3 else "all"
-                return self._render_screen("signals", cmd_filter=value if ftype == "cmd" else "all",
-                                           status_filter=value if ftype == "status" else "all")
+                if ftype == "cmd":
+                    self._signals_cmd_filter = value
+                else:
+                    self._signals_status_filter = value
+                return self._render_screen("signals", page=0, cmd_filter=self._signals_cmd_filter,
+                                           status_filter=self._signals_status_filter)
 
         if data.startswith("toggle:"):
             key = data[7:]
@@ -298,13 +313,13 @@ class PineTunnelTelegramBot:
 
         return main_menu(self)
 
-    def _render_screen(self, screen: str, page: int = 0, cmd_filter: str = "all", status_filter: str = "all") -> tuple[str, list[list[InlineKeyboardButton]]]:
+    def _render_screen(self, screen: str, page: int = 0, cmd_filter: str = "all", status_filter: str = "all", side_filter: str = "all") -> tuple[str, list[list[InlineKeyboardButton]]]:
         if screen == "overview":
             return overview_screen(self)
         if screen == "account":
             return account_screen(self, page=page)
         if screen == "trades":
-            return trades_screen(self, page=page)
+            return trades_screen(self, page=page, side_filter=side_filter)
         if screen == "signals":
             return signals_screen(self, page=page, cmd_filter=cmd_filter, status_filter=status_filter)
         if screen == "settings":
