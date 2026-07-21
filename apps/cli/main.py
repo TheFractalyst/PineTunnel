@@ -649,7 +649,11 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     if not tg or not cf:
         if not getattr(args, "skip_setup", False):
-            _run_setup_wizard(env_path)
+            try:
+                _run_setup_wizard(env_path)
+            except (EOFError, KeyboardInterrupt):
+                print("\nSetup cancelled.")
+                return 0
 
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))
@@ -688,7 +692,11 @@ def cmd_version(args: argparse.Namespace) -> int:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     env_path = _ensure_minimal_env()
-    _run_setup_wizard(env_path)
+    try:
+        _run_setup_wizard(env_path)
+    except (EOFError, KeyboardInterrupt):
+        print("\nSetup cancelled.")
+        return 0
     return 0
 
 
